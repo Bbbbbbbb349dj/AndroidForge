@@ -1,0 +1,68 @@
+name: Inspect CloudStream Patch
+
+on:
+  push:
+    branches:
+      - "arena/17a4641a-androidforge"
+    paths:
+      - ".github/workflows/inspect-cloudstream-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dump CloudStream source files from nuvio-source-v1.1.2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cs
+          curl -fsSL -L "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/download/nuvio-source-v1.1.2/Nuvio-Enhanced-2-v1.1.2-cloudstream-settings-source.zip" -o /tmp/cs/src.zip
+          unzip -q /tmp/cs/src.zip -d /tmp/cs/ext
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          from pathlib import Path
+
+          root = next(Path("/tmp/cs/ext").iterdir())
+          out = []
+          targets = [
+              root / "PATCH_NOTES_AUDIT.md",
+              *sorted(root.rglob("*CloudStream*")),
+              *sorted(root.rglob("*PluginSettings*")),
+              *sorted(root.rglob("*PluginsSettings*")),
+          ]
+          seen = set()
+          for p in targets:
+              if not p.is_file() or p in seen or p.suffix == ".aar":
+                  continue
+              seen.add(p)
+              rel = p.relative_to(root)
+              out.append(f"\n==================== {rel} ====================")
+              for idx, ln in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                  out.append(f"{idx:4d}: {ln}")
+
+          txt = "\n".join(out)
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPO']}/git/blobs",
+              data=json.dumps({
+                  "content": base64.b64encode(txt.encode("utf-8")).decode("ascii"),
+                  "encoding": "base64",
+              }).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "InspectCS",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              sha = json.loads(resp.read().decode("utf-8"))["sha"]
+          print(f"::notice title=CS_BLOB::{sha}")
+          PY
