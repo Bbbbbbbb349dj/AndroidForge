@@ -166,8 +166,9 @@ def main() -> int:
     last_log: str = ""
     successful_command: list[str] | None = None
 
-    # Nuvio requires an explicit distribution property for Android aggregate tasks.
-    # Keep this scoped to Nuvio projects so other Gradle builds are unaffected.
+    # Nuvio's Gradle build enforces this property during project configuration.
+    # Pass it to every Gradle invocation for this project, not only tasks whose
+    # names look like assemble/bundle: AndroidForge may normalize or wrap tasks.
     gradle_properties = root / "gradle.properties"
     is_nuvio_project = (
         gradle_properties.exists()
@@ -177,22 +178,16 @@ def main() -> int:
     )
 
     for cmd in all_commands:
-        # AndroidForge detects Nuvio's tasks as bare aggregate task names
-        # (assembleDebug / assembleRelease / bundleDebug), not necessarily
-        # module-qualified names such as :androidApp:assembleDebug.
-        is_android_aggregate_task = any(
-            not arg.startswith("-")
+        is_gradle_invocation = (
+            bool(cmd)
             and (
-                "assemble" in arg.lower()
-                or "bundle" in arg.lower()
+                Path(cmd[0]).name == "gradlew"
+                or Path(cmd[0]).name == "gradle"
             )
-            for arg in cmd[1:]
         )
         if (
             is_nuvio_project
-            and cmd
-            and cmd[0].endswith("gradlew")
-            and is_android_aggregate_task
+            and is_gradle_invocation
             and not any(arg.startswith("-Pnuvio.android.distribution=") for arg in cmd)
         ):
             cmd = [cmd[0], "-Pnuvio.android.distribution=full", *cmd[1:]]
