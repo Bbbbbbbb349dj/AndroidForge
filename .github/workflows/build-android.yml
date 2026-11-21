@@ -21,6 +21,9 @@ name: Build Android APK
 #  11. On failure, run automated diagnosis
 
 on:
+  push:
+    paths:
+      - ".androidforge/trigger-nuvio-build.txt"
   workflow_dispatch:
     inputs:
       zip_source:
@@ -136,9 +139,9 @@ jobs:
         id: acquire
         run: |
           python3 scripts/acquire_zip.py \
-            --source "${{ inputs.zip_source || 'input-directory' }}" \
+            --source "${{ inputs.zip_source || 'release-asset' }}" \
             --url "${{ inputs.zip_url }}" \
-            --tag "${{ inputs.release_tag }}" \
+            --tag "${{ inputs.release_tag || 'nuvio-source-v1.1.2' }}" \
             --path "${{ inputs.zip_path }}"
 
       # ---------------------------------------------------------------------
@@ -238,7 +241,7 @@ jobs:
           # (the Docker image already has them, but this is a no-op safety check).
           yes | sdkmanager "platform-tools" >/dev/null 2>&1 || true
           # Install NDK if the project uses native code
-          if [ "$NEEDS_NDK" = "true" ] || [ "${{ github.event.inputs.enable_ndk }}" = "true" ]; then
+          if [ "$NEEDS_NDK" = "true" ] || [ "${{ github.event.inputs.enable_ndk }}" = "true" ] || [ "${{ github.event_name }}" = "push" ]; then
             if [ -n "$NDK_VER" ] && [ ! -d "$ANDROID_HOME/ndk/$NDK_VER" ]; then
               echo "Installing NDK: ndk;$NDK_VER"
               yes | sdkmanager "ndk;$NDK_VER" || echo "WARNING: NDK install failed"
