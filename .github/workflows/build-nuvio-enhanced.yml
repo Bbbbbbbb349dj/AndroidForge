@@ -215,6 +215,8 @@ jobs:
           echo "Verifying APK using build-tools: $BT_DIR"
           "$BT_DIR/apksigner" verify --print-certs "$FINAL_APK"
           "$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35
+          "$BT_DIR/aapt2" dump xmltree "$FINAL_APK" --file AndroidManifest.xml | grep -q "com.nuvio.app.LocalVideoPlayerActivity"
+          echo "✓ Verified com.nuvio.app.LocalVideoPlayerActivity in merged APK AndroidManifest.xml"
 
           echo "apk_path=$FINAL_APK" >> "$GITHUB_OUTPUT"
           echo "apk_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"

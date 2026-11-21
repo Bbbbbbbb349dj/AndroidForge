@@ -1218,6 +1218,66 @@ class AniListApi : SyncAPI() {
     override val mainUrl: String = "https://anilist.co"
     override val syncIdName: SyncIdName = SyncIdName.Anilist
     override val hasOAuth2: Boolean = true
+
+    data class CoverImage(
+        @com.fasterxml.jackson.annotation.JsonProperty("extraLarge") val extraLarge: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("large") val large: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("medium") val medium: String? = null,
+    )
+
+    data class Title(
+        @com.fasterxml.jackson.annotation.JsonProperty("romaji") val romaji: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("english") val english: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("native") val native: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("userPreferred") val userPreferred: String? = null,
+    )
+
+    data class SeasonNextAiringEpisode(
+        @com.fasterxml.jackson.annotation.JsonProperty("episode") val episode: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("timeUntilAiring") val timeUntilAiring: Int? = null,
+    )
+
+    data class LikePageInfo(
+        @com.fasterxml.jackson.annotation.JsonProperty("total") val total: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("currentPage") val currentPage: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("lastPage") val lastPage: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("perPage") val perPage: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("hasNextPage") val hasNextPage: Boolean? = null,
+    )
+
+    data class MediaCoverImage(
+        @com.fasterxml.jackson.annotation.JsonProperty("extraLarge") val extraLarge: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("large") val large: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("medium") val medium: String? = null,
+    )
+
+    data class MediaTitle(
+        @com.fasterxml.jackson.annotation.JsonProperty("romaji") val romaji: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("english") val english: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("native") val native: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("userPreferred") val userPreferred: String? = null,
+    )
+
+    data class RecommendedMedia(
+        @com.fasterxml.jackson.annotation.JsonProperty("id") val id: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("idMal") val idMal: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("title") val title: MediaTitle? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("coverImage") val coverImage: MediaCoverImage? = null,
+    )
+
+    data class Recommendation(
+        @com.fasterxml.jackson.annotation.JsonProperty("rating") val rating: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("mediaRecommendation") val mediaRecommendation: RecommendedMedia? = null,
+    )
+
+    data class RecommendationEdge(
+        @com.fasterxml.jackson.annotation.JsonProperty("node") val node: Recommendation? = null,
+    )
+
+    data class RecommendationConnection(
+        @com.fasterxml.jackson.annotation.JsonProperty("edges") val edges: List<RecommendationEdge> = emptyList(),
+        @com.fasterxml.jackson.annotation.JsonProperty("nodes") val nodes: List<Recommendation> = emptyList(),
+    )
 }
 
 class KitsuApi : SyncAPI() {
@@ -1271,11 +1331,67 @@ class SubSourceApi : SubtitleAPI() {
         patched,
     )
 
+    # 4b. Patch PluginManager.kt with unloadPlugin(String) & loadSinglePlugin used by StreamPlay & closed-source .cs3
+    plugin_mgr_kt = root / "composeApp/src/androidFull/kotlin/com/lagradost/cloudstream3/plugins/PluginManager.kt"
+    if plugin_mgr_kt.is_file():
+        if _replace_once(
+            plugin_mgr_kt,
+            "    fun unregister(filePath: String) = synchronized(this) {\n"
+            "        loadedPlugins.remove(filePath)\n"
+            "        localPluginData.remove(filePath)\n"
+            "        onlinePluginData.remove(filePath)\n"
+            "    }\n",
+            "    fun unregister(filePath: String) = synchronized(this) {\n"
+            "        loadedPlugins.remove(filePath)\n"
+            "        localPluginData.remove(filePath)\n"
+            "        onlinePluginData.remove(filePath)\n"
+            "    }\n\n"
+            "    fun unloadPlugin(absolutePath: String) {\n"
+            "        val existing = synchronized(this) {\n"
+            "            loadedPlugins[absolutePath]\n"
+            "                ?: loadedPlugins.entries.firstOrNull { File(it.key).name == File(absolutePath).name }?.value\n"
+            "        }\n"
+            "        runCatching { existing?.beforeUnload() }\n"
+            "        com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.unloadByFilePath(absolutePath)\n"
+            "        unregister(absolutePath)\n"
+            "    }\n\n"
+            "    suspend fun loadSinglePlugin(context: android.content.Context, pluginPath: String): Boolean {\n"
+            "        com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.unloadByFilePath(pluginPath)\n"
+            "        return true\n"
+            "    }\n",
+            "PluginManager unloadPlugin & loadSinglePlugin",
+        ):
+            patched.append(str(plugin_mgr_kt.relative_to(root)))
+
+    # 4c. Keep Ksoup, Gson, Jetpack Compose, and AndroidX classes in R8 for closed-source .cs3 plugins (e.g. StreamPlay)
+    proguard_cs = root / "composeApp/proguard-cloudstream-full.pro"
+    if proguard_cs.is_file():
+        cs3_closed_source_rules = (
+            "\n# Keep Ksoup, Gson, and Jetpack Compose runtime/UI/Material3 APIs referenced by closed-source .cs3 plugins (e.g. StreamPlay)\n"
+            "-keep class com.fleeksoft.ksoup.** { *; }\n"
+            "-dontwarn com.fleeksoft.ksoup.**\n"
+            "-keep class com.google.gson.** { *; }\n"
+            "-dontwarn com.google.gson.**\n"
+            "-keep class androidx.compose.** { *; }\n"
+            "-dontwarn androidx.compose.**\n"
+            "-keep class androidx.activity.compose.** { *; }\n"
+            "-keep class androidx.lifecycle.** { *; }\n"
+            "-keep class androidx.savedstate.** { *; }\n"
+            "-keep class androidx.core.view.** { *; }\n"
+            "-keep class androidx.core.graphics.Insets { *; }\n"
+            "-keep class androidx.annotation.** { *; }\n"
+            "-keep class org.jetbrains.annotations.** { *; }\n"
+        )
+        pg_text = proguard_cs.read_text(encoding="utf-8", errors="replace")
+        if "com.fleeksoft.ksoup.**" not in pg_text:
+            proguard_cs.write_text(pg_text + cs3_closed_source_rules, encoding="utf-8")
+            patched.append(str(proguard_cs.relative_to(root)))
+
     # 5. Universal CloudStream Extension Config Bridge (commonMain + androidFull/androidPlaystore + iosFull/iosAppStore)
     _write_text(
         root,
         "composeApp/src/commonMain/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.kt",
-        r'''package com.nuvio.app.features.cloudstream
+        r"""package com.nuvio.app.features.cloudstream
 
 data class CloudStreamSubProviderConfig(
     val apiClassName: String,
@@ -1284,6 +1400,15 @@ data class CloudStreamSubProviderConfig(
     val overrideMainUrl: String,
     val lang: String,
     val enabled: Boolean,
+    val supportedTypes: List<String> = emptyList(),
+)
+
+data class CloudStreamInternalSource(
+    val id: String,
+    val name: String,
+    val kind: String, // "Scraper" | "Provider" | "Extractor"
+    val enabled: Boolean = true,
+    val canToggle: Boolean = true,
 )
 
 data class CloudStreamPreferenceEntry(
@@ -1301,11 +1426,16 @@ data class CloudStreamPluginConfigSnapshot(
     val defaultPrefFile: String,
     val candidatePrefFiles: List<String> = emptyList(),
     val subProviders: List<CloudStreamSubProviderConfig> = emptyList(),
+    val internalSources: List<CloudStreamInternalSource> = emptyList(),
     val preferences: List<CloudStreamPreferenceEntry> = emptyList(),
 )
 
 internal expect object CloudStreamExtensionConfigBridge {
     val isSupported: Boolean
+
+    fun preferNuvioSettingsUi(): Boolean
+
+    fun setPreferNuvioSettingsUi(enabled: Boolean)
 
     suspend fun inspect(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot>
 
@@ -1314,6 +1444,20 @@ internal expect object CloudStreamExtensionConfigBridge {
         apiClassName: String,
         enabled: Boolean,
         overrideMainUrl: String,
+    ): Result<CloudStreamPluginConfigSnapshot>
+
+    suspend fun toggleInternalSource(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceId: String,
+        enabled: Boolean,
+    ): Result<CloudStreamPluginConfigSnapshot>
+
+    suspend fun setAllInternalSources(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceIds: List<String>,
+        enabled: Boolean,
     ): Result<CloudStreamPluginConfigSnapshot>
 
     suspend fun savePreference(
@@ -1332,14 +1476,18 @@ internal expect object CloudStreamExtensionConfigBridge {
 
     suspend fun reloadPlugin(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot>
 }
-''',
+""",
         patched,
     )
 
-    unsupported_bridge_stub = r'''package com.nuvio.app.features.cloudstream
+    unsupported_bridge_stub = r"""package com.nuvio.app.features.cloudstream
 
 internal actual object CloudStreamExtensionConfigBridge {
     actual val isSupported: Boolean = false
+
+    actual fun preferNuvioSettingsUi(): Boolean = false
+
+    actual fun setPreferNuvioSettingsUi(enabled: Boolean) = Unit
 
     actual suspend fun inspect(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot> =
         Result.failure(UnsupportedOperationException("Extension configuration is available on Android full builds"))
@@ -1349,6 +1497,20 @@ internal actual object CloudStreamExtensionConfigBridge {
         apiClassName: String,
         enabled: Boolean,
         overrideMainUrl: String,
+    ): Result<CloudStreamPluginConfigSnapshot> = inspect(plugin)
+
+    actual suspend fun toggleInternalSource(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceId: String,
+        enabled: Boolean,
+    ): Result<CloudStreamPluginConfigSnapshot> = inspect(plugin)
+
+    actual suspend fun setAllInternalSources(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceIds: List<String>,
+        enabled: Boolean,
     ): Result<CloudStreamPluginConfigSnapshot> = inspect(plugin)
 
     actual suspend fun savePreference(
@@ -1368,7 +1530,7 @@ internal actual object CloudStreamExtensionConfigBridge {
     actual suspend fun reloadPlugin(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot> =
         inspect(plugin)
 }
-'''
+"""
 
     for stub_rel in (
         "composeApp/src/iosFull/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.ios.kt",
@@ -1380,11 +1542,12 @@ internal actual object CloudStreamExtensionConfigBridge {
     _write_text(
         root,
         "composeApp/src/androidFull/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.android.kt",
-        r'''package com.nuvio.app.features.cloudstream
+        r"""package com.nuvio.app.features.cloudstream
 
 import android.content.Context
 import com.lagradost.cloudstream3.CloudStreamApp
 import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.utils.ExtractorApi
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -1395,6 +1558,7 @@ import kotlinx.coroutines.withContext
 
 internal object CloudStreamExtensionConfigStore {
     private const val CONFIG_PREFS = "nuvio_cloudstream_ext_overrides"
+    private const val KEY_PREFER_NUVIO_UI = "prefer_nuvio_settings_ui"
     private val defaultMainUrls = ConcurrentHashMap<String, String>()
 
     private fun prefs(context: Context) =
@@ -1405,6 +1569,16 @@ internal object CloudStreamExtensionConfigStore {
 
     private fun urlKey(pluginId: String, apiClassName: String) =
         "mainUrl::$pluginId::$apiClassName"
+
+    fun preferNuvioSettingsUi(context: Context?): Boolean {
+        val ctx = context ?: return false
+        return prefs(ctx).getBoolean(KEY_PREFER_NUVIO_UI, false)
+    }
+
+    fun setPreferNuvioSettingsUi(context: Context?, enabled: Boolean) {
+        val ctx = context ?: return
+        prefs(ctx).edit().putBoolean(KEY_PREFER_NUVIO_UI, enabled).apply()
+    }
 
     fun recordDefaultUrl(pluginId: String, api: MainAPI): String =
         defaultMainUrls.getOrPut("$pluginId::${api.javaClass.name}") { api.mainUrl }
@@ -1445,22 +1619,42 @@ internal object CloudStreamExtensionConfigStore {
     fun activeProviders(pluginId: String, providers: List<MainAPI>): List<MainAPI> {
         val ctx = CloudStreamPlatformRuntime.currentAppContext() ?: CloudStreamApp.context
         providers.forEach { api -> applyOverrideToApi(pluginId, api) }
-        val enabled = providers.filter { api ->
+        return providers.filter { api ->
             isSubProviderEnabled(ctx, pluginId, api.javaClass.name)
         }
-        return enabled
     }
 }
 
 internal actual object CloudStreamExtensionConfigBridge {
     actual val isSupported: Boolean = true
 
+    private const val KEY_DISABLED_PROVIDERS = "disabled_providers"
+
     private val HINT_KEYWORDS = listOf(
-        "token", "cookie", "febbox", "superstream", "debrid", "realdebrid", "torbox",
+        "token", "cookie", "febbox", "superstream", "wyzie", "debrid", "realdebrid", "torbox",
         "alldebrid", "premiumize", "tmdb", "imdb", "api_key", "apikey", "proxy",
         "domain", "base_url", "baseurl", "custom_url", "host", "mirror", "server",
-        "quality", "adult", "nsfw", "sub", "dub", "prefer",
+        "concurrency", "stremio", "quality", "adult", "nsfw", "sub", "dub", "prefer",
     )
+
+    private val HIDDEN_RAW_PREF_KEYS = setOf(
+        "disabled_providers",
+        "provider_test_status",
+        "provider_profiles",
+        "enabled_plugins_set",
+    )
+
+    actual fun preferNuvioSettingsUi(): Boolean =
+        CloudStreamExtensionConfigStore.preferNuvioSettingsUi(
+            CloudStreamPlatformRuntime.currentAppContext() ?: CloudStreamApp.context,
+        )
+
+    actual fun setPreferNuvioSettingsUi(enabled: Boolean) {
+        CloudStreamExtensionConfigStore.setPreferNuvioSettingsUi(
+            CloudStreamPlatformRuntime.currentAppContext() ?: CloudStreamApp.context,
+            enabled,
+        )
+    }
 
     actual suspend fun inspect(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot> =
         withContext(Dispatchers.IO) {
@@ -1468,7 +1662,8 @@ internal actual object CloudStreamExtensionConfigBridge {
                 val ctx = requireNotNull(CloudStreamPlatformRuntime.currentAppContext()) {
                     "Android context is not ready"
                 }
-                val (hasNativeSettings, providers) = CloudStreamPlatformRuntime.inspectPluginProviders(plugin)
+                val details = CloudStreamPlatformRuntime.inspectPluginDetails(plugin)
+                val providers = details.providers
                 val subProviders = providers.map { api ->
                     val defaultUrl = CloudStreamExtensionConfigStore.recordDefaultUrl(plugin.metadata.id.value, api)
                     val overrideUrl = CloudStreamExtensionConfigStore.getOverrideMainUrl(
@@ -1489,6 +1684,7 @@ internal actual object CloudStreamExtensionConfigBridge {
                         overrideMainUrl = overrideUrl,
                         lang = api.lang,
                         enabled = enabled,
+                        supportedTypes = api.supportedTypes.map { it.name },
                     )
                 }
 
@@ -1508,20 +1704,39 @@ internal actual object CloudStreamExtensionConfigBridge {
 
                 val candidateFiles = (
                     existingMatchingFiles +
+                        listOf(internalClean) +
                         dexScan.prefFileCandidates +
-                        listOf(internalClean, plugin.metadata.internalName, plugin.metadata.name)
+                        listOf(plugin.metadata.internalName, plugin.metadata.name)
                     )
                     .map { it.trim() }
                     .filter { it.isNotBlank() && !it.startsWith("nuvio_") && !it.startsWith("androidx.") }
                     .distinct()
 
                 val primaryPrefFile = candidateFiles.firstOrNull() ?: internalClean.ifBlank { "PluginPrefs" }
+                val disabledSet = candidateFiles
+                    .flatMap { name ->
+                        ctx.getSharedPreferences(name, Context.MODE_PRIVATE)
+                            .getStringSet(KEY_DISABLED_PROVIDERS, emptySet())
+                            .orEmpty()
+                    }
+                    .toSet()
+
+                val internalSources = discoverInternalSources(
+                    pluginInstance = details.instance,
+                    providers = providers,
+                    extractors = details.extractors,
+                    subProviders = subProviders,
+                    dexClassCandidates = dexScan.providerListClasses,
+                    disabledIds = disabledSet,
+                )
+
                 val entries = mutableListOf<CloudStreamPreferenceEntry>()
                 val seenKeys = HashSet<String>()
 
                 for (prefName in candidateFiles) {
                     val sp = ctx.getSharedPreferences(prefName, Context.MODE_PRIVATE)
                     sp.all.entries.sortedBy { it.key }.forEach { (key, rawVal) ->
+                        if (key in HIDDEN_RAW_PREF_KEYS || rawVal is Set<*>) return@forEach
                         val valueType = when (rawVal) {
                             is Boolean -> "boolean"
                             is Int, is Long -> "int"
@@ -1539,9 +1754,9 @@ internal actual object CloudStreamExtensionConfigBridge {
                     }
                 }
 
-                // Also surface DataStore keys under the plugin's folder if any exist
                 CloudStreamApp.getKeys(internalClean).orEmpty().forEach { fullKey ->
                     val shortKey = fullKey.substringAfter('/', fullKey)
+                    if (shortKey in HIDDEN_RAW_PREF_KEYS) return@forEach
                     val raw = CloudStreamApp.getKey<String>(fullKey)
                     if (raw != null && seenKeys.add("$primaryPrefFile::$shortKey")) {
                         entries += CloudStreamPreferenceEntry(
@@ -1554,44 +1769,137 @@ internal actual object CloudStreamExtensionConfigBridge {
                     }
                 }
 
-                // Append discovered DEX preference key hints that haven't been set yet
-                dexScan.keyCandidates.take(16).forEach { hintKey ->
-                    if (entries.none { it.key.equals(hintKey, ignoreCase = true) } &&
-                        seenKeys.add("$primaryPrefFile::$hintKey")
-                    ) {
-                        val guessedType = if (
-                            hintKey.startsWith("enable", true) ||
-                            hintKey.startsWith("disable", true) ||
-                            hintKey.startsWith("is_", true) ||
-                            hintKey.startsWith("use_", true) ||
-                            hintKey.contains("adult", true) ||
-                            hintKey.contains("nsfw", true)
+                dexScan.keyCandidates
+                    .filterNot { it in HIDDEN_RAW_PREF_KEYS }
+                    .take(14)
+                    .forEach { hintKey ->
+                        if (entries.none { it.key.equals(hintKey, ignoreCase = true) } &&
+                            seenKeys.add("$primaryPrefFile::$hintKey")
                         ) {
-                            "boolean"
-                        } else {
-                            "string"
+                            val guessedType = when {
+                                hintKey.contains("concurrency", true) || hintKey.endsWith("_count", true) -> "int"
+                                hintKey.startsWith("enable", true) ||
+                                    hintKey.startsWith("disable", true) ||
+                                    hintKey.startsWith("is_", true) ||
+                                    hintKey.startsWith("use_", true) ||
+                                    hintKey.contains("adult", true) ||
+                                    hintKey.contains("nsfw", true) -> "boolean"
+                                else -> "string"
+                            }
+                            entries += CloudStreamPreferenceEntry(
+                                prefFile = primaryPrefFile,
+                                key = hintKey,
+                                value = when (guessedType) {
+                                    "boolean" -> "false"
+                                    "int" -> "6"
+                                    else -> ""
+                                },
+                                valueType = guessedType,
+                                isDiscoveredHint = true,
+                            )
                         }
-                        entries += CloudStreamPreferenceEntry(
-                            prefFile = primaryPrefFile,
-                            key = hintKey,
-                            value = if (guessedType == "boolean") "false" else "",
-                            valueType = guessedType,
-                            isDiscoveredHint = true,
-                        )
                     }
-                }
 
                 CloudStreamPluginConfigSnapshot(
                     pluginId = plugin.metadata.id.value,
                     pluginName = plugin.metadata.name,
-                    hasNativeSettings = hasNativeSettings,
+                    hasNativeSettings = details.hasNativeSettings,
                     defaultPrefFile = primaryPrefFile,
                     candidatePrefFiles = candidateFiles,
                     subProviders = subProviders,
+                    internalSources = internalSources,
                     preferences = entries,
                 )
             }
         }
+
+    private fun discoverInternalSources(
+        pluginInstance: Any,
+        providers: List<MainAPI>,
+        extractors: List<ExtractorApi>,
+        subProviders: List<CloudStreamSubProviderConfig>,
+        dexClassCandidates: List<String>,
+        disabledIds: Set<String>,
+    ): List<CloudStreamInternalSource> {
+        val out = mutableListOf<CloudStreamInternalSource>()
+        val seenIds = HashSet<String>()
+
+        val loader = pluginInstance.javaClass.classLoader
+        val pkg = pluginInstance.javaClass.`package`?.name.orEmpty()
+        val classNames = buildList {
+            if (pkg.isNotBlank()) {
+                add("$pkg.ProvidersListKt")
+                add("$pkg.ProviderListKt")
+            }
+            addAll(dexClassCandidates)
+        }.distinct()
+
+        if (loader != null) {
+            for (clsName in classNames) {
+                val listObj = runCatching {
+                    val cls = Class.forName(clsName, true, loader)
+                    val getter = cls.declaredMethods.firstOrNull { m ->
+                        m.parameterCount == 0 &&
+                            (m.name == "getProviders" || m.name == "buildProviders") &&
+                            List::class.java.isAssignableFrom(m.returnType)
+                    }
+                    getter?.isAccessible = true
+                    getter?.invoke(null) as? List<*>
+                }.getOrNull()
+
+                listObj?.forEach { item ->
+                    if (item == null) return@forEach
+                    val id = runCatching {
+                        item.javaClass.getMethod("getId").invoke(item) as? String
+                    }.getOrNull()?.trim().orEmpty()
+                    val name = runCatching {
+                        item.javaClass.getMethod("getName").invoke(item) as? String
+                    }.getOrNull()?.trim().orEmpty()
+                    if (id.isNotEmpty() && seenIds.add("scraper::$id")) {
+                        out += CloudStreamInternalSource(
+                            id = id,
+                            name = name.ifEmpty { id },
+                            kind = "Scraper",
+                            enabled = id !in disabledIds,
+                            canToggle = true,
+                        )
+                    }
+                }
+            }
+        }
+
+        subProviders.forEach { sub ->
+            val key = "api::${sub.apiClassName}"
+            if (seenIds.add(key)) {
+                val typesLabel = sub.supportedTypes.take(2).joinToString("/")
+                out += CloudStreamInternalSource(
+                    id = key,
+                    name = if (typesLabel.isNotBlank()) "${sub.name} ($typesLabel)" else sub.name,
+                    kind = "Provider",
+                    enabled = sub.enabled,
+                    canToggle = true,
+                )
+            }
+        }
+
+        extractors
+            .distinctBy { it.name.lowercase() }
+            .sortedBy { it.name.lowercase() }
+            .forEach { ext ->
+                val extKey = "extractor::${ext.name}"
+                if (ext.name.isNotBlank() && seenIds.add(extKey)) {
+                    out += CloudStreamInternalSource(
+                        id = extKey,
+                        name = ext.name,
+                        kind = "Extractor",
+                        enabled = true,
+                        canToggle = false,
+                    )
+                }
+            }
+
+        return out
+    }
 
     actual suspend fun updateSubProvider(
         plugin: CloudStreamPluginItem,
@@ -1610,6 +1918,95 @@ internal actual object CloudStreamExtensionConfigBridge {
                 enabled = enabled,
                 overrideMainUrl = overrideMainUrl,
             )
+            inspect(plugin).getOrThrow()
+        }
+    }
+
+    actual suspend fun toggleInternalSource(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceId: String,
+        enabled: Boolean,
+    ): Result<CloudStreamPluginConfigSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val ctx = requireNotNull(CloudStreamPlatformRuntime.currentAppContext()) {
+                "Android context is not ready"
+            }
+            if (sourceId.startsWith("api::")) {
+                val apiClassName = sourceId.removePrefix("api::")
+                val currentUrl = CloudStreamExtensionConfigStore.getOverrideMainUrl(
+                    ctx,
+                    plugin.metadata.id.value,
+                    apiClassName,
+                )
+                CloudStreamExtensionConfigStore.setSubProviderConfig(
+                    context = ctx,
+                    pluginId = plugin.metadata.id.value,
+                    apiClassName = apiClassName,
+                    enabled = enabled,
+                    overrideMainUrl = currentUrl,
+                )
+                return@runCatching inspect(plugin).getOrThrow()
+            }
+
+            val targets = listOf(
+                prefFile,
+                plugin.metadata.internalName.removeSuffix("Plugin"),
+                plugin.metadata.name,
+            ).map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+            targets.forEach { fileName ->
+                val sp = ctx.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+                val updated = HashSet(sp.getStringSet(KEY_DISABLED_PROVIDERS, emptySet()).orEmpty())
+                if (enabled) updated.remove(sourceId) else updated.add(sourceId)
+                sp.edit().putStringSet(KEY_DISABLED_PROVIDERS, updated).apply()
+            }
+            inspect(plugin).getOrThrow()
+        }
+    }
+
+    actual suspend fun setAllInternalSources(
+        plugin: CloudStreamPluginItem,
+        prefFile: String,
+        sourceIds: List<String>,
+        enabled: Boolean,
+    ): Result<CloudStreamPluginConfigSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val ctx = requireNotNull(CloudStreamPlatformRuntime.currentAppContext()) {
+                "Android context is not ready"
+            }
+            val scraperIds = sourceIds.filterNot { it.startsWith("api::") || it.startsWith("extractor::") }
+            val apiIds = sourceIds.filter { it.startsWith("api::") }.map { it.removePrefix("api::") }
+
+            apiIds.forEach { apiClassName ->
+                val currentUrl = CloudStreamExtensionConfigStore.getOverrideMainUrl(
+                    ctx,
+                    plugin.metadata.id.value,
+                    apiClassName,
+                )
+                CloudStreamExtensionConfigStore.setSubProviderConfig(
+                    context = ctx,
+                    pluginId = plugin.metadata.id.value,
+                    apiClassName = apiClassName,
+                    enabled = enabled,
+                    overrideMainUrl = currentUrl,
+                )
+            }
+
+            if (scraperIds.isNotEmpty()) {
+                val targets = listOf(
+                    prefFile,
+                    plugin.metadata.internalName.removeSuffix("Plugin"),
+                    plugin.metadata.name,
+                ).map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+                targets.forEach { fileName ->
+                    val sp = ctx.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+                    val updated = HashSet(sp.getStringSet(KEY_DISABLED_PROVIDERS, emptySet()).orEmpty())
+                    if (enabled) updated.removeAll(scraperIds.toSet()) else updated.addAll(scraperIds)
+                    sp.edit().putStringSet(KEY_DISABLED_PROVIDERS, updated).apply()
+                }
+            }
             inspect(plugin).getOrThrow()
         }
     }
@@ -1637,8 +2034,6 @@ internal actual object CloudStreamExtensionConfigBridge {
                 plugin.metadata.name,
             ).map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
-            // Write to matching SharedPreferences files AND CloudStream DataStore so whichever
-            // storage backend the .cs3 extension reads at runtime receives the value immediately.
             targets.forEach { fileName ->
                 val editor = ctx.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit()
                 when (valueType.lowercase()) {
@@ -1704,6 +2099,7 @@ internal actual object CloudStreamExtensionConfigBridge {
     private data class DexPrefScanResult(
         val prefFileCandidates: List<String> = emptyList(),
         val keyCandidates: List<String> = emptyList(),
+        val providerListClasses: List<String> = emptyList(),
     )
 
     private fun scanCs3DexForPrefs(plugin: CloudStreamPluginItem): DexPrefScanResult {
@@ -1745,7 +2141,19 @@ internal actual object CloudStreamExtensionConfigBridge {
                     HINT_KEYWORDS.any { kw -> s.contains(kw, ignoreCase = true) }
             }.distinct()
 
-            DexPrefScanResult(prefFileCandidates = prefFiles, keyCandidates = keys)
+            val listClasses = strings.mapNotNull { s ->
+                if (s.startsWith("L") && s.endsWith("ProvidersListKt;") && !s.contains('$')) {
+                    s.substring(1, s.length - 1).replace('/', '.')
+                } else {
+                    null
+                }
+            }.distinct()
+
+            DexPrefScanResult(
+                prefFileCandidates = prefFiles,
+                keyCandidates = keys,
+                providerListClasses = listClasses,
+            )
         }.getOrDefault(DexPrefScanResult())
     }
 
@@ -1760,13 +2168,12 @@ internal actual object CloudStreamExtensionConfigBridge {
         if (stringIdsSize <= 0 || stringIdsSize > 200_000 || stringIdsOff <= 0 || stringIdsOff >= dex.size) {
             return emptyList()
         }
-        val out = ArrayList<String>(stringIdsSize.coerceAtMost(4096))
+        val out = ArrayList<String>(stringIdsSize.coerceAtMost(8192))
         for (i in 0 until stringIdsSize) {
             val idPos = stringIdsOff + i * 4
             if (idPos + 4 > dex.size) break
             var dataOff = buf.getInt(idPos)
             if (dataOff <= 0 || dataOff >= dex.size) continue
-            // Skip ULEB128 utf16_size
             var shift = 0
             var uleb = 0
             while (dataOff < dex.size && shift < 35) {
@@ -1775,12 +2182,12 @@ internal actual object CloudStreamExtensionConfigBridge {
                 if ((b and 0x80) == 0) break
                 shift += 7
             }
-            if (uleb in 2..64 && dataOff < dex.size) {
+            if (uleb in 2..96 && dataOff < dex.size) {
                 var end = dataOff
-                val maxEnd = (dataOff + 128).coerceAtMost(dex.size)
+                val maxEnd = (dataOff + 160).coerceAtMost(dex.size)
                 while (end < maxEnd && dex[end].toInt() != 0) end++
                 val len = end - dataOff
-                if (len in 2..64) {
+                if (len in 2..96) {
                     out += String(dex, dataOff, len, Charsets.UTF_8)
                 }
             }
@@ -1788,29 +2195,49 @@ internal actual object CloudStreamExtensionConfigBridge {
         return out
     }
 }
-''',
+""",
         patched,
     )
 
-    # 6. Hook CloudStreamExtensionConfigStore into CloudStreamPlatformRuntime.android.kt
+    # 6. Hook CloudStreamExtensionConfigStore & PluginInspectionData into CloudStreamPlatformRuntime.android.kt
     runtime_kt = root / "composeApp/src/androidFull/kotlin/com/nuvio/app/features/cloudstream/CloudStreamPlatformRuntime.android.kt"
     if runtime_kt.is_file():
         changed = False
         changed |= _replace_once(
             runtime_kt,
             "    actual fun clear() {\n",
+            "    internal data class PluginInspectionData(\n"
+            "        val hasNativeSettings: Boolean,\n"
+            "        val instance: BasePlugin,\n"
+            "        val providers: List<MainAPI>,\n"
+            "        val extractors: List<ExtractorApi>,\n"
+            "    )\n\n"
             "    internal fun currentAppContext(): Context? = getContext()\n\n"
-            "    internal suspend fun inspectPluginProviders(\n"
+            "    internal fun unloadByFilePath(filePath: String) {\n"
+            "        val targetName = File(filePath).name\n"
+            "        val matchedIds = synchronized(loadedLock) {\n"
+            "            loaded.entries\n"
+            "                .filter { (_, lp) -> lp.path == filePath || File(lp.path).name == targetName }\n"
+            "                .map { it.key }\n"
+            "        }\n"
+            "        matchedIds.forEach { unload(it) }\n"
+            "    }\n\n"
+            "    internal suspend fun inspectPluginDetails(\n"
             "        plugin: CloudStreamPluginItem,\n"
-            "    ): Pair<Boolean, List<MainAPI>> {\n"
+            "    ): PluginInspectionData {\n"
             "        provider(plugin)\n"
             "        val loadedPlugin = synchronized(loadedLock) { loaded[plugin.metadata.id.value] }\n"
             "            ?: error(\"CloudStream extension could not be loaded\")\n"
             "        val hasNative = (loadedPlugin.instance as? Plugin)?.openSettings != null\n"
-            "        return hasNative to loadedPlugin.providers\n"
+            "        return PluginInspectionData(\n"
+            "            hasNativeSettings = hasNative,\n"
+            "            instance = loadedPlugin.instance,\n"
+            "            providers = loadedPlugin.providers,\n"
+            "            extractors = loadedPlugin.extractors,\n"
+            "        )\n"
             "    }\n\n"
             "    actual fun clear() {\n",
-            "CloudStreamPlatformRuntime inspectPluginProviders & currentAppContext",
+            "CloudStreamPlatformRuntime inspectPluginDetails & unloadByFilePath",
         )
         changed |= _replace_once(
             runtime_kt,
@@ -1866,43 +2293,55 @@ internal actual object CloudStreamExtensionConfigBridge {
         if changed:
             patched.append(str(runtime_kt.relative_to(root)))
 
-    # 7. Patch CloudStreamSettingsSection.kt so Gear icon opens Universal Extension Settings Dialog
+    # 7. Patch CloudStreamSettingsSection.kt:
+    #    - Default Gear icon = CloudStream Native Settings UI (with auto-fallback to Nuvio UI on failure)
+    #    - User option to switch Gear icon to Nuvio's Settings UI
+    #    - Nuvio's Settings UI styled 100% with MaterialTheme.nuvio tokens & showing all internal sources
     section_kt = root / "composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamSettingsSection.kt"
     if section_kt.is_file():
         changed = False
         changed |= _replace_once(
             section_kt,
             "import androidx.compose.foundation.layout.height\n",
+            "import androidx.compose.foundation.background\n"
+            "import androidx.compose.foundation.layout.Box\n"
             "import androidx.compose.foundation.layout.height\n"
             "import androidx.compose.foundation.layout.heightIn\n"
             "import androidx.compose.foundation.rememberScrollState\n"
             "import androidx.compose.foundation.verticalScroll\n",
-            "CloudStreamSettingsSection scroll imports",
+            "CloudStreamSettingsSection layout & scroll imports",
         )
         changed |= _replace_once(
             section_kt,
             "import androidx.compose.material.icons.rounded.Settings\n",
+            "import androidx.compose.material.icons.automirrored.rounded.OpenInNew\n"
             "import androidx.compose.material.icons.rounded.Add\n"
             "import androidx.compose.material.icons.rounded.Check\n"
-            "import androidx.compose.material.icons.rounded.OpenInNew\n"
-            "import androidx.compose.material.icons.rounded.Settings\n",
-            "CloudStreamSettingsSection extra icon imports",
+            "import androidx.compose.material.icons.rounded.Close\n"
+            "import androidx.compose.material.icons.rounded.Settings\n"
+            "import androidx.compose.material.icons.rounded.Tune\n"
+            "import androidx.compose.material3.SwitchDefaults\n",
+            "CloudStreamSettingsSection extra icon & SwitchDefaults imports",
         )
         changed |= _replace_once(
             section_kt,
             "import androidx.compose.ui.unit.dp\n",
             "import androidx.compose.ui.unit.dp\n"
+            "import androidx.compose.ui.unit.sp\n"
             "import androidx.compose.ui.window.DialogProperties\n"
             "import com.nuvio.app.core.ui.DialogButton\n"
             "import com.nuvio.app.core.ui.DialogButtonStyle\n"
             "import com.nuvio.app.core.ui.DialogButtons\n"
-            "import com.nuvio.app.core.ui.DialogSurface\n",
-            "CloudStreamSettingsSection DialogSurface imports",
+            "import com.nuvio.app.core.ui.DialogSurface\n"
+            "import com.nuvio.app.core.ui.NuvioTokens\n"
+            "import com.nuvio.app.core.ui.nuvio\n",
+            "CloudStreamSettingsSection Nuvio UI imports",
         )
         changed |= _replace_once(
             section_kt,
             "import com.nuvio.app.features.cloudstream.CloudStreamPluginItem\n",
             "import com.nuvio.app.features.cloudstream.CloudStreamExtensionConfigBridge\n"
+            "import com.nuvio.app.features.cloudstream.CloudStreamInternalSource\n"
             "import com.nuvio.app.features.cloudstream.CloudStreamPluginConfigSnapshot\n"
             "import com.nuvio.app.features.cloudstream.CloudStreamPluginItem\n"
             "import com.nuvio.app.features.cloudstream.CloudStreamPreferenceEntry\n"
@@ -1914,8 +2353,39 @@ internal actual object CloudStreamExtensionConfigBridge {
             section_kt,
             "    var isBulkInstalling by remember { mutableStateOf(false) }\n",
             "    var isBulkInstalling by remember { mutableStateOf(false) }\n"
-            "    var configuringPluginId by rememberSaveable { mutableStateOf<String?>(null) }\n",
-            "CloudStreamSettingsSection configuringPluginId state",
+            "    var configuringPluginId by rememberSaveable { mutableStateOf<String?>(null) }\n"
+            "    var useNuvioSettingsUi by remember {\n"
+            "        mutableStateOf(CloudStreamExtensionConfigBridge.preferNuvioSettingsUi())\n"
+            "    }\n",
+            "CloudStreamSettingsSection configuringPluginId & useNuvioSettingsUi state",
+        )
+        changed |= _replace_once(
+            section_kt,
+            "        Spacer(Modifier.height(12.dp))\n"
+            "        Text(\n"
+            "            text = copy.sectionDescription,\n"
+            "            style = MaterialTheme.typography.bodyMedium,\n"
+            "            color = MaterialTheme.colorScheme.onSurfaceVariant,\n"
+            "        )\n"
+            "    }\n",
+            "        Spacer(Modifier.height(12.dp))\n"
+            "        Text(\n"
+            "            text = copy.sectionDescription,\n"
+            "            style = MaterialTheme.typography.bodyMedium,\n"
+            "            color = MaterialTheme.colorScheme.onSurfaceVariant,\n"
+            "        )\n"
+            "        if (CloudStreamExtensionConfigBridge.isSupported) {\n"
+            "            Spacer(Modifier.height(12.dp))\n"
+            "            CloudStreamSettingsUiModeSelector(\n"
+            "                useNuvioSettingsUi = useNuvioSettingsUi,\n"
+            "                onModeChange = { preferNuvio ->\n"
+            "                    useNuvioSettingsUi = preferNuvio\n"
+            "                    CloudStreamExtensionConfigBridge.setPreferNuvioSettingsUi(preferNuvio)\n"
+            "                },\n"
+            "            )\n"
+            "        }\n"
+            "    }\n",
+            "CloudStreamSettingsSection UI mode selector in summary card",
         )
         changed |= _replace_once(
             section_kt,
@@ -1935,6 +2405,7 @@ internal actual object CloudStreamExtensionConfigBridge {
             "            securityWarningAccepted = state.securityWarningAccepted,\n"
             "            pinnedSourceIds = pinnedSourceIds,\n"
             "            copy = copy,\n"
+            "            useNuvioSettingsUi = useNuvioSettingsUi,\n"
             "            onMessage = { message = it },\n"
             "            onOpenConfig = { configuringPluginId = plugin.metadata.id.value },\n"
             "        )\n"
@@ -1954,7 +2425,7 @@ internal actual object CloudStreamExtensionConfigBridge {
             "                    CloudStreamRepository.openPluginSettings(targetId)\n"
             "                        .onFailure { error ->\n"
             "                            val errText = error.message\n"
-            "                                ?: \"Could not open built-in extension UI\"\n"
+            "                                ?: \"Could not open CloudStream native settings\"\n"
             "                            message = errText\n"
             "                            NuvioToastController.show(errText)\n"
             "                        }\n"
@@ -1979,10 +2450,11 @@ internal actual object CloudStreamExtensionConfigBridge {
             "    securityWarningAccepted: Boolean,\n"
             "    pinnedSourceIds: Set<String>,\n"
             "    copy: CloudStreamSettingsCopy,\n"
+            "    useNuvioSettingsUi: Boolean = false,\n"
             "    onMessage: (String) -> Unit,\n"
             "    onOpenConfig: () -> Unit = {},\n"
             ") {\n",
-            "CloudStreamPluginCard onOpenConfig parameter",
+            "CloudStreamPluginCard useNuvioSettingsUi & onOpenConfig parameters",
         )
         changed |= _replace_once(
             section_kt,
@@ -2005,25 +2477,132 @@ internal actual object CloudStreamExtensionConfigBridge {
             "                    IconButton(\n"
             "                        enabled = plugin.verified && plugin.compatibility.isRunnable,\n"
             "                        onClick = {\n"
-            "                            if (CloudStreamExtensionConfigBridge.isSupported) {\n"
+            "                            if (CloudStreamExtensionConfigBridge.isSupported && useNuvioSettingsUi) {\n"
             "                                onOpenConfig()\n"
             "                            } else {\n"
             "                                scope.launch {\n"
             "                                    CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
             "                                        .onFailure { error ->\n"
-            "                                            val errText = error.message\n"
-            "                                                ?: \"This extension does not provide configurable settings\"\n"
-            "                                            onMessage(errText)\n"
-            "                                            NuvioToastController.show(errText)\n"
+            "                                            if (CloudStreamExtensionConfigBridge.isSupported) {\n"
+            "                                                NuvioToastController.show(\n"
+            "                                                    \"Native CloudStream UI unavailable — opening Nuvio extension settings\",\n"
+            "                                                )\n"
+            "                                                onOpenConfig()\n"
+            "                                            } else {\n"
+            "                                                val errText = error.message\n"
+            "                                                    ?: \"This extension does not provide configurable settings\"\n"
+            "                                                onMessage(errText)\n"
+            "                                                NuvioToastController.show(errText)\n"
+            "                                            }\n"
             "                                        }\n"
             "                                }\n"
             "                            }\n"
             "                        },\n"
             "                    ) {\n",
-            "CloudStreamPluginCard gear button open CloudStreamExtensionSettingsDialog",
+            "CloudStreamPluginCard gear button default CloudStream UI with Nuvio UI option & fallback",
         )
 
-        dialog_code = r'''
+        dialog_code = r"""
+
+@Composable
+private fun CloudStreamSettingsUiModeSelector(
+    useNuvioSettingsUi: Boolean,
+    onModeChange: (Boolean) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceElevated,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Extension Gear Button UI",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+            }
+            Text(
+                text = "CloudStream UI is the default. Switch to Nuvio UI if an extension's native settings screen doesn't work.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textSecondary,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                NuvioModeSegmentChip(
+                    label = "CloudStream UI (Default)",
+                    selected = !useNuvioSettingsUi,
+                    onClick = { onModeChange(false) },
+                    modifier = Modifier.weight(1f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Nuvio UI",
+                    selected = useNuvioSettingsUi,
+                    onClick = { onModeChange(true) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NuvioModeSegmentChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.sm),
+        color = if (selected) tokens.colors.accent.copy(alpha = 0.2f) else tokens.colors.surfaceCard,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) tokens.colors.accent else tokens.colors.borderSubtle,
+        ),
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected) tokens.colors.accent else tokens.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private enum class NuvioExtConfigTab {
+    Sources,
+    Domains,
+    Tokens,
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -2032,10 +2611,13 @@ private fun CloudStreamExtensionSettingsDialog(
     onDismiss: () -> Unit,
     onLaunchNativeSettings: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
     var snapshot by remember(plugin.metadata.id.value) { mutableStateOf<CloudStreamPluginConfigSnapshot?>(null) }
     var loadError by remember(plugin.metadata.id.value) { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(true) }
+    var activeTab by remember { mutableStateOf(NuvioExtConfigTab.Sources) }
+    var sourceQuery by remember { mutableStateOf("") }
     var newKey by remember { mutableStateOf("") }
     var newValue by remember { mutableStateOf("") }
     var newType by remember { mutableStateOf("string") }
@@ -2052,22 +2634,51 @@ private fun CloudStreamExtensionSettingsDialog(
     DialogSurface(
         onDismissRequest = onDismiss,
         modifier = Modifier.fillMaxWidth(0.95f),
-        title = "${plugin.metadata.name} Settings",
+        title = plugin.metadata.name.ifBlank { plugin.metadata.internalName },
+        message = "Nuvio Extension Configuration",
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val snap = snapshot
+
+        if (snap != null) {
+            val enabledSourcesCount = snap.internalSources.count { it.enabled }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                NuvioModeSegmentChip(
+                    label = "Sources ($enabledSourcesCount/${snap.internalSources.size})",
+                    selected = activeTab == NuvioExtConfigTab.Sources,
+                    onClick = { activeTab = NuvioExtConfigTab.Sources },
+                    modifier = Modifier.weight(1.25f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Domains (${snap.subProviders.size})",
+                    selected = activeTab == NuvioExtConfigTab.Domains,
+                    onClick = { activeTab = NuvioExtConfigTab.Domains },
+                    modifier = Modifier.weight(0.9f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Tokens",
+                    selected = activeTab == NuvioExtConfigTab.Tokens,
+                    onClick = { activeTab = NuvioExtConfigTab.Tokens },
+                    modifier = Modifier.weight(0.85f),
+                )
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 460.dp)
+                .heightIn(max = 440.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            val snap = snapshot
             if (isBusy && snap == null) {
                 Text(
-                    text = "Loading extension configuration...",
+                    text = "Inspecting extension sources and settings...",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = tokens.colors.textSecondary,
                 )
             }
 
@@ -2075,197 +2686,329 @@ private fun CloudStreamExtensionSettingsDialog(
                 Text(
                     text = err,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    color = tokens.colors.danger,
                 )
             }
 
             if (snap != null) {
                 if (snap.hasNativeSettings) {
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+                        color = tokens.colors.surfaceCard,
+                        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onLaunchNativeSettings),
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                text = "Built-in Extension Settings",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = "Launch ${plugin.metadata.name}'s native dialog, or configure providers, domains, and tokens directly below.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Button(
-                                onClick = onLaunchNativeSettings,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Open Native Extension UI")
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Open CloudStream Native UI",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.colors.textPrimary,
+                                )
+                                Text(
+                                    text = "Launch ${plugin.metadata.name}'s built-in dialog directly",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = tokens.colors.textSecondary,
+                                )
                             }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                                contentDescription = null,
+                                tint = tokens.colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
                         }
                     }
                 }
 
-                if (snap.subProviders.isNotEmpty()) {
-                    NuvioSectionLabel(text = "Sub-Providers & Custom Domains (${snap.subProviders.size})")
-                    snap.subProviders.forEach { sub ->
-                        SubProviderConfigCard(
-                            sub = sub,
-                            onSave = { enabled, overrideUrl ->
-                                scope.launch {
-                                    CloudStreamExtensionConfigBridge.updateSubProvider(
-                                        plugin = plugin,
-                                        apiClassName = sub.apiClassName,
-                                        enabled = enabled,
-                                        overrideMainUrl = overrideUrl,
-                                    ).onSuccess { updated ->
-                                        snapshot = updated
-                                        NuvioToastController.show("Saved ${sub.name}")
-                                    }.onFailure { err ->
-                                        NuvioToastController.show(err.message ?: "Could not save provider config")
+                when (activeTab) {
+                    NuvioExtConfigTab.Sources -> {
+                        val filteredSources = remember(snap.internalSources, sourceQuery) {
+                            val q = sourceQuery.trim().lowercase()
+                            if (q.isEmpty()) {
+                                snap.internalSources
+                            } else {
+                                snap.internalSources.filter { src ->
+                                    src.name.lowercase().contains(q) ||
+                                        src.id.lowercase().contains(q) ||
+                                        src.kind.lowercase().contains(q)
+                                }
+                            }
+                        }
+
+                        if (snap.internalSources.size > 4) {
+                            NuvioInputField(
+                                value = sourceQuery,
+                                onValueChange = { sourceQuery = it },
+                                placeholder = "Search ${snap.internalSources.size} sources inside ${plugin.metadata.name}...",
+                                trailingContent = if (sourceQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(onClick = { sourceQuery = "" }) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Close,
+                                                contentDescription = "Clear",
+                                                tint = tokens.colors.textMuted,
+                                            )
+                                        }
                                     }
-                                }
-                            },
-                        )
-                    }
-                }
+                                } else null,
+                            )
+                        }
 
-                NuvioSectionLabel(text = "Extension Tokens & Preferences (${snap.defaultPrefFile})")
-                Text(
-                    text = "Set extension keys such as FebBox/SuperStream UI token, API keys, cookies, or custom flags.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    listOf(
-                        "token" to "string",
-                        "cookie" to "string",
-                        "tmdb_api" to "string",
-                        "domain" to "string",
-                    ).forEach { (presetKey, presetType) ->
-                        CloudStreamFilterChip(
-                            label = "+ $presetKey",
-                            selected = newKey == presetKey,
-                            onClick = {
-                                newKey = presetKey
-                                newType = presetType
-                            },
-                        )
-                    }
-                }
-
-                snap.preferences.forEach { entry ->
-                    PreferenceEntryCard(
-                        entry = entry,
-                        onSave = { updatedVal ->
-                            scope.launch {
-                                CloudStreamExtensionConfigBridge.savePreference(
-                                    plugin = plugin,
-                                    prefFile = entry.prefFile,
-                                    key = entry.key,
-                                    value = updatedVal,
-                                    valueType = entry.valueType,
-                                ).onSuccess { updated ->
-                                    snapshot = updated
-                                    NuvioToastController.show("Saved ${entry.key}")
-                                }.onFailure { err ->
-                                    NuvioToastController.show(err.message ?: "Failed saving ${entry.key}")
-                                }
-                            }
-                        },
-                        onDelete = {
-                            scope.launch {
-                                CloudStreamExtensionConfigBridge.deletePreference(
-                                    plugin = plugin,
-                                    prefFile = entry.prefFile,
-                                    key = entry.key,
-                                ).onSuccess { updated ->
-                                    snapshot = updated
-                                    NuvioToastController.show("Removed ${entry.key}")
-                                }
-                            }
-                        },
-                    )
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "Add / Set Preference Key",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf("string", "boolean", "int").forEach { t ->
-                                CloudStreamFilterChip(
-                                    label = t.uppercase(),
-                                    selected = newType == t,
+                        val toggleableFiltered = remember(filteredSources) {
+                            filteredSources.filter { it.canToggle }.map { it.id }
+                        }
+                        if (toggleableFiltered.size > 1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                NuvioModeSegmentChip(
+                                    label = "Enable All (${toggleableFiltered.size})",
+                                    selected = false,
                                     onClick = {
-                                        newType = t
-                                        if (t == "boolean" && newValue !in listOf("true", "false")) {
-                                            newValue = "true"
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.setAllInternalSources(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceIds = toggleableFiltered,
+                                                enabled = true,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Enabled ${toggleableFiltered.size} sources")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                NuvioModeSegmentChip(
+                                    label = "Disable All",
+                                    selected = false,
+                                    onClick = {
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.setAllInternalSources(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceIds = toggleableFiltered,
+                                                enabled = false,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Disabled ${toggleableFiltered.size} sources")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+
+                        if (filteredSources.isEmpty()) {
+                            Text(
+                                text = "No matching sources found inside this extension.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tokens.colors.textMuted,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        } else {
+                            filteredSources.forEach { src ->
+                                InternalSourceRowCard(
+                                    source = src,
+                                    onToggle = { checked ->
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.toggleInternalSource(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceId = src.id,
+                                                enabled = checked,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Could not update source")
+                                            }
                                         }
                                     },
                                 )
                             }
                         }
-                        NuvioInputField(
-                            value = newKey,
-                            onValueChange = { newKey = it },
-                            placeholder = "Key name (e.g. token, cookie, proxy_url)",
+                    }
+
+                    NuvioExtConfigTab.Domains -> {
+                        if (snap.subProviders.isEmpty()) {
+                            Text(
+                                text = "This extension does not register separate MainAPI domains.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tokens.colors.textMuted,
+                            )
+                        } else {
+                            snap.subProviders.forEach { sub ->
+                                SubProviderConfigCard(
+                                    sub = sub,
+                                    onSave = { enabled, overrideUrl ->
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.updateSubProvider(
+                                                plugin = plugin,
+                                                apiClassName = sub.apiClassName,
+                                                enabled = enabled,
+                                                overrideMainUrl = overrideUrl,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Saved ${sub.name}")
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Could not save provider config")
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    NuvioExtConfigTab.Tokens -> {
+                        Text(
+                            text = "Configure FebBox/SuperStream UI token, Wyzie subtitles key, concurrency, cookies, or custom extension flags (${snap.defaultPrefFile}).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.colors.textSecondary,
                         )
-                        NuvioInputField(
-                            value = newValue,
-                            onValueChange = { newValue = it },
-                            placeholder = if (newType == "boolean") "true or false" else "Value",
-                        )
-                        OutlinedButton(
-                            enabled = newKey.isNotBlank(),
-                            onClick = {
-                                val k = newKey.trim()
-                                val v = newValue
-                                val vt = newType
-                                scope.launch {
-                                    CloudStreamExtensionConfigBridge.savePreference(
-                                        plugin = plugin,
-                                        prefFile = snap.defaultPrefFile,
-                                        key = k,
-                                        value = v,
-                                        valueType = vt,
-                                    ).onSuccess { updated ->
-                                        snapshot = updated
-                                        newKey = ""
-                                        newValue = ""
-                                        NuvioToastController.show("Saved $k")
-                                    }.onFailure { err ->
-                                        NuvioToastController.show(err.message ?: "Failed saving key")
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            listOf(
+                                Triple("token", "string", "FebBox Token"),
+                                Triple("wyzie_key", "string", "Wyzie Key"),
+                                Triple("provider_concurrency", "int", "Concurrency"),
+                                Triple("tmdb_language_code", "string", "TMDB Lang"),
+                                Triple("cookie", "string", "Cookie"),
+                            ).forEach { (presetKey, presetType, label) ->
+                                NuvioModeSegmentChip(
+                                    label = "+ $label",
+                                    selected = newKey == presetKey,
+                                    onClick = {
+                                        newKey = presetKey
+                                        newType = presetType
+                                        if (presetKey == "provider_concurrency" && newValue.isBlank()) {
+                                            newValue = "8"
+                                        } else if (presetKey == "tmdb_language_code" && newValue.isBlank()) {
+                                            newValue = "en-US"
+                                        }
+                                    },
+                                )
+                            }
+                        }
+
+                        snap.preferences.forEach { entry ->
+                            PreferenceEntryCard(
+                                entry = entry,
+                                onSave = { updatedVal ->
+                                    scope.launch {
+                                        CloudStreamExtensionConfigBridge.savePreference(
+                                            plugin = plugin,
+                                            prefFile = entry.prefFile,
+                                            key = entry.key,
+                                            value = updatedVal,
+                                            valueType = entry.valueType,
+                                        ).onSuccess { updated ->
+                                            snapshot = updated
+                                            NuvioToastController.show("Saved ${entry.key}")
+                                        }.onFailure { err ->
+                                            NuvioToastController.show(err.message ?: "Failed saving ${entry.key}")
+                                        }
                                     }
-                                }
-                            },
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        CloudStreamExtensionConfigBridge.deletePreference(
+                                            plugin = plugin,
+                                            prefFile = entry.prefFile,
+                                            key = entry.key,
+                                        ).onSuccess { updated ->
+                                            snapshot = updated
+                                            NuvioToastController.show("Removed ${entry.key}")
+                                        }
+                                    }
+                                },
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(NuvioTokens.Radius.md),
+                            color = tokens.colors.surfaceCard,
+                            border = BorderStroke(1.dp, tokens.colors.borderSubtle),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Save Key")
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "Add / Set Preference Key",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.colors.textPrimary,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("string", "boolean", "int").forEach { t ->
+                                        NuvioModeSegmentChip(
+                                            label = t.uppercase(),
+                                            selected = newType == t,
+                                            onClick = {
+                                                newType = t
+                                                if (t == "boolean" && newValue !in listOf("true", "false")) {
+                                                    newValue = "true"
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                                NuvioInputField(
+                                    value = newKey,
+                                    onValueChange = { newKey = it },
+                                    placeholder = "Key name (e.g. token, wyzie_key, cookie)",
+                                )
+                                NuvioInputField(
+                                    value = newValue,
+                                    onValueChange = { newValue = it },
+                                    placeholder = if (newType == "boolean") "true or false" else "Value",
+                                )
+                                DialogButton(
+                                    text = "Save Key",
+                                    enabled = newKey.isNotBlank(),
+                                    style = DialogButtonStyle.Primary,
+                                    onClick = {
+                                        val k = newKey.trim()
+                                        val v = newValue
+                                        val vt = newType
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.savePreference(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                key = k,
+                                                value = v,
+                                                valueType = vt,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                newKey = ""
+                                                newValue = ""
+                                                NuvioToastController.show("Saved $k")
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Failed saving key")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
                     }
                 }
@@ -2274,7 +3017,7 @@ private fun CloudStreamExtensionSettingsDialog(
 
         DialogButtons {
             DialogButton(
-                text = "Reload Extension",
+                text = "Reload",
                 onClick = {
                     scope.launch {
                         CloudStreamExtensionConfigBridge.reloadPlugin(plugin)
@@ -2296,17 +3039,109 @@ private fun CloudStreamExtensionSettingsDialog(
 }
 
 @Composable
+private fun InternalSourceRowCard(
+    source: CloudStreamInternalSource,
+    onToggle: (Boolean) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (source.enabled) tokens.colors.borderSubtle else tokens.colors.borderSubtle.copy(alpha = 0.45f),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (source.canToggle) Modifier.clickable { onToggle(!source.enabled) } else Modifier,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = source.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (source.enabled) tokens.colors.textPrimary else tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = tokens.colors.accent.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(4.dp),
+                            )
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            text = source.kind.uppercase(),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.colors.accent,
+                        )
+                    }
+                    if (!source.id.contains("::")) {
+                        Text(
+                            text = source.id,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (source.canToggle) {
+                Switch(
+                    checked = source.enabled,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = tokens.colors.onAccent,
+                        checkedTrackColor = tokens.colors.accent,
+                        uncheckedThumbColor = tokens.colors.textSecondary,
+                        uncheckedTrackColor = tokens.colors.surfaceElevated,
+                    ),
+                )
+            } else {
+                Text(
+                    text = "ACTIVE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.accent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SubProviderConfigCard(
     sub: CloudStreamSubProviderConfig,
     onSave: (enabled: Boolean, overrideUrl: String) -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     var urlDraft by remember(sub.apiClassName, sub.overrideMainUrl) {
         mutableStateOf(sub.overrideMainUrl)
     }
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -2323,11 +3158,12 @@ private fun SubProviderConfigCard(
                         text = sub.name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.textPrimary,
                     )
                     Text(
-                        text = "${sub.lang.uppercase()} • Default: ${sub.defaultMainUrl}",
+                        text = "${sub.lang.uppercase()} • ${sub.defaultMainUrl}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = tokens.colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2335,6 +3171,12 @@ private fun SubProviderConfigCard(
                 Switch(
                     checked = sub.enabled,
                     onCheckedChange = { checked -> onSave(checked, urlDraft) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = tokens.colors.onAccent,
+                        checkedTrackColor = tokens.colors.accent,
+                        uncheckedThumbColor = tokens.colors.textSecondary,
+                        uncheckedTrackColor = tokens.colors.surfaceElevated,
+                    ),
                 )
             }
             Row(
@@ -2352,7 +3194,11 @@ private fun SubProviderConfigCard(
                 IconButton(
                     onClick = { onSave(sub.enabled, urlDraft) },
                 ) {
-                    Icon(Icons.Rounded.Check, contentDescription = "Save domain")
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = "Save domain",
+                        tint = tokens.colors.accent,
+                    )
                 }
                 if (urlDraft.isNotBlank()) {
                     IconButton(
@@ -2361,7 +3207,11 @@ private fun SubProviderConfigCard(
                             onSave(sub.enabled, "")
                         },
                     ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Reset domain")
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = "Reset domain",
+                            tint = tokens.colors.textSecondary,
+                        )
                     }
                 }
             }
@@ -2375,11 +3225,20 @@ private fun PreferenceEntryCard(
     onSave: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     var draft by remember(entry.prefFile, entry.key, entry.value) { mutableStateOf(entry.value) }
+    val friendlyTitle = when (entry.key) {
+        "token" -> "FebBox / SuperStream UI Token (token)"
+        "wyzie_key" -> "Wyzie Subtitles API Key (wyzie_key)"
+        "provider_concurrency" -> "Scraper Concurrency (provider_concurrency)"
+        "tmdb_language_code" -> "TMDB Metadata Language (tmdb_language_code)"
+        "streamplay_stremio_saved_links" -> "Stremio Addon Links"
+        else -> entry.key
+    }
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (entry.isDiscoveredHint) 0.22f else 0.38f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -2393,14 +3252,15 @@ private fun PreferenceEntryCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = entry.key,
+                        text = friendlyTitle,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.textPrimary,
                     )
                     Text(
-                        text = if (entry.isDiscoveredHint) "Detected key (${entry.valueType}) — not set" else "${entry.prefFile} (${entry.valueType})",
+                        text = if (entry.isDiscoveredHint) "Available key (${entry.valueType}) — not set" else "${entry.prefFile} (${entry.valueType})",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = tokens.colors.textMuted,
                     )
                 }
                 if (entry.valueType == "boolean") {
@@ -2411,11 +3271,21 @@ private fun PreferenceEntryCard(
                             draft = next
                             onSave(next)
                         },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = tokens.colors.onAccent,
+                            checkedTrackColor = tokens.colors.accent,
+                            uncheckedThumbColor = tokens.colors.textSecondary,
+                            uncheckedTrackColor = tokens.colors.surfaceElevated,
+                        ),
                     )
                 }
                 if (!entry.isDiscoveredHint) {
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Rounded.Delete, contentDescription = "Delete ${entry.key}")
+                        Icon(
+                            imageVector = Icons.Rounded.Delete,
+                            contentDescription = "Delete ${entry.key}",
+                            tint = tokens.colors.danger,
+                        )
                     }
                 }
             }
@@ -2433,14 +3303,18 @@ private fun PreferenceEntryCard(
                         )
                     }
                     IconButton(onClick = { onSave(draft) }) {
-                        Icon(Icons.Rounded.Check, contentDescription = "Save ${entry.key}")
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Save ${entry.key}",
+                            tint = tokens.colors.accent,
+                        )
                     }
                 }
             }
         }
     }
 }
-'''
+"""
         current_sec = section_kt.read_text(encoding="utf-8", errors="replace")
         if "fun CloudStreamExtensionSettingsDialog(" not in current_sec:
             section_kt.write_text(current_sec + dialog_code, encoding="utf-8")

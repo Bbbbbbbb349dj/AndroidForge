@@ -486,6 +486,7 @@ def _patch_navigation_and_downloads_tab(root: Path) -> list[str]:
             "                    onBack\n"
             "                },\n",
             "DownloadsScreen hide back arrow when top-level tab",
+            already_applied="else -> onBack\n",
         )
         if changed:
             patched.append(str(dl_screen.relative_to(root)))
@@ -1256,11 +1257,24 @@ class AcraApplication {
             "        val response = withTimeout(effectiveTimeoutMs) {\n"
             "            api.load(route.data)\n"
             "        } ?: error(\"CloudStream provider returned no details\")\n",
-            "        val fixedRouteData = api.fixUrl(route.data)\n"
+            "        val trimmedRouteData = route.data.trimStart()\n"
+            "        val fixedRouteData = if (trimmedRouteData.startsWith(\"{\") || trimmedRouteData.startsWith(\"[\")) {\n"
+            "            route.data\n"
+            "        } else {\n"
+            "            api.fixUrl(route.data)\n"
+            "        }\n"
             "        val response = withTimeout(effectiveTimeoutMs) {\n"
-            "            api.load(fixedRouteData)\n"
+            "            val primary = try {\n"
+            "                api.load(fixedRouteData)\n"
+            "            } catch (cancelled: kotlinx.coroutines.CancellationException) {\n"
+            "                throw cancelled\n"
+            "            } catch (err: Throwable) {\n"
+            "                if (fixedRouteData == route.data) throw err\n"
+            "                null\n"
+            "            }\n"
+            "            primary ?: if (fixedRouteData != route.data) api.load(route.data) else null\n"
             "        } ?: error(\"CloudStream provider returned no details\")\n",
-            "CloudStreamPlatformRuntime fixUrl in load",
+            "CloudStreamPlatformRuntime JSON-safe fixUrl in load",
         )
         changed |= _replace_once(
             runtime_kt,
@@ -1269,10 +1283,10 @@ class AcraApplication {
             "        private const val DEFAULT_LOAD_TIMEOUT_MS = 120_000L\n"
             "        private const val DEFAULT_LINK_TIMEOUT_MS = 120_000L\n",
             "        private const val CLOUDSTREAM_API_CONCURRENCY = 4\n"
-            "        private const val DEFAULT_MAIN_PAGE_SECTION_TIMEOUT_MS = 12_000L\n"
-            "        private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 18_000L\n"
-            "        private const val DEFAULT_LOAD_TIMEOUT_MS = 25_000L\n"
-            "        private const val DEFAULT_LINK_TIMEOUT_MS = 24_000L\n",
+            "        private const val DEFAULT_MAIN_PAGE_SECTION_TIMEOUT_MS = 15_000L\n"
+            "        private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 25_000L\n"
+            "        private const val DEFAULT_LOAD_TIMEOUT_MS = 45_000L\n"
+            "        private const val DEFAULT_LINK_TIMEOUT_MS = 75_000L\n",
             "CloudStreamPlatformRuntime stage timeouts",
         )
         if changed:
@@ -1418,16 +1432,223 @@ class AcraApplication {
             "        )\n",
             "StreamsScreen reload pass parentMetaType & searchTitle",
         )
+        changed |= _replace_once(
+            streams_screen,
+            "import androidx.compose.foundation.background\n",
+            "import androidx.compose.foundation.BorderStroke\n"
+            "import androidx.compose.foundation.background\n",
+            "StreamsScreen BorderStroke import",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "import androidx.compose.foundation.lazy.LazyColumn\n",
+            "import androidx.compose.foundation.lazy.LazyColumn\n"
+            "import androidx.compose.foundation.lazy.LazyRow\n",
+            "StreamsScreen LazyRow import",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "import androidx.compose.material3.MaterialTheme\n",
+            "import androidx.compose.material3.MaterialTheme\n"
+            "import androidx.compose.material3.Surface\n",
+            "StreamsScreen Surface import",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "private fun StreamItem.matchesSearchTerms(terms: List<String>): Boolean {\n"
+            "    val haystack = buildString {\n"
+            "        name?.let { append(it).append(' ') }\n"
+            "        title?.let { append(it).append(' ') }\n"
+            "        description?.let { append(it).append(' ') }\n"
+            "        sourceName?.let { append(it).append(' ') }\n"
+            "        append(addonName).append(' ')\n"
+            "        behaviorHints.filename?.let { append(it).append(' ') }\n"
+            "        badges.forEach { badge -> append(badge.name).append(' ') }\n"
+            "    }.lowercase()\n"
+            "    return terms.all { haystack.contains(it) }\n"
+            "}\n",
+            "private fun StreamItem.matchesSearchTerms(terms: List<String>): Boolean {\n"
+            "    val raw = buildString {\n"
+            "        name?.let { append(it).append(' ') }\n"
+            "        title?.let { append(it).append(' ') }\n"
+            "        description?.let { append(it).append(' ') }\n"
+            "        sourceName?.let { append(it).append(' ') }\n"
+            "        append(streamLabel).append(' ')\n"
+            "        append(addonName).append(' ')\n"
+            "        if (addonId.startsWith(\"cloudstream:\", ignoreCase = true)) append(\"cloudstream cs3 \")\n"
+            "        behaviorHints.filename?.let { append(it).append(' ') }\n"
+            "        badges.forEach { badge -> append(badge.name).append(' ') }\n"
+            "    }.lowercase()\n"
+            "    val haystack = buildString {\n"
+            "        append(raw)\n"
+            "        if (raw.contains(\"2160p\") || raw.contains(\"uhd\") || raw.contains(\"4k\")) append(\" 4k 2160p uhd\")\n"
+            "        if (raw.contains(\"hevc\") || raw.contains(\"x265\") || raw.contains(\"h265\")) append(\" hevc x265 h265\")\n"
+            "    }\n"
+            "    return terms.all { haystack.contains(it) }\n"
+            "}\n\n"
+            "@Composable\n"
+            "private fun StreamQuickFilterChipsRow(\n"
+            "    query: String,\n"
+            "    onQueryChange: (String) -> Unit,\n"
+            "    modifier: Modifier = Modifier,\n"
+            ") {\n"
+            "    val tokens = MaterialTheme.nuvio\n"
+            "    val activeTokens = remember(query) {\n"
+            "        query.trim().lowercase().split(' ').filter { it.isNotEmpty() }.toSet()\n"
+            "    }\n"
+            "    val presets = remember {\n"
+            "        listOf(\n"
+            "            \"4K\" to \"4k\",\n"
+            "            \"1080p\" to \"1080p\",\n"
+            "            \"720p\" to \"720p\",\n"
+            "            \"HDR\" to \"hdr\",\n"
+            "            \"HEVC\" to \"hevc\",\n"
+            "            \"CloudStream\" to \"cloudstream\",\n"
+            "        )\n"
+            "    }\n"
+            "    LazyRow(\n"
+            "        modifier = modifier.fillMaxWidth(),\n"
+            "        horizontalArrangement = Arrangement.spacedBy(6.dp),\n"
+            "    ) {\n"
+            "        items(presets) { (label, token) ->\n"
+            "            val selected = token in activeTokens\n"
+            "            Surface(\n"
+            "                shape = RoundedCornerShape(NuvioTokens.Radius.full),\n"
+            "                color = if (selected) tokens.colors.accent.copy(alpha = 0.22f) else tokens.colors.surfaceCard.copy(alpha = 0.78f),\n"
+            "                border = BorderStroke(\n"
+            "                    width = 1.dp,\n"
+            "                    color = if (selected) tokens.colors.accent else tokens.colors.borderSubtle,\n"
+            "                ),\n"
+            "                modifier = Modifier.clickable {\n"
+            "                    val words = query.trim().split(' ').filter { it.isNotEmpty() }\n"
+            "                    val updated = if (words.any { it.equals(token, ignoreCase = true) }) {\n"
+            "                        words.filterNot { it.equals(token, ignoreCase = true) }.joinToString(\" \")\n"
+            "                    } else {\n"
+            "                        (words + token).joinToString(\" \")\n"
+            "                    }\n"
+            "                    onQueryChange(updated)\n"
+            "                },\n"
+            "            ) {\n"
+            "                Text(\n"
+            "                    text = label,\n"
+            "                    style = MaterialTheme.typography.labelSmall,\n"
+            "                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,\n"
+            "                    color = if (selected) tokens.colors.accent else tokens.colors.textSecondary,\n"
+            "                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),\n"
+            "                )\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n",
+            "StreamsScreen richer search terms & quick filter chips helper",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "    if (!isAmbientLiquidGlassActive()) {\n"
+            "        NuvioInputField(\n"
+            "            value = query,\n"
+            "            onValueChange = onQueryChange,\n"
+            "            placeholder = stringResource(Res.string.streams_search_placeholder),\n"
+            "            modifier = modifier,\n"
+            "            trailingContent = trailingContent,\n"
+            "        )\n"
+            "        return\n"
+            "    }\n",
+            "    if (!isAmbientLiquidGlassActive()) {\n"
+            "        Column(\n"
+            "            modifier = modifier.fillMaxWidth(),\n"
+            "            verticalArrangement = Arrangement.spacedBy(6.dp),\n"
+            "        ) {\n"
+            "            NuvioInputField(\n"
+            "                value = query,\n"
+            "                onValueChange = onQueryChange,\n"
+            "                placeholder = stringResource(Res.string.streams_search_placeholder),\n"
+            "                trailingContent = trailingContent,\n"
+            "            )\n"
+            "            StreamQuickFilterChipsRow(\n"
+            "                query = query,\n"
+            "                onQueryChange = onQueryChange,\n"
+            "            )\n"
+            "        }\n"
+            "        return\n"
+            "    }\n",
+            "StreamsScreen StreamSearchField normal mode quick filter chips",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "    Box(\n"
+            "        modifier = modifier\n"
+            "            .fillMaxWidth()\n"
+            "            .clip(fieldShape)\n",
+            "    Column(\n"
+            "        modifier = modifier.fillMaxWidth(),\n"
+            "        verticalArrangement = Arrangement.spacedBy(6.dp),\n"
+            "    ) {\n"
+            "    Box(\n"
+            "        modifier = Modifier\n"
+            "            .fillMaxWidth()\n"
+            "            .clip(fieldShape)\n",
+            "StreamsScreen StreamSearchField glass mode outer Column",
+        )
+        changed |= _replace_once(
+            streams_screen,
+            "                cursorColor = tokens.colors.accent,\n"
+            "            ),\n"
+            "        )\n"
+            "    }\n"
+            "}\n",
+            "                cursorColor = tokens.colors.accent,\n"
+            "            ),\n"
+            "        )\n"
+            "    }\n"
+            "    StreamQuickFilterChipsRow(\n"
+            "        query = query,\n"
+            "        onQueryChange = onQueryChange,\n"
+            "    )\n"
+            "    }\n"
+            "}\n",
+            "StreamsScreen StreamSearchField glass mode quick filter chips",
+        )
         if changed:
             patched.append(str(streams_screen.relative_to(root)))
+
+    badge_repo = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/streams/StreamBadgeSettingsRepository.kt"
+    if badge_repo.is_file():
+        b_changed = False
+        b_changed |= _replace_once(
+            badge_repo,
+            "    val showStreamSearch: Boolean = false,\n",
+            "    val showStreamSearch: Boolean = true,\n",
+            "StreamBadgeSettingsUiState default showStreamSearch true",
+        )
+        b_changed |= _replace_once(
+            badge_repo,
+            "    private var showStreamSearch = false\n",
+            "    private var showStreamSearch = true\n",
+            "StreamBadgeSettingsRepository default showStreamSearch field true",
+        )
+        b_changed |= _replace_once(
+            badge_repo,
+            "        showStreamSearch = false\n",
+            "        showStreamSearch = true\n",
+            "StreamBadgeSettingsRepository clearLocalState showStreamSearch true",
+        )
+        b_changed |= _replace_once(
+            badge_repo,
+            "        showStreamSearch = StreamBadgeSettingsStorage.loadShowStreamSearch() ?: false\n",
+            "        showStreamSearch = StreamBadgeSettingsStorage.loadShowStreamSearch() ?: true\n",
+            "StreamBadgeSettingsRepository loadFromDisk default showStreamSearch true",
+        )
+        if b_changed:
+            patched.append(str(badge_repo.relative_to(root)))
 
     streams_repo = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/streams/StreamsRepository.kt"
     if streams_repo.is_file():
         if _replace_once(
             streams_repo,
             "private const val STREAM_PROVIDER_TIMEOUT_MS = 35_000L\n",
-            "private const val STREAM_PROVIDER_TIMEOUT_MS = 48_000L\n",
-            "StreamsRepository provider timeout 48s",
+            "private const val STREAM_PROVIDER_TIMEOUT_MS = 90_000L\n",
+            "StreamsRepository provider timeout 90s",
         ):
             patched.append(str(streams_repo.relative_to(root)))
 
@@ -1582,9 +1803,9 @@ class AcraApplication {
             fetch_support,
             "private const val CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS = 120_000L\n"
             "private const val CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT = 3\n",
-            "private const val CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS = 44_000L\n"
+            "private const val CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS = 85_000L\n"
             "private const val CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT = 6\n",
-            "StreamFetchSupport timeout 44s & candidate limit 6",
+            "StreamFetchSupport timeout 85s & candidate limit 6",
         )
         changed |= _replace_once(
             fetch_support,
@@ -2401,7 +2622,7 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
         if changed:
             patched.append(str(loader_kt.relative_to(root)))
 
-    # 4. BatchDownloadCoordinator.kt: add BatchSourceFilter (All, Nuvio, CloudStream), pass meta, 48s timeout
+    # 4. BatchDownloadCoordinator.kt: add BatchSourceFilter + searchQuery + matchesBatchSearchQuery + 90s timeout
     batch_coord = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/downloads/BatchDownloadCoordinator.kt"
     if batch_coord.is_file():
         changed = False
@@ -2420,11 +2641,32 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "    CloudStream,\n"
             "}\n\n"
             "fun StreamItem.isCloudStreamBatchSource(): Boolean =\n"
-            "    addonId?.startsWith(\"cloudstream:\", ignoreCase = true) == true\n\n"
+            "    addonId.startsWith(\"cloudstream:\", ignoreCase = true)\n\n"
             "fun StreamItem.matchesBatchSourceFilter(filter: BatchSourceFilter): Boolean = when (filter) {\n"
             "    BatchSourceFilter.All -> true\n"
             "    BatchSourceFilter.Nuvio -> !isCloudStreamBatchSource()\n"
             "    BatchSourceFilter.CloudStream -> isCloudStreamBatchSource()\n"
+            "}\n\n"
+            "fun StreamItem.matchesBatchSearchQuery(query: String): Boolean {\n"
+            "    val terms = query.trim().lowercase().split(' ').filter { it.isNotEmpty() }\n"
+            "    if (terms.isEmpty()) return true\n"
+            "    val raw = buildString {\n"
+            "        name?.let { append(it).append(' ') }\n"
+            "        title?.let { append(it).append(' ') }\n"
+            "        description?.let { append(it).append(' ') }\n"
+            "        sourceName?.let { append(it).append(' ') }\n"
+            "        append(streamLabel).append(' ')\n"
+            "        append(addonName).append(' ')\n"
+            "        if (isCloudStreamBatchSource()) append(\"cloudstream cs3 \")\n"
+            "        behaviorHints.filename?.let { append(it).append(' ') }\n"
+            "        badges.forEach { b -> append(b.name).append(' ') }\n"
+            "    }.lowercase()\n"
+            "    val haystack = buildString {\n"
+            "        append(raw)\n"
+            "        if (raw.contains(\"2160p\") || raw.contains(\"uhd\") || raw.contains(\"4k\")) append(\" 4k 2160p uhd\")\n"
+            "        if (raw.contains(\"hevc\") || raw.contains(\"x265\") || raw.contains(\"h265\")) append(\" hevc x265 h265\")\n"
+            "    }\n"
+            "    return terms.all { haystack.contains(it) }\n"
             "}\n\n"
             "enum class EpisodePlanStatus {\n"
             "    AlreadyDownloaded,\n"
@@ -2433,7 +2675,7 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "    Ready,\n"
             "    NoSourceFound,\n"
             "}\n",
-            "BatchDownloadCoordinator BatchSourceFilter helpers",
+            "BatchDownloadCoordinator BatchSourceFilter & search helpers",
         )
         changed |= _replace_once(
             batch_coord,
@@ -2443,16 +2685,17 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "    val seasonPlans: Map<Int, PlannedSeasonEpisodes> = emptyMap(),\n"
             "    val isSingleTitle: Boolean = false,\n"
             "    val sourceFilter: BatchSourceFilter = BatchSourceFilter.All,\n"
+            "    val searchQuery: String = \"\",\n"
             ") {\n",
-            "BatchDownloadPlan sourceFilter field",
+            "BatchDownloadPlan sourceFilter & searchQuery fields",
         )
         changed |= _replace_once(
             batch_coord,
             "    private const val SOURCE_LOAD_PARALLELISM = 2\n"
             "    private const val SOURCE_LOAD_TIMEOUT_MS = 30_000L\n",
             "    private const val SOURCE_LOAD_PARALLELISM = 2\n"
-            "    private const val SOURCE_LOAD_TIMEOUT_MS = 48_000L\n",
-            "BatchDownloadCoordinator timeout 48s",
+            "    private const val SOURCE_LOAD_TIMEOUT_MS = 90_000L\n",
+            "BatchDownloadCoordinator timeout 90s",
         )
         changed |= _replace_once(
             batch_coord,
@@ -2485,8 +2728,12 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "                                    meta = plan.meta,\n"
             "                                )\n"
             "                            }.getOrElse { emptyList() }\n"
-            "                            val activeFilter = _activePlan.value?.sourceFilter ?: BatchSourceFilter.All\n"
-            "                            val filteredStreams = streams.filter { it.matchesBatchSourceFilter(activeFilter) }\n"
+            "                            val currentPlan = _activePlan.value\n"
+            "                            val activeFilter = currentPlan?.sourceFilter ?: BatchSourceFilter.All\n"
+            "                            val activeQuery = currentPlan?.searchQuery.orEmpty()\n"
+            "                            val filteredStreams = streams.filter {\n"
+            "                                it.matchesBatchSourceFilter(activeFilter) && it.matchesBatchSearchQuery(activeQuery)\n"
+            "                            }\n"
             "                            val selection = StreamSourcePrefillSelector.selectForBatch(filteredStreams, preferredResolution)\n\n"
             "                            updateEpisode(plan.meta.id, season, episode) { item ->\n"
             "                                if (item.status == EpisodePlanStatus.AlreadyDownloaded) item\n"
@@ -2503,15 +2750,17 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "                                        .copy(allAvailableStreams = streams)\n"
             "                                }\n"
             "                            }\n",
-            "BatchDownloadCoordinator pass meta & apply sourceFilter",
+            "BatchDownloadCoordinator pass meta & apply sourceFilter + searchQuery",
         )
         changed |= _replace_once(
             batch_coord,
             "    fun overrideEpisodeStream(season: Int, episode: MetaVideo, stream: StreamItem) {\n",
-            "    fun setSourceFilter(filter: BatchSourceFilter) {\n"
+            "    private fun applyFilterAndQuery(filter: BatchSourceFilter, query: String) {\n"
             "        val preferredResolution = DownloadsSettingsRepository.preferredResolution.value\n"
             "        _activePlan.update { current ->\n"
-            "            if (current == null || current.sourceFilter == filter) return@update current\n"
+            "            if (current == null || (current.sourceFilter == filter && current.searchQuery == query)) {\n"
+            "                return@update current\n"
+            "            }\n"
             "            val updatedPlans = current.seasonPlans.mapValues { (_, seasonPlan) ->\n"
             "                seasonPlan.copy(\n"
             "                    episodes = seasonPlan.episodes.map { item ->\n"
@@ -2521,7 +2770,9 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "                        ) {\n"
             "                            item\n"
             "                        } else {\n"
-            "                            val filtered = item.allAvailableStreams.filter { it.matchesBatchSourceFilter(filter) }\n"
+            "                            val filtered = item.allAvailableStreams.filter {\n"
+            "                                it.matchesBatchSourceFilter(filter) && it.matchesBatchSearchQuery(query)\n"
+            "                            }\n"
             "                            val selection = StreamSourcePrefillSelector.selectForBatch(filtered, preferredResolution)\n"
             "                            if (selection == null) {\n"
             "                                item.copy(\n"
@@ -2537,16 +2788,24 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
             "                    },\n"
             "                )\n"
             "            }\n"
-            "            current.copy(sourceFilter = filter, seasonPlans = updatedPlans)\n"
+            "            current.copy(sourceFilter = filter, searchQuery = query, seasonPlans = updatedPlans)\n"
             "        }\n"
             "    }\n\n"
+            "    fun setSourceFilter(filter: BatchSourceFilter) {\n"
+            "        val currentQuery = _activePlan.value?.searchQuery.orEmpty()\n"
+            "        applyFilterAndQuery(filter, currentQuery)\n"
+            "    }\n\n"
+            "    fun setSearchQuery(query: String) {\n"
+            "        val currentFilter = _activePlan.value?.sourceFilter ?: BatchSourceFilter.All\n"
+            "        applyFilterAndQuery(currentFilter, query)\n"
+            "    }\n\n"
             "    fun overrideEpisodeStream(season: Int, episode: MetaVideo, stream: StreamItem) {\n",
-            "BatchDownloadCoordinator setSourceFilter",
+            "BatchDownloadCoordinator setSourceFilter & setSearchQuery",
         )
         if changed:
             patched.append(str(batch_coord.relative_to(root)))
 
-    # 5. BatchDownloadDialog.kt: uncompressed wide layout + Nuvio vs CloudStream badges & filter bar
+    # 5. BatchDownloadDialog.kt: Nuvio UI styling + Search bar + Quick Quality Filters + Nuvio/CloudStream source filter
     batch_dialog = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/details/components/BatchDownloadDialog.kt"
     batch_dialog.write_text(
         """package com.nuvio.app.features.details.components
@@ -2574,12 +2833,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -2592,7 +2853,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -2603,6 +2863,9 @@ import com.nuvio.app.core.ui.DialogButton
 import com.nuvio.app.core.ui.DialogButtonStyle
 import com.nuvio.app.core.ui.DialogButtons
 import com.nuvio.app.core.ui.DialogSurface
+import com.nuvio.app.core.ui.NuvioInputField
+import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.debrid.DebridStreamMetadata
 import com.nuvio.app.features.debrid.DebridStreamPreferences
 import com.nuvio.app.features.details.MetaVideo
@@ -2621,6 +2884,7 @@ import com.nuvio.app.features.downloads.isBatchEpisodeUnavailable
 import com.nuvio.app.features.downloads.isCloudStreamBatchSource
 import com.nuvio.app.features.downloads.isDownloadableDirectUrl
 import com.nuvio.app.features.downloads.localizedEpisodeLabel
+import com.nuvio.app.features.downloads.matchesBatchSearchQuery
 import com.nuvio.app.features.downloads.matchesBatchSourceFilter
 import com.nuvio.app.features.downloads.qualityBadge
 import com.nuvio.app.features.streams.StreamItem
@@ -2669,6 +2933,7 @@ fun BatchDownloadDialog(
         StreamOverrideDialog(
             target = overrideItem,
             initialFilter = plan.sourceFilter,
+            initialQuery = plan.searchQuery,
             onSelect = { stream ->
                 BatchDownloadCoordinator.overrideEpisodeStream(
                     season = currentSeason,
@@ -2689,6 +2954,7 @@ private fun EpisodeSelectionDialog(
     isEpisodeWatched: (MetaVideo) -> Boolean,
     onDismissRequest: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     DialogSurface(
         onDismissRequest = onDismissRequest,
         modifier = Modifier.fillMaxWidth(0.94f),
@@ -2731,8 +2997,8 @@ private fun EpisodeSelectionDialog(
                             onClick = { BatchDownloadCoordinator.showSeason(seasonNumber) },
                             label = { Text(chipText, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedContainerColor = tokens.colors.accent.copy(alpha = 0.2f),
+                                selectedLabelColor = tokens.colors.accent,
                             ),
                         )
                     }
@@ -2749,7 +3015,7 @@ private fun EpisodeSelectionDialog(
                     text = currentSeasonLabel,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = tokens.colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2796,9 +3062,12 @@ private fun EpisodeSelectionDialog(
                             .clickable(enabled = !unavailable) {
                                 BatchDownloadCoordinator.toggleEpisodeSelection(plan.visibleSeason, episodeNumber)
                             },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isChecked) 0.5f else 0.25f),
-                        border = if (isChecked) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
+                        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+                        color = if (isChecked) tokens.colors.accent.copy(alpha = 0.14f) else tokens.colors.surfaceCard,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (isChecked) tokens.colors.accent.copy(alpha = 0.65f) else tokens.colors.borderSubtle,
+                        ),
                     ) {
                         Row(
                             modifier = Modifier
@@ -2820,7 +3089,7 @@ private fun EpisodeSelectionDialog(
                                 Text(
                                     text = localizedEpisodeLabel(plan.visibleSeason, episodeNumber, episodeTitle),
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (unavailable) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                    color = if (unavailable) tokens.colors.textMuted else tokens.colors.textPrimary,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -2832,7 +3101,7 @@ private fun EpisodeSelectionDialog(
                                     Text(
                                         text = tags.joinToString(" • "),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = if (completed) tokens.colors.accent else tokens.colors.textSecondary,
                                     )
                                 }
                             }
@@ -2851,7 +3120,7 @@ private fun EpisodeSelectionDialog(
             Text(
                 text = summaryText,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = tokens.colors.textSecondary,
             )
         }
 
@@ -2879,6 +3148,7 @@ private fun SourceSelectionDialog(
     onConfirm: () -> Unit,
     onOverrideClicked: (PlannedEpisodeItem) -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     val totalSeasons = plan.seasonsToSource.size
     val currentSeason = plan.seasonsToSource[seasonIndex]
     val currentSeasonPlan = plan.seasonPlans[currentSeason]
@@ -2919,7 +3189,7 @@ private fun SourceSelectionDialog(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2930,7 +3200,7 @@ private fun SourceSelectionDialog(
                     Text(
                         text = currentSeasonLabel,
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = tokens.colors.textPrimary,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
@@ -2946,10 +3216,16 @@ private fun SourceSelectionDialog(
                 onSelect = BatchDownloadCoordinator::setSourceFilter,
             )
 
+            BatchSearchAndQualityBar(
+                query = plan.searchQuery,
+                onQueryChange = BatchDownloadCoordinator::setSearchQuery,
+                placeholder = "Search quality, provider, language (e.g. 1080p, HEVC, Hindi)...",
+            )
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 320.dp),
+                    .heightIn(max = 300.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(
@@ -2961,6 +3237,7 @@ private fun SourceSelectionDialog(
                         season = currentSeason,
                         defaultTitle = plan.meta.name,
                         activeFilter = plan.sourceFilter,
+                        activeQuery = plan.searchQuery,
                         onChangeSource = { onOverrideClicked(item) },
                     )
                 }
@@ -3010,82 +3287,136 @@ private fun SourceSelectionDialog(
 }
 
 @Composable
+private fun BatchSearchAndQualityBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+) {
+    val tokens = MaterialTheme.nuvio
+    val activeWords = remember(query) {
+        query.trim().lowercase().split(' ').filter { it.isNotEmpty() }.toSet()
+    }
+    val quickTags = remember {
+        listOf(
+            "4K" to "4k",
+            "1080p" to "1080p",
+            "720p" to "720p",
+            "HDR" to "hdr",
+            "HEVC" to "hevc",
+        )
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        NuvioInputField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = placeholder,
+            trailingContent = if (query.isNotEmpty()) {
+                {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Clear search",
+                            tint = tokens.colors.textMuted,
+                        )
+                    }
+                }
+            } else null,
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(quickTags) { (label, token) ->
+                val selected = token in activeWords
+                Surface(
+                    shape = RoundedCornerShape(NuvioTokens.Radius.full),
+                    color = if (selected) tokens.colors.accent.copy(alpha = 0.22f) else tokens.colors.surfaceCard,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (selected) tokens.colors.accent else tokens.colors.borderSubtle,
+                    ),
+                    modifier = Modifier.clickable {
+                        val words = query.trim().split(' ').filter { it.isNotEmpty() }
+                        val next = if (words.any { it.equals(token, ignoreCase = true) }) {
+                            words.filterNot { it.equals(token, ignoreCase = true) }.joinToString(" ")
+                        } else {
+                            (words + token).joinToString(" ")
+                        }
+                        onQueryChange(next)
+                    },
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (selected) tokens.colors.accent else tokens.colors.textSecondary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun BatchSourceFilterBar(
     selected: BatchSourceFilter,
     nuvioCount: Int,
     cloudStreamCount: Int,
     onSelect: (BatchSourceFilter) -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     val totalCount = nuvioCount + cloudStreamCount
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item {
-            FilterChip(
-                selected = selected == BatchSourceFilter.All,
-                onClick = { onSelect(BatchSourceFilter.All) },
-                label = {
+        listOf(
+            BatchSourceFilter.All to (if (totalCount > 0) "All ($totalCount)" else "All Sources"),
+            BatchSourceFilter.Nuvio to (if (totalCount > 0) "Nuvio ($nuvioCount)" else "Nuvio"),
+            BatchSourceFilter.CloudStream to (if (totalCount > 0) "CloudStream ($cloudStreamCount)" else "CloudStream"),
+        ).forEach { (filter, label) ->
+            item {
+                val isSelected = selected == filter
+                Surface(
+                    shape = RoundedCornerShape(NuvioTokens.Radius.sm),
+                    color = if (isSelected) tokens.colors.accent.copy(alpha = 0.2f) else tokens.colors.surfaceCard,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) tokens.colors.accent else tokens.colors.borderSubtle,
+                    ),
+                    modifier = Modifier.clickable { onSelect(filter) },
+                ) {
                     Text(
-                        text = if (totalCount > 0) "All ($totalCount)" else "All Sources",
+                        text = label,
                         style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (isSelected) tokens.colors.accent else tokens.colors.textSecondary,
                         maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-            )
-        }
-        item {
-            FilterChip(
-                selected = selected == BatchSourceFilter.Nuvio,
-                onClick = { onSelect(BatchSourceFilter.Nuvio) },
-                label = {
-                    Text(
-                        text = if (totalCount > 0) "Nuvio ($nuvioCount)" else "Nuvio",
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-            )
-        }
-        item {
-            FilterChip(
-                selected = selected == BatchSourceFilter.CloudStream,
-                onClick = { onSelect(BatchSourceFilter.CloudStream) },
-                label = {
-                    Text(
-                        text = if (totalCount > 0) "CloudStream ($cloudStreamCount)" else "CloudStream",
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                ),
-            )
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun SourceOriginBadge(isCloudStream: Boolean) {
+    val tokens = MaterialTheme.nuvio
     val bgColor = if (isCloudStream) {
-        MaterialTheme.colorScheme.tertiaryContainer
+        tokens.colors.accent.copy(alpha = 0.2f)
     } else {
-        MaterialTheme.colorScheme.secondaryContainer
+        tokens.colors.surfaceElevated
     }
     val fgColor = if (isCloudStream) {
-        MaterialTheme.colorScheme.onTertiaryContainer
+        tokens.colors.accent
     } else {
-        MaterialTheme.colorScheme.onSecondaryContainer
+        tokens.colors.textSecondary
     }
     Box(
         modifier = Modifier
@@ -3113,8 +3444,10 @@ private fun EpisodeSourcePlanRow(
     season: Int,
     defaultTitle: String,
     activeFilter: BatchSourceFilter,
+    activeQuery: String,
     onChangeSource: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     val episodeTitle = item.episode.title?.takeIf { it.isNotBlank() } ?: defaultTitle
     val displayText = item.episode.episode?.let { episodeNumber ->
         localizedEpisodeLabel(season, episodeNumber, episodeTitle)
@@ -3122,9 +3455,9 @@ private fun EpisodeSourcePlanRow(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
     ) {
         Column(
             modifier = Modifier
@@ -3140,7 +3473,7 @@ private fun EpisodeSourcePlanRow(
                 Text(
                     text = displayText,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = tokens.colors.textPrimary,
                     modifier = Modifier.weight(1f),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -3150,6 +3483,7 @@ private fun EpisodeSourcePlanRow(
                     OutlinedButton(
                         onClick = onChangeSource,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
                         modifier = Modifier
                             .padding(start = 8.dp)
                             .heightIn(min = 32.dp),
@@ -3157,12 +3491,14 @@ private fun EpisodeSourcePlanRow(
                         Icon(
                             imageVector = Icons.Rounded.Edit,
                             contentDescription = null,
+                            tint = tokens.colors.accent,
                             modifier = Modifier.size(13.dp),
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = stringResource(Res.string.downloads_override_source),
                             style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textPrimary,
                             maxLines = 1,
                         )
                     }
@@ -3177,21 +3513,21 @@ private fun EpisodeSourcePlanRow(
                     Text(
                         text = stringResource(Res.string.season_download_already_downloaded),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = tokens.colors.accent,
                     )
                 }
                 item.status == EpisodePlanStatus.AlreadyInProgress -> {
                     Text(
                         text = stringResource(Res.string.downloads_status_queued),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = tokens.colors.textSecondary,
                     )
                 }
                 item.status == EpisodePlanStatus.Ready && item.streamCandidate != null -> {
                     val selected = item.streamCandidate
                     val isCs3 = selected.isCloudStreamBatchSource()
                     val badge = item.resolutionLabel
-                    val provider = selected.addonName?.takeIf { it.isNotBlank() }
+                    val provider = selected.addonName.takeIf { it.isNotBlank() }
                     val size = item.sizeBytes?.takeIf { it > 0 }?.let(::formatBytes)
                     val streamHeadline = selected.streamLabel
                         .ifBlank { selected.name ?: selected.title.orEmpty() }
@@ -3208,7 +3544,7 @@ private fun EpisodeSourcePlanRow(
                             Text(
                                 text = metaSummary,
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                color = MaterialTheme.colorScheme.primary,
+                                color = tokens.colors.accent,
                             )
                         }
                     }
@@ -3217,7 +3553,7 @@ private fun EpisodeSourcePlanRow(
                         Text(
                             text = streamHeadline,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                            color = tokens.colors.textSecondary,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -3225,6 +3561,8 @@ private fun EpisodeSourcePlanRow(
                 }
                 else -> {
                     val hint = when {
+                        activeQuery.isNotBlank() && item.allAvailableStreams.isNotEmpty() ->
+                            "No source matches \"$activeQuery\" (${item.allAvailableStreams.size} total available)"
                         activeFilter == BatchSourceFilter.CloudStream && item.allAvailableStreams.any { !it.isCloudStreamBatchSource() } ->
                             "No CloudStream source found (Nuvio sources available)"
                         activeFilter == BatchSourceFilter.Nuvio && item.allAvailableStreams.any { it.isCloudStreamBatchSource() } ->
@@ -3234,7 +3572,7 @@ private fun EpisodeSourcePlanRow(
                     Text(
                         text = hint,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
+                        color = tokens.colors.danger,
                     )
                 }
             }
@@ -3247,10 +3585,13 @@ private fun EpisodeSourcePlanRow(
 private fun StreamOverrideDialog(
     target: PlannedEpisodeItem,
     initialFilter: BatchSourceFilter,
+    initialQuery: String = "",
     onSelect: (StreamItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
     var filter by remember(initialFilter) { mutableStateOf(initialFilter) }
+    var searchQuery by remember(initialQuery) { mutableStateOf(initialQuery) }
     val episodeNumber = target.episode.episode
     val dialogTitle = if (episodeNumber != null) {
         stringResource(Res.string.downloads_select_source_dialog_title, episodeNumber)
@@ -3265,8 +3606,10 @@ private fun StreamOverrideDialog(
     }
     val nuvioCount = remember(allStreams) { allStreams.count { !it.isCloudStreamBatchSource() } }
     val cloudStreamCount = remember(allStreams) { allStreams.count { it.isCloudStreamBatchSource() } }
-    val filteredStreams = remember(allStreams, filter) {
-        allStreams.filter { it.matchesBatchSourceFilter(filter) }
+    val filteredStreams = remember(allStreams, filter, searchQuery) {
+        allStreams.filter { stream ->
+            stream.matchesBatchSourceFilter(filter) && stream.matchesBatchSearchQuery(searchQuery)
+        }
     }
 
     DialogSurface(
@@ -3282,17 +3625,27 @@ private fun StreamOverrideDialog(
             onSelect = { filter = it },
         )
 
+        BatchSearchAndQualityBar(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            placeholder = "Search ${allStreams.size} streams (quality, scraper, language)...",
+        )
+
         if (filteredStreams.isEmpty()) {
             Text(
-                text = stringResource(Res.string.season_download_no_source_found),
+                text = if (searchQuery.isNotBlank()) {
+                    "No streams match \"$searchQuery\""
+                } else {
+                    stringResource(Res.string.season_download_no_source_found)
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = tokens.colors.textSecondary,
             )
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 360.dp),
+                    .heightIn(max = 330.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(filteredStreams) { stream ->
@@ -3315,16 +3668,16 @@ private fun StreamOverrideDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSelect(stream) },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(NuvioTokens.Radius.md),
                         color = if (isCurrentSelection) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            tokens.colors.accent.copy(alpha = 0.16f)
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            tokens.colors.surfaceCard
                         },
                         border = if (isCurrentSelection) {
-                            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                            BorderStroke(1.5.dp, tokens.colors.accent)
                         } else {
-                            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                            BorderStroke(1.dp, tokens.colors.borderSubtle)
                         },
                     ) {
                         Row(
@@ -3348,9 +3701,9 @@ private fun StreamOverrideDialog(
                                             text = subtitleText,
                                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                                             color = if (isCurrentSelection) {
-                                                MaterialTheme.colorScheme.primary
+                                                tokens.colors.accent
                                             } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                                tokens.colors.textSecondary
                                             },
                                         )
                                     }
@@ -3358,7 +3711,7 @@ private fun StreamOverrideDialog(
                                 Text(
                                     text = titleText,
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.onSurface,
+                                    color = tokens.colors.textPrimary,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -3369,7 +3722,7 @@ private fun StreamOverrideDialog(
                                     Text(
                                         text = extraDesc,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = tokens.colors.textMuted,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -3381,7 +3734,7 @@ private fun StreamOverrideDialog(
                                     imageVector = Icons.Rounded.Check,
                                     contentDescription = null,
                                     modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = tokens.colors.accent,
                                 )
                             }
                         }
@@ -3409,6 +3762,7 @@ private fun SelectionTextButton(label: StringResource, onClick: () -> Unit) {
         Text(
             text = stringResource(label),
             style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.nuvio.colors.accent,
             maxLines = 1,
         )
     }
@@ -3416,6 +3770,7 @@ private fun SelectionTextButton(label: StringResource, onClick: () -> Unit) {
 
 @Composable
 private fun FindingSourceIndicator(compact: Boolean) {
+    val tokens = MaterialTheme.nuvio
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -3423,12 +3778,12 @@ private fun FindingSourceIndicator(compact: Boolean) {
         CircularProgressIndicator(
             modifier = Modifier.size(if (compact) 11.dp else 14.dp),
             strokeWidth = if (compact) 1.6.dp else 2.dp,
-            color = MaterialTheme.colorScheme.primary,
+            color = tokens.colors.accent,
         )
         Text(
             text = stringResource(Res.string.season_download_finding_source),
             style = MaterialTheme.typography.bodySmall,
-            color = if (compact) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+            color = if (compact) tokens.colors.textSecondary else tokens.colors.accent,
         )
     }
 }
