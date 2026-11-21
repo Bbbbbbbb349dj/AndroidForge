@@ -1271,10 +1271,10 @@ class SubSourceApi : SubtitleAPI() {
         patched,
     )
 
-    # 5. Universal CloudStream Extension Config Bridge (fullCommonMain + iosFull + androidFull)
+    # 5. Universal CloudStream Extension Config Bridge (commonMain + androidFull/androidPlaystore + iosFull/iosAppStore)
     _write_text(
         root,
-        "composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.kt",
+        "composeApp/src/commonMain/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.kt",
         r'''package com.nuvio.app.features.cloudstream
 
 data class CloudStreamSubProviderConfig(
@@ -1336,10 +1336,7 @@ internal expect object CloudStreamExtensionConfigBridge {
         patched,
     )
 
-    _write_text(
-        root,
-        "composeApp/src/iosFull/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.ios.kt",
-        r'''package com.nuvio.app.features.cloudstream
+    unsupported_bridge_stub = r'''package com.nuvio.app.features.cloudstream
 
 internal actual object CloudStreamExtensionConfigBridge {
     actual val isSupported: Boolean = false
@@ -1371,9 +1368,14 @@ internal actual object CloudStreamExtensionConfigBridge {
     actual suspend fun reloadPlugin(plugin: CloudStreamPluginItem): Result<CloudStreamPluginConfigSnapshot> =
         inspect(plugin)
 }
-''',
-        patched,
-    )
+'''
+
+    for stub_rel in (
+        "composeApp/src/iosFull/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.ios.kt",
+        "composeApp/src/iosAppStore/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.ios.kt",
+        "composeApp/src/androidPlaystore/kotlin/com/nuvio/app/features/cloudstream/CloudStreamExtensionConfigBridge.android.kt",
+    ):
+        _write_text(root, stub_rel, unsupported_bridge_stub, patched)
 
     _write_text(
         root,

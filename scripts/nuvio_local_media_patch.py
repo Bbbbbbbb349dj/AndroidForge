@@ -325,7 +325,7 @@ internal actual object LocalFolderVideosPlatform {
         scanJob = scope.launch {
             _state.value = _state.value.copy(isSupported = true, isScanning = true, errorMessage = null)
             runCatching {
-                val configuredExternal = DownloadsExternalFolderPlatform.state.value.treeUri
+                val configuredExternal = DownloadsExternalFolderPlatform.state.value.uri
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
                 val allTreeStrings = buildList {
@@ -545,10 +545,12 @@ internal actual object LocalFolderVideosPlatform {
             "import androidx.compose.material.icons.rounded.Download\n"
             "import androidx.compose.material.icons.rounded.Settings\n",
             "import androidx.compose.foundation.BorderStroke\n"
+            "import androidx.compose.foundation.clickable\n"
             "import androidx.compose.foundation.horizontalScroll\n"
             "import androidx.compose.foundation.layout.Spacer\n"
             "import androidx.compose.foundation.layout.width\n"
             "import androidx.compose.foundation.rememberScrollState\n"
+            "import androidx.compose.foundation.shape.RoundedCornerShape\n"
             "import androidx.compose.material.icons.Icons\n"
             "import androidx.compose.material.icons.rounded.Add\n"
             "import androidx.compose.material.icons.rounded.Close\n"
@@ -558,7 +560,9 @@ internal actual object LocalFolderVideosPlatform {
             "import androidx.compose.material.icons.rounded.PlayArrow\n"
             "import androidx.compose.material.icons.rounded.Refresh\n"
             "import androidx.compose.material.icons.rounded.Settings\n"
-            "import androidx.compose.material3.Surface\n",
+            "import androidx.compose.material3.Surface\n"
+            "import androidx.compose.ui.text.font.FontWeight\n"
+            "import androidx.compose.ui.text.style.TextOverflow\n",
             "DownloadsScreen local folder imports",
         )
         changed |= _replace_once(
@@ -694,7 +698,7 @@ internal actual object LocalFolderVideosPlatform {
             "        item(key = \"header-local-videos\") {\n"
             "            NuvioSectionLabel(\n"
             "                text = \"Local Folder Videos (${visibleLocalVideos.size})\",\n"
-            "                modifier = Modifier.padding(horizontal = NuvioTokens.Spacing.md, vertical = 2.dp),\n"
+            "                modifier = Modifier.padding(top = NuvioTokens.Space.s8, bottom = 2.dp),\n"
             "            )\n"
             "        }\n"
             "        items(visibleLocalVideos, key = { \"local:${it.id}\" }) { video ->\n"
@@ -751,7 +755,7 @@ private fun LocalFoldersToolbar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTokens.Spacing.md, vertical = 4.dp),
+            .padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
@@ -778,7 +782,7 @@ private fun LocalFoldersToolbar(
                 ) {
                     Text(
                         text = label,
-                        style = MaterialTheme.nuvioTypeScale.caption,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         color = if (selected) tokens.colors.textPrimary else tokens.colors.textSecondary,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -820,7 +824,7 @@ private fun LocalFoldersToolbar(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = "Add Folder",
-                        style = MaterialTheme.nuvioTypeScale.caption,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = tokens.colors.textPrimary,
                     )
@@ -846,7 +850,7 @@ private fun LocalFoldersToolbar(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = "Open Video",
-                        style = MaterialTheme.nuvioTypeScale.caption,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = tokens.colors.textPrimary,
                     )
@@ -873,7 +877,7 @@ private fun LocalFoldersToolbar(
                         Spacer(Modifier.width(5.dp))
                         Text(
                             text = if (isScanning) "Scanning..." else "Refresh",
-                            style = MaterialTheme.nuvioTypeScale.caption,
+                            style = MaterialTheme.typography.labelMedium,
                             color = tokens.colors.textSecondary,
                         )
                     }
@@ -899,7 +903,7 @@ private fun LocalFoldersToolbar(
                     ) {
                         Text(
                             text = "All Folders",
-                            style = MaterialTheme.nuvioTypeScale.caption,
+                            style = MaterialTheme.typography.labelSmall,
                             color = tokens.colors.textPrimary,
                             modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                         )
@@ -928,7 +932,7 @@ private fun LocalFoldersToolbar(
                             Spacer(Modifier.width(5.dp))
                             Text(
                                 text = folder.displayName,
-                                style = MaterialTheme.nuvioTypeScale.caption,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = tokens.colors.textPrimary,
                             )
                             Spacer(Modifier.width(4.dp))
@@ -960,7 +964,7 @@ private fun LocalVideoFileCard(
         border = BorderStroke(1.dp, tokens.colors.borderSubtle),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTokens.Spacing.md, vertical = 4.dp)
+            .padding(vertical = 4.dp)
             .clickable(onClick = onClick),
     ) {
         Row(
@@ -990,7 +994,7 @@ private fun LocalVideoFileCard(
             ) {
                 Text(
                     text = video.title,
-                    style = MaterialTheme.nuvioTypeScale.body,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.colors.textPrimary,
                     maxLines = 2,
@@ -1002,20 +1006,20 @@ private fun LocalVideoFileCard(
                 ) {
                     Text(
                         text = video.extensionLabel,
-                        style = MaterialTheme.nuvioTypeScale.caption,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = tokens.colors.accent,
                     )
                     if (video.sizeBytes > 0L) {
                         Text(
                             text = "• ${formatBytes(video.sizeBytes)}",
-                            style = MaterialTheme.nuvioTypeScale.caption,
+                            style = MaterialTheme.typography.labelSmall,
                             color = tokens.colors.textSecondary,
                         )
                     }
                     Text(
                         text = "• ${video.folderName}",
-                        style = MaterialTheme.nuvioTypeScale.caption,
+                        style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
