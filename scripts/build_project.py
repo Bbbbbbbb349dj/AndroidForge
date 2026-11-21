@@ -166,7 +166,30 @@ def main() -> int:
     last_log: str = ""
     successful_command: list[str] | None = None
 
+    # Nuvio requires an explicit distribution property for Android aggregate tasks.
+    # Keep this scoped to Nuvio projects so other Gradle builds are unaffected.
+    gradle_properties = root / "gradle.properties"
+    is_nuvio_project = (
+        gradle_properties.exists()
+        and "nuvio.android.distribution" in gradle_properties.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    )
+
     for cmd in all_commands:
+        if (
+            is_nuvio_project
+            and cmd
+            and cmd[0].endswith("gradlew")
+            and any(
+                arg.startswith(":androidApp:") and
+                (":assemble" in arg or ":bundle" in arg)
+                for arg in cmd[1:]
+            )
+            and not any(arg.startswith("-Pnuvio.android.distribution=") for arg in cmd)
+        ):
+            cmd = [cmd[0], "-Pnuvio.android.distribution=full", *cmd[1:]]
+
         # For gradlew commands: ensure the file is executable AND invoke it
         # via `sh` to bypass any remaining exec-bit issues (Python's
         # zipfile extraction sometimes loses the +x bit even after chmod).
