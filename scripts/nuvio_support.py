@@ -34,7 +34,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
+
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from nuvio_cloudstream_ext_patch import apply_cloudstream_ext_patch
+from nuvio_local_media_patch import apply_local_media_patch
 
 
 APP_FEATURE_POLICY_FILES: dict[str, str] = {
@@ -148,8 +156,16 @@ actual object AppFeaturePolicy {
 }
 
 
-def _replace_once(path: Path, old: str, new: str, label: str) -> bool:
+def _replace_once(
+    path: Path,
+    old: str,
+    new: str,
+    label: str,
+    already_applied: str | None = None,
+) -> bool:
     content = path.read_text(encoding="utf-8", errors="replace")
+    if already_applied and already_applied in content:
+        return False
     if new:
         if new in content:
             return False
@@ -515,38 +531,39 @@ def _patch_cloudstream_host_and_settings(root: Path) -> list[str]:
             "                            repositoryUrl = repository.manifest.sourceUrl\n",
             "CloudStreamSettingsSection repo edit IconButton",
         )
-        changed |= _replace_once(
-            section_kt,
-            "                if (plugin.isInstalled) {\n"
-            "                    IconButton(\n"
-            "                        onClick = {\n"
-            "                            scope.launch {\n"
-            "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
-            "                                    .onFailure { error ->\n"
-            "                                        onMessage(\n"
-            "                                            error.message ?: \"This extension does not provide configurable settings\",\n"
-            "                                        )\n"
-            "                                    }\n"
-            "                            }\n"
-            "                        },\n"
-            "                    ) {\n",
-            "                if (plugin.isInstalled) {\n"
-            "                    IconButton(\n"
-            "                        enabled = plugin.verified && plugin.compatibility.isRunnable,\n"
-            "                        onClick = {\n"
-            "                            scope.launch {\n"
-            "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
-            "                                    .onFailure { error ->\n"
-            "                                        val errText = error.message\n"
-            "                                            ?: \"This extension does not provide configurable settings\"\n"
-            "                                        onMessage(errText)\n"
-            "                                        NuvioToastController.show(errText)\n"
-            "                                    }\n"
-            "                            }\n"
-            "                        },\n"
-            "                    ) {\n",
-            "CloudStreamSettingsSection gear IconButton toast & enabled",
-        )
+        if "CloudStreamExtensionConfigBridge.isSupported" not in section_kt.read_text(encoding="utf-8", errors="replace"):
+            changed |= _replace_once(
+                section_kt,
+                "                if (plugin.isInstalled) {\n"
+                "                    IconButton(\n"
+                "                        onClick = {\n"
+                "                            scope.launch {\n"
+                "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
+                "                                    .onFailure { error ->\n"
+                "                                        onMessage(\n"
+                "                                            error.message ?: \"This extension does not provide configurable settings\",\n"
+                "                                        )\n"
+                "                                    }\n"
+                "                            }\n"
+                "                        },\n"
+                "                    ) {\n",
+                "                if (plugin.isInstalled) {\n"
+                "                    IconButton(\n"
+                "                        enabled = plugin.verified && plugin.compatibility.isRunnable,\n"
+                "                        onClick = {\n"
+                "                            scope.launch {\n"
+                "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
+                "                                    .onFailure { error ->\n"
+                "                                        val errText = error.message\n"
+                "                                            ?: \"This extension does not provide configurable settings\"\n"
+                "                                        onMessage(errText)\n"
+                "                                        NuvioToastController.show(errText)\n"
+                "                                    }\n"
+                "                            }\n"
+                "                        },\n"
+                "                    ) {\n",
+                "CloudStreamSettingsSection gear IconButton toast & enabled",
+            )
         if changed:
             patched.append(str(section_kt.relative_to(root)))
 
@@ -1232,6 +1249,7 @@ class AcraApplication {
             "        merged\n"
             "    }",
             "CloudStreamPlatformRuntime getMainPage & ordered search",
+            already_applied="CloudStreamExtensionConfigStore.activeProviders",
         )
         changed |= _replace_once(
             runtime_kt,
@@ -3438,6 +3456,8 @@ def prepare_nuvio_source(
         patched_files.extend(_patch_navigation_and_downloads_tab(root))
         patched_files.extend(_patch_cloudstream_host_and_settings(root))
         patched_files.extend(_patch_batch_downloads_and_hls(root))
+        patched_files.extend(apply_cloudstream_ext_patch(root))
+        patched_files.extend(apply_local_media_patch(root))
 
         for rel_path, content in APP_FEATURE_POLICY_FILES.items():
             target = root / rel_path

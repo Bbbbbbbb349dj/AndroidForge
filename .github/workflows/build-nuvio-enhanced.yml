@@ -9,7 +9,7 @@ on:
     branches:
       - "arena/17a4641a-androidforge"
     paths:
-      - "scripts/nuvio_support.py"
+      - "scripts/nuvio_*.py"
       - ".github/workflows/build-nuvio-enhanced.yml"
   workflow_dispatch:
     inputs:
@@ -109,7 +109,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: nuvio-enhanced-${{ runner.os }}-v1-${{ hashFiles('scripts/nuvio_support.py') }}
+          key: nuvio-enhanced-${{ runner.os }}-v1-${{ hashFiles('scripts/nuvio_*.py') }}
           restore-keys: |
             nuvio-enhanced-${{ runner.os }}-
 
