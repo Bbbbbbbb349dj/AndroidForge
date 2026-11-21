@@ -1,6 +1,6 @@
 name: Build Nuvio Enhanced APK
 
-# Dedicated, reproducible APK build pipeline for Nuvio Enhanced 2 (v1.1.2)
+# Dedicated, reproducible APK build pipeline for Nuvio Enhanced 2 (v1.17)
 # pinned solely to the verified `nuvio-source-v1.1.2` GitHub Release archive
 # (never reads from `input/`).
 
@@ -22,7 +22,7 @@ on:
         description: "GitHub Release tag where the compiled APK will be published"
         required: true
         type: string
-        default: "nuvio-enhanced-v1.1.2-apk"
+        default: "nuvio-enhanced-v1.17-apk"
 
 concurrency:
   group: build-nuvio-enhanced-${{ github.ref }}
@@ -206,7 +206,7 @@ jobs:
             exit 1
           fi
 
-          FINAL_NAME="Nuvio-Enhanced-2-v1.1.2-full-arm64-v8a-release.apk"
+          FINAL_NAME="Nuvio-Enhanced-2-v1.17-full-arm64-v8a-release.apk"
           FINAL_APK="$OUT_DIR/$FINAL_NAME"
           cp "$RAW_APK" "$FINAL_APK"
           ls -lh "$FINAL_APK"
@@ -214,7 +214,11 @@ jobs:
           BT_DIR=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
           echo "Verifying APK using build-tools: $BT_DIR"
           "$BT_DIR/apksigner" verify --print-certs "$FINAL_APK"
-          "$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35
+          BADGING=$("$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35)
+          echo "$BADGING"
+          echo "$BADGING" | grep -q "versionName='1.17'"
+          echo "$BADGING" | grep -q "versionCode='170'"
+          echo "✓ Verified APK versionName=1.17 versionCode=170"
           "$BT_DIR/aapt2" dump xmltree "$FINAL_APK" --file AndroidManifest.xml | grep -q "com.nuvio.app.LocalVideoPlayerActivity"
           echo "✓ Verified com.nuvio.app.LocalVideoPlayerActivity in merged APK AndroidManifest.xml"
 
@@ -224,7 +228,7 @@ jobs:
       - name: Upload APK as GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nuvio-Enhanced-2-v1.1.2-APK
+          name: Nuvio-Enhanced-2-v1.17-APK
           path: ${{ steps.collect.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
@@ -236,7 +240,7 @@ jobs:
           REPO: ${{ github.repository }}
           APK_PATH: ${{ steps.collect.outputs.apk_path }}
           APK_NAME: ${{ steps.collect.outputs.apk_name }}
-          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.1.2-apk' }}
+          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.17-apk' }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -279,10 +283,10 @@ jobs:
                   return json.loads(body) if body else {}
 
           release_body = (
-              f"## Nuvio Enhanced 2 v1.1.2 — Full Android Release APK\n\n"
+              f"## Nuvio Enhanced 2 v1.17 — Full Android Release APK\n\n"
               f"- **Source Archive**: `nuvio-source-v1.1.2` (`Nuvio-Enhanced-2-v1.1.2-cloudstream-settings-source.zip`)\n"
               f"- **Package ID**: `com.nuvio.enhanced`\n"
-              f"- **Version**: `1.1.2` (`versionCode` `161`)\n"
+              f"- **Version**: `1.17` (`versionCode` `170`)\n"
               f"- **Distribution Flavor**: `full` (`arm64-v8a`)\n"
               f"- **APK File**: `{apk_name}` ({apk_size:,} bytes / {apk_size / (1024 * 1024):.2f} MiB)\n"
               f"- **SHA-256**: `{apk_sha256}`\n"
@@ -296,7 +300,7 @@ jobs:
                   f"https://api.github.com/repos/{repo}/releases/{rel_id}",
                   method="PATCH",
                   data=json.dumps({
-                      "name": "Nuvio Enhanced 2 v1.1.2 APK",
+                      "name": "Nuvio Enhanced 2 v1.17 APK",
                       "body": release_body,
                       "draft": False,
                       "prerelease": False,
@@ -311,7 +315,7 @@ jobs:
                   data=json.dumps({
                       "tag_name": out_tag,
                       "target_commitish": "main",
-                      "name": "Nuvio Enhanced 2 v1.1.2 APK",
+                      "name": "Nuvio Enhanced 2 v1.17 APK",
                       "body": release_body,
                       "draft": False,
                       "prerelease": False,

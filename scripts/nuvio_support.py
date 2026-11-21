@@ -43,6 +43,7 @@ if _SCRIPT_DIR not in sys.path:
 
 from nuvio_cloudstream_ext_patch import apply_cloudstream_ext_patch
 from nuvio_local_media_patch import apply_local_media_patch
+from nuvio_v117_enhancements_patch import apply_v117_enhancements_patch
 
 
 APP_FEATURE_POLICY_FILES: dict[str, str] = {
@@ -3807,12 +3808,15 @@ def prepare_nuvio_source(
     restored_files: list[str] = []
     patched_files: list[str] = []
 
-    if (root / "composeApp" / "build.gradle.kts").is_file():
+    marker = root / ".nuvio_enhanced_v117_applied"
+    if (root / "composeApp" / "build.gradle.kts").is_file() and not marker.exists():
         patched_files.extend(_patch_navigation_and_downloads_tab(root))
         patched_files.extend(_patch_cloudstream_host_and_settings(root))
         patched_files.extend(_patch_batch_downloads_and_hls(root))
         patched_files.extend(apply_cloudstream_ext_patch(root))
         patched_files.extend(apply_local_media_patch(root))
+        patched_files.extend(apply_v117_enhancements_patch(root))
+        marker.write_text("v1.17\n", encoding="utf-8")
 
         for rel_path, content in APP_FEATURE_POLICY_FILES.items():
             target = root / rel_path
