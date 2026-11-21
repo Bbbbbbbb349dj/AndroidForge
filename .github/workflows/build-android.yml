@@ -234,8 +234,9 @@ jobs:
               echo "✓ platforms;android-$COMPILE_SDK already present"
             fi
           fi
-          # Always make sure platform-tools + a default build-tools are present
-          # (the Docker image already has them, but this is a no-op safety check).
+          # Always make sure SDK licenses + platform-tools are present so AGP
+          # can also auto-download minor API platforms (e.g. android-37.1).
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
           yes | sdkmanager "platform-tools" >/dev/null 2>&1 || true
           # Install NDK if the project uses native code
           if [ "$NEEDS_NDK" = "true" ] || [ "${{ github.event.inputs.enable_ndk }}" = "true" ]; then
@@ -246,6 +247,31 @@ jobs:
               echo "✓ NDK $NDK_VER already present (or not specified)"
             fi
             yes | sdkmanager "cmake;3.22.1" >/dev/null 2>&1 || true
+          fi
+
+      # ---------------------------------------------------------------------
+      # Step 6b: Install Rust + cargo-ndk if the project includes Rust JNI crates
+      # ---------------------------------------------------------------------
+      - name: Install Rust toolchain & cargo-ndk (if needed)
+        run: |
+          if find "${{ steps.extract.outputs.project_root }}" -maxdepth 3 -name "Cargo.toml" | grep -q .; then
+            echo "Rust Cargo.toml detected — setting up Rust stable + Android targets + cargo-ndk..."
+            if ! command -v rustup >/dev/null 2>&1; then
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+            fi
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            rustup update stable --no-self-update || true
+            rustup default stable
+            rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+            if ! command -v cargo-ndk >/dev/null 2>&1; then
+              curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v3.5.4/cargo-ndk-v3.5.4-x86_64-unknown-linux-musl.tar.gz" \
+                | tar -xz -C "$HOME/.cargo/bin" cargo-ndk || cargo install cargo-ndk --locked
+            fi
+            rustc --version
+            cargo ndk --version
+          else
+            echo "No Cargo.toml detected — skipping Rust setup"
           fi
 
       # ---------------------------------------------------------------------

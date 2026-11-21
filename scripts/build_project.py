@@ -166,75 +166,32 @@ def main() -> int:
     last_log: str = ""
     successful_command: list[str] | None = None
 
-    # Nuvio's Gradle build enforces this property during project configuration.
-    # Pass it to every Gradle invocation for this project, not only tasks whose
-    # names look like assemble/bundle: AndroidForge may normalize or wrap tasks.
-    gradle_properties = root / "gradle.properties"
-    # The source ZIP's gradle.properties does not necessarily declare the
-    # distribution property; the build script itself enforces it. Detect
-    # Nuvio by its extracted project name or by the property appearing in
-    # any Gradle build script, rather than relying on gradle.properties.
-    gradle_script_candidates = [
-        root / "build.gradle",
-        root / "build.gradle.kts",
-        root / "settings.gradle",
-        root / "settings.gradle.kts",
-        root / "composeApp" / "build.gradle",
-        root / "composeApp" / "build.gradle.kts",
-        root / "androidApp" / "build.gradle",
-        root / "androidApp" / "build.gradle.kts",
-    ]
-    has_nuvio_distribution_guard = any(
-        path.is_file()
-        and "nuvio.android.distribution" in path.read_text(
-            encoding="utf-8", errors="replace"
-        )
-        for path in gradle_script_candidates
-    )
-    is_nuvio_project = (
-        root.name.lower().startswith("nuvio")
-        or has_nuvio_distribution_guard
-        or (
-            gradle_properties.exists()
-            and "nuvio.android.distribution" in gradle_properties.read_text(
-                encoding="utf-8", errors="replace"
-            )
-        )
-    )
+    from nuvio_support import is_nuvio_project as detect_nuvio_project, prepare_nuvio_source
+
+    is_nuvio_project = detect_nuvio_project(root)
     if is_nuvio_project:
+        prep_report = prepare_nuvio_source(root)
         print(
-            "✓ Detected Nuvio project; Gradle distribution property will be injected",
+            "✓ Detected Nuvio project; Gradle distribution property and KMP policy files prepared: "
+            f"{len(prep_report['restored_files'])} missing file(s) restored",
             flush=True,
         )
-
-        # Nuvio Enhanced 2 v1.1.2 references AppFeaturePolicy throughout
-        # commonMain/androidMain but its source archive omits the definition.
-        # Restore the full-distribution policy before Gradle configures Kotlin.
-        # Never overwrite a policy supplied by a future source archive.
-        policy_file = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/core/build/AppFeaturePolicy.kt"
-        if not policy_file.exists() and (root / "composeApp/build.gradle.kts").is_file():
-            policy_file.parent.mkdir(parents=True, exist_ok=True)
-            policy_file.write_text("""package com.nuvio.app.core.build
-
-/** Feature gates for the Nuvio full distribution. */
-enum class TrailerPlaybackMode { IN_APP, EXTERNAL, DISABLED }
-
-object AppFeaturePolicy {
-    const val pluginsEnabled: Boolean = true
-    const val inAppUpdaterEnabled: Boolean = true
-    const val customServerConnectionsEnabled: Boolean = true
-    const val supportersContributorsPageEnabled: Boolean = true
-    const val personalMediaAddonCopyEnabled: Boolean = true
-    const val accountDeletionEnabled: Boolean = true
-    const val p2pEnabled: Boolean = true
-    const val downloadForegroundServiceEnabled: Boolean = true
-    const val mediaPlaybackForegroundServiceEnabled: Boolean = true
-    const val heroTrailerPlaybackSupported: Boolean = true
-    const val imdbRatingLogoEnabled: Boolean = true
-    val trailerPlaybackMode: TrailerPlaybackMode = TrailerPlaybackMode.IN_APP
-}
-""", encoding="utf-8")
-            print("✓ Restored missing Nuvio AppFeaturePolicy source for full distribution", flush=True)
+        # Nuvio is a Kotlin Multiplatform project whose Android app lives in
+        # :androidApp with `full` / `playstore` distribution flavors. Prefer
+        # :androidApp:assembleFullRelease (or FullDebug when debug is requested).
+        if (root / "androidApp" / "build.gradle.kts").is_file() or (root / "androidApp" / "build.gradle").is_file():
+            gradlew_bin = str(root / "gradlew") if use_wrapper and (root / "gradlew").exists() else "gradle"
+            if args.variant == "debug":
+                all_commands = [[gradlew_bin, ":androidApp:assembleFullDebug", "--stacktrace"]]
+            elif args.variant == "bundle":
+                all_commands = [[gradlew_bin, ":androidApp:bundleFullRelease", "--stacktrace"]]
+            elif args.variant == "release":
+                all_commands = [[gradlew_bin, ":androidApp:assembleFullRelease", "--stacktrace"]]
+            else:
+                all_commands = [
+                    [gradlew_bin, ":androidApp:assembleFullRelease", "--stacktrace"],
+                    [gradlew_bin, ":androidApp:assembleFullDebug", "--stacktrace"],
+                ]
 
     for cmd in all_commands:
         is_gradle_invocation = (

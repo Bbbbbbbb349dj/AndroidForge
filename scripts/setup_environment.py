@@ -217,17 +217,21 @@ def apply_fixes(detect: dict, fixes: list[dict], android_sdk_root: str) -> list[
                     size = int(heap_match.group(1))
                     unit = heap_match.group(2).lower()
                     existing_mb = size * (1024 if unit == "g" else 1)
-                    if existing_mb < 4096:
+                    if existing_mb < 4096 or existing_mb > 6144:
+                        capped_line = (
+                            "org.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1536m"
+                            if existing_mb > 6144
+                            else HEAP_LINE
+                        )
                         new_content = re.sub(
                             r"^org\.gradle\.jvmargs\s*=.*$",
-                            HEAP_LINE,
+                            capped_line,
                             content,
                             flags=re.MULTILINE,
                         )
                         if new_content != content:
                             content = new_content
-                            changes.append(f"bumped jvmargs from '{existing}'")
-                # else: heap is already >= 4g, leave alone
+                            changes.append(f"adjusted jvmargs from '{existing}'")
             else:
                 content += f"\n# AndroidForge: ensure enough heap for the Gradle daemon\n{HEAP_LINE}\n"
                 changes.append("added jvmargs")
@@ -304,7 +308,11 @@ def _inject_repositories(root: Path, applied: list[str], is_flutter: bool) -> No
         if not sf.exists():
             continue
         content = sf.read_text(encoding="utf-8", errors="replace")
-        if "FAIL_ON_PROJECT_REPOS" in content or "PREFER_SETTINGS" in content:
+        if (
+            "FAIL_ON_PROJECT_REPOS" in content
+            or "PREFER_SETTINGS" in content
+            or "dependencyResolutionManagement" in content
+        ):
             forbid_project_repos = True
             break
 
@@ -346,9 +354,12 @@ def _inject_repositories(root: Path, applied: list[str], is_flutter: bool) -> No
             continue
         content = grad.read_text(encoding="utf-8", errors="replace")
         # Skip if all repos are already declared anywhere in the file.
+        has_google = "maven.google.com" in content or bool(
+            re.search(r"\bgoogle\s*(?:\(\s*\)|\{)", content)
+        )
         already_has = (
             "jitpack.io" in content
-            and "maven.google.com" in content
+            and has_google
             and "mavenCentral()" in content
         )
         if already_has:
