@@ -170,12 +170,42 @@ def main() -> int:
     # Pass it to every Gradle invocation for this project, not only tasks whose
     # names look like assemble/bundle: AndroidForge may normalize or wrap tasks.
     gradle_properties = root / "gradle.properties"
-    is_nuvio_project = (
-        gradle_properties.exists()
-        and "nuvio.android.distribution" in gradle_properties.read_text(
+    # The source ZIP's gradle.properties does not necessarily declare the
+    # distribution property; the build script itself enforces it. Detect
+    # Nuvio by its extracted project name or by the property appearing in
+    # any Gradle build script, rather than relying on gradle.properties.
+    gradle_script_candidates = [
+        root / "build.gradle",
+        root / "build.gradle.kts",
+        root / "settings.gradle",
+        root / "settings.gradle.kts",
+        root / "composeApp" / "build.gradle",
+        root / "composeApp" / "build.gradle.kts",
+        root / "androidApp" / "build.gradle",
+        root / "androidApp" / "build.gradle.kts",
+    ]
+    has_nuvio_distribution_guard = any(
+        path.is_file()
+        and "nuvio.android.distribution" in path.read_text(
             encoding="utf-8", errors="replace"
         )
+        for path in gradle_script_candidates
     )
+    is_nuvio_project = (
+        root.name.lower().startswith("nuvio")
+        or has_nuvio_distribution_guard
+        or (
+            gradle_properties.exists()
+            and "nuvio.android.distribution" in gradle_properties.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        )
+    )
+    if is_nuvio_project:
+        print(
+            "✓ Detected Nuvio project; Gradle distribution property will be injected",
+            flush=True,
+        )
 
     for cmd in all_commands:
         is_gradle_invocation = (
