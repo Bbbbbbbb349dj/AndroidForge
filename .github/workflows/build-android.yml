@@ -21,6 +21,12 @@ name: Build Android APK
 #  11. On failure, run automated diagnosis
 
 on:
+  # Run automatically when the Nuvio build-script fix is pushed.
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/build_project.py"
   workflow_dispatch:
     inputs:
       zip_source:
