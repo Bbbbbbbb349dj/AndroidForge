@@ -34,7 +34,7 @@ def apply_local_media_patch(root: Path) -> list[str]:
         changed = False
         changed |= _replace_once(
             bridge_kt,
-            "sealed interface AppDeepLink {\n",
+            "internal sealed interface AppDeepLink {\n",
             "data class LocalSidecarSubtitleItem(\n"
             "    val uri: String,\n"
             "    val language: String,\n"
@@ -58,7 +58,7 @@ def apply_local_media_patch(root: Path) -> list[str]:
             "    val sidecarSubtitles: List<LocalSidecarSubtitleItem> = emptyList(),\n"
             "    val nonce: Long = 0L,\n"
             ")\n\n"
-            "sealed interface AppDeepLink {\n",
+            "internal sealed interface AppDeepLink {\n",
             "AppUrlBridge LocalVideoLaunchRequest",
         )
         changed |= _replace_once(
@@ -1434,7 +1434,10 @@ internal actual object LocalFolderVideosPlatform {
             "                )\n"
             "            }\n"
             "            items(localMovies, key = { \"local_movie:${it.id}\" }) { movie ->\n"
-            "                val progress = watchProgressState.items[movie.syntheticVideoId]\n"
+            "                val progress = watchProgressState.progressForVideo(\n"
+            "                    videoId = movie.syntheticVideoId,\n"
+            "                    parentMetaId = movie.effectiveParentMetaId,\n"
+            "                )\n"
             "                LocalMovieRow(\n"
             "                    movie = movie,\n"
             "                    progressFraction = progress?.progressFraction ?: 0f,\n"
@@ -1479,7 +1482,12 @@ private fun LazyListScope.localSeriesShowContent(
 ) {
     val episodes = series.episodes
     val watchedCount = episodes.count { ep ->
-        watchProgressState.items[ep.syntheticVideoId]?.isEffectivelyCompleted == true
+        watchProgressState.progressForVideo(
+            videoId = ep.syntheticVideoId,
+            parentMetaId = ep.effectiveParentMetaId,
+            seasonNumber = ep.seasonNumber,
+            episodeNumber = ep.episodeNumber,
+        )?.isEffectivelyCompleted == true
     }
 
     item(key = "local_series_summary") {
@@ -1515,7 +1523,12 @@ private fun LazyListScope.localSeriesShowContent(
                 items = seasonEpisodes,
                 key = { "local_ep:${it.id}" },
             ) { episode ->
-                val progress = watchProgressState.items[episode.syntheticVideoId]
+                val progress = watchProgressState.progressForVideo(
+                    videoId = episode.syntheticVideoId,
+                    parentMetaId = episode.effectiveParentMetaId,
+                    seasonNumber = episode.seasonNumber,
+                    episodeNumber = episode.episodeNumber,
+                )
                 LocalSeriesEpisodeRow(
                     episode = episode,
                     fallbackLandscapeUrl = series.backgroundUrl ?: series.posterUrl,

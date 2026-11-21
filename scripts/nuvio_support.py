@@ -2808,7 +2808,7 @@ internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
     # 5. BatchDownloadDialog.kt: Nuvio UI styling + Search bar + Quick Quality Filters + Nuvio/CloudStream source filter
     batch_dialog = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/details/components/BatchDownloadDialog.kt"
     batch_dialog.write_text(
-        """package com.nuvio.app.features.details.components
+        r"""package com.nuvio.app.features.details.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background

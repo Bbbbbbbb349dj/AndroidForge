@@ -2210,7 +2210,7 @@ internal actual object CloudStreamExtensionConfigBridge {
             "        val hasNativeSettings: Boolean,\n"
             "        val instance: BasePlugin,\n"
             "        val providers: List<MainAPI>,\n"
-            "        val extractors: List<ExtractorApi>,\n"
+            "        val extractors: List<com.lagradost.cloudstream3.utils.ExtractorApi>,\n"
             "    )\n\n"
             "    internal fun currentAppContext(): Context? = getContext()\n\n"
             "    internal fun unloadByFilePath(filePath: String) {\n"
