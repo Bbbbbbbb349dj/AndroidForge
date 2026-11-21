@@ -156,6 +156,74 @@ def is_nuvio_project(root: Path) -> bool:
     return False
 
 
+def _patch_cloudstream_v112_sources(root: Path) -> list[str]:
+    """Fix two source-level Kotlin compilation bugs in Nuvio Enhanced 2 v1.1.2:
+      1. `CloudStreamRepository.kt`: explicit type argument on `Result.failure`
+         when chained with `.also { ... }` inside `withTimeoutOrNull` fallback.
+      2. `CloudStreamSettingsSection.kt`: move misplaced `enabled = plugin.verified && ...`
+         off the repository edit `IconButton` (where `plugin` is out of scope)
+         onto `CloudStreamPluginCard`'s plugin settings gear `IconButton`.
+    """
+    patched: list[str] = []
+
+    repo_kt = root / "composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/cloudstream/CloudStreamRepository.kt"
+    if repo_kt.is_file():
+        content = repo_kt.read_text(encoding="utf-8", errors="replace")
+        old_snippet = (
+            '} ?: Result.failure(\n'
+            '                            IllegalStateException("CloudStream provider search timed out'
+        )
+        new_snippet = (
+            '} ?: Result.failure<List<CloudStreamSearchItem>>(\n'
+            '                            IllegalStateException("CloudStream provider search timed out'
+        )
+        if old_snippet in content:
+            repo_kt.write_text(content.replace(old_snippet, new_snippet, 1), encoding="utf-8")
+            patched.append(str(repo_kt.relative_to(root)))
+
+    section_kt = root / "composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamSettingsSection.kt"
+    if section_kt.is_file():
+        content = section_kt.read_text(encoding="utf-8", errors="replace")
+        updated = content
+        misplaced_block = (
+            "                    IconButton(\n"
+            "                        enabled = plugin.verified && plugin.compatibility.isRunnable,\n"
+            "                        onClick = {\n"
+            "                            repositoryUrl = repository.manifest.sourceUrl\n"
+        )
+        fixed_repo_edit_block = (
+            "                    IconButton(\n"
+            "                        onClick = {\n"
+            "                            repositoryUrl = repository.manifest.sourceUrl\n"
+        )
+        if misplaced_block in updated:
+            updated = updated.replace(misplaced_block, fixed_repo_edit_block, 1)
+
+        gear_block = (
+            "                if (plugin.isInstalled) {\n"
+            "                    IconButton(\n"
+            "                        onClick = {\n"
+            "                            scope.launch {\n"
+            "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
+        )
+        gated_gear_block = (
+            "                if (plugin.isInstalled) {\n"
+            "                    IconButton(\n"
+            "                        enabled = plugin.verified && plugin.compatibility.isRunnable,\n"
+            "                        onClick = {\n"
+            "                            scope.launch {\n"
+            "                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)\n"
+        )
+        if gear_block in updated:
+            updated = updated.replace(gear_block, gated_gear_block, 1)
+
+        if updated != content:
+            section_kt.write_text(updated, encoding="utf-8")
+            patched.append(str(section_kt.relative_to(root)))
+
+    return patched
+
+
 def prepare_nuvio_source(
     root: Path,
     android_sdk: str | None = None,
@@ -163,6 +231,7 @@ def prepare_nuvio_source(
 ) -> dict[str, object]:
     """Prepare Nuvio Enhanced source tree for Android builds."""
     restored_files: list[str] = []
+    patched_files = _patch_cloudstream_v112_sources(root)
 
     if (root / "composeApp" / "build.gradle.kts").is_file():
         for rel_path, content in APP_FEATURE_POLICY_FILES.items():
@@ -233,6 +302,7 @@ def prepare_nuvio_source(
         "project_root": str(root),
         "is_nuvio": is_nuvio_project(root),
         "restored_files": restored_files,
+        "patched_files": patched_files,
     }
 
 

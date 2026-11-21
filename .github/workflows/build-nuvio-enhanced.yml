@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17 (Zulu)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: "zulu"
           java-version: "17"
@@ -112,6 +112,7 @@ jobs:
           key: nuvio-enhanced-${{ runner.os }}-v1-${{ hashFiles('scripts/nuvio_support.py') }}
           restore-keys: |
             nuvio-enhanced-${{ runner.os }}-
+          save-always: true
 
       - name: Set up Rust (2024 edition) & cargo-ndk
         run: |
