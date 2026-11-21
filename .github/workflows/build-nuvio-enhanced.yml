@@ -5,12 +5,6 @@ name: Build Nuvio Enhanced APK
 # (never reads from `input/`).
 
 on:
-  push:
-    branches:
-      - "arena/17a4641a-androidforge"
-    paths:
-      - ".github/workflows/build-nuvio-enhanced.yml"
-      - "scripts/nuvio_support.py"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -31,7 +25,6 @@ concurrency:
 permissions:
   contents: write
   actions: write
-  checks: write
 
 jobs:
   build-nuvio-apk:
@@ -112,7 +105,6 @@ jobs:
           key: nuvio-enhanced-${{ runner.os }}-v1-${{ hashFiles('scripts/nuvio_support.py') }}
           restore-keys: |
             nuvio-enhanced-${{ runner.os }}-
-          save-always: true
 
       - name: Set up Rust (2024 edition) & cargo-ndk
         run: |
@@ -135,53 +127,15 @@ jobs:
           cargo ndk --version
 
       - name: Build Nuvio Enhanced Full Release APK
-        id: gradle_build
-        continue-on-error: true
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           chmod +x ./gradlew
           ./gradlew \
             -Pnuvio.android.distribution=full \
             :androidApp:assembleFullRelease \
             --no-daemon \
-            --stacktrace 2>&1 | tee "$RUNNER_TEMP/nuvio-gradle-build.log"
-          echo "succeeded=true" >> "$GITHUB_OUTPUT"
-
-      - name: Upload failure diagnostic blob (if build failed)
-        if: steps.gradle_build.outputs.succeeded != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          LOG_FILE: ${{ runner.temp }}/nuvio-gradle-build.log
-        run: |
-          python3 - <<'PY'
-          import base64, json, os, urllib.request
-          from pathlib import Path
-          log_path = Path(os.environ["LOG_FILE"])
-          txt = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else "No log file"
-          tail = txt[-250000:]
-          payload = json.dumps({
-              "content": base64.b64encode(tail.encode("utf-8")).decode("ascii"),
-              "encoding": "base64",
-          }).encode("utf-8")
-          req = urllib.request.Request(
-              f"https://api.github.com/repos/{os.environ['REPO']}/git/blobs",
-              data=payload,
-              headers={
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "Content-Type": "application/json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-                  "User-Agent": "AndroidForge-BuildLog",
-              },
-              method="POST",
-          )
-          with urllib.request.urlopen(req, timeout=60) as resp:
-              sha = json.loads(resp.read().decode("utf-8"))["sha"]
-          print(f"::error title=BUILD_LOG_BLOB::{sha}")
-          PY
-          exit 1
+            --stacktrace
 
       - name: Collect & verify built APK
         id: collect
@@ -204,12 +158,10 @@ jobs:
           cp "$RAW_APK" "$FINAL_APK"
           ls -lh "$FINAL_APK"
 
-          # Locate latest build-tools for aapt2 & apksigner verification
           BT_DIR=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
           echo "Verifying APK using build-tools: $BT_DIR"
-          "$BT_DIR/apksigner" verify --print-certs "$FINAL_APK" | tee "$RUNNER_TEMP/apksigner.txt"
-          "$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35 | tee "$RUNNER_TEMP/aapt2.txt"
-          sha256sum "$FINAL_APK" | tee "$RUNNER_TEMP/apk.sha256"
+          "$BT_DIR/apksigner" verify --print-certs "$FINAL_APK"
+          "$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35
 
           echo "apk_path=$FINAL_APK" >> "$GITHUB_OUTPUT"
           echo "apk_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
@@ -223,7 +175,7 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Publish APK to GitHub Release & export verified manifest
+      - name: Publish APK to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -231,11 +183,9 @@ jobs:
           APK_NAME: ${{ steps.collect.outputs.apk_name }}
           OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.1.2-apk' }}
           RUN_ID: ${{ github.run_id }}
-          TEMP_DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64
           import hashlib
           import json
           import os
@@ -250,13 +200,10 @@ jobs:
           apk_name = os.environ["APK_NAME"]
           out_tag = os.environ["OUT_TAG"]
           run_id = os.environ["RUN_ID"]
-          temp_dir = Path(os.environ["TEMP_DIR"])
 
           apk_bytes = apk_path.read_bytes()
           apk_sha256 = hashlib.sha256(apk_bytes).hexdigest()
           apk_size = len(apk_bytes)
-          apksigner_info = (temp_dir / "apksigner.txt").read_text(encoding="utf-8", errors="replace").strip()
-          aapt2_info = (temp_dir / "aapt2.txt").read_text(encoding="utf-8", errors="replace").strip()
 
           def api_req(url: str, method: str = "GET", data: bytes | None = None, content_type: str = "application/json") -> dict:
               req = urllib.request.Request(
@@ -286,7 +233,6 @@ jobs:
               f"- **Workflow Run**: `{run_id}`\n"
           )
 
-          # Create or update the release
           try:
               rel = api_req(f"https://api.github.com/repos/{repo}/releases/tags/{out_tag}")
               rel_id = rel["id"]
@@ -317,7 +263,6 @@ jobs:
               )
               rel_id = rel["id"]
 
-          # Delete existing asset with same name if re-running
           for asset in rel.get("assets", []) or []:
               if asset.get("name") == apk_name:
                   req = urllib.request.Request(
@@ -340,43 +285,6 @@ jobs:
               content_type="application/vnd.android.package-archive",
           )
           download_url = uploaded_asset["browser_download_url"]
-          release_html_url = rel["html_url"]
-
-          # Also upload 16 MiB base64 Git blobs so API-only clients can verify/fetch
-          chunk_size = 16 * 1024 * 1024
-          chunk_shas: list[str] = []
-          for offset in range(0, apk_size, chunk_size):
-              chunk = apk_bytes[offset:offset + chunk_size]
-              blob_res = api_req(
-                  f"https://api.github.com/repos/{repo}/git/blobs",
-                  method="POST",
-                  data=json.dumps({
-                      "content": base64.b64encode(chunk).decode("ascii"),
-                      "encoding": "base64",
-                  }).encode("utf-8"),
-              )
-              chunk_shas.append(blob_res["sha"])
-
-          manifest = {
-              "apk_name": apk_name,
-              "size_bytes": apk_size,
-              "sha256": apk_sha256,
-              "release_tag": out_tag,
-              "release_url": release_html_url,
-              "browser_download_url": download_url,
-              "apksigner": apksigner_info,
-              "aapt2_badging": aapt2_info,
-              "chunk_shas": chunk_shas,
-          }
-          manifest_blob = api_req(
-              f"https://api.github.com/repos/{repo}/git/blobs",
-              method="POST",
-              data=json.dumps({
-                  "content": base64.b64encode(json.dumps(manifest, indent=2).encode("utf-8")).decode("ascii"),
-                  "encoding": "base64",
-              }).encode("utf-8"),
-          )
-          print(f"::notice title=APK_MANIFEST_BLOB::{manifest_blob['sha']}")
           print(f"Published {apk_name} ({apk_size} bytes) -> {download_url}")
 
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
