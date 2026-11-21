@@ -1,0 +1,29 @@
+name: Export Nuvio Source for Audit
+
+on:
+  push:
+    paths:
+      - ".androidforge/export-nuvio-source.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download pinned Nuvio source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/Bbbbbbbb349dj/AndroidForge/releases/download/nuvio-source-v1.1.2/Nuvio-Enhanced-2-v1.1.2-cloudstream-settings-source.zip"
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o /tmp/Nuvio-Enhanced-2-v1.1.2-source.zip
+          echo "85a8a2bdc263f627322f9b182da02127d0b764cdb72b01196507afeffd72274c  /tmp/Nuvio-Enhanced-2-v1.1.2-source.zip" | sha256sum --check -
+      - name: Upload verified source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nuvio-Verified-Source
+          path: /tmp/Nuvio-Enhanced-2-v1.1.2-source.zip
+          retention-days: 7
+          compression-level: 0
