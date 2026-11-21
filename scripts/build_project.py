@@ -207,6 +207,35 @@ def main() -> int:
             flush=True,
         )
 
+        # Nuvio Enhanced 2 v1.1.2 references AppFeaturePolicy throughout
+        # commonMain/androidMain but its source archive omits the definition.
+        # Restore the full-distribution policy before Gradle configures Kotlin.
+        # Never overwrite a policy supplied by a future source archive.
+        policy_file = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/core/build/AppFeaturePolicy.kt"
+        if not policy_file.exists() and (root / "composeApp/build.gradle.kts").is_file():
+            policy_file.parent.mkdir(parents=True, exist_ok=True)
+            policy_file.write_text("""package com.nuvio.app.core.build
+
+/** Feature gates for the Nuvio full distribution. */
+enum class TrailerPlaybackMode { IN_APP, EXTERNAL, DISABLED }
+
+object AppFeaturePolicy {
+    const val pluginsEnabled: Boolean = true
+    const val inAppUpdaterEnabled: Boolean = true
+    const val customServerConnectionsEnabled: Boolean = true
+    const val supportersContributorsPageEnabled: Boolean = true
+    const val personalMediaAddonCopyEnabled: Boolean = true
+    const val accountDeletionEnabled: Boolean = true
+    const val p2pEnabled: Boolean = true
+    const val downloadForegroundServiceEnabled: Boolean = true
+    const val mediaPlaybackForegroundServiceEnabled: Boolean = true
+    const val heroTrailerPlaybackSupported: Boolean = true
+    const val imdbRatingLogoEnabled: Boolean = true
+    val trailerPlaybackMode: TrailerPlaybackMode = TrailerPlaybackMode.IN_APP
+}
+""", encoding="utf-8")
+            print("✓ Restored missing Nuvio AppFeaturePolicy source for full distribution", flush=True)
+
     for cmd in all_commands:
         is_gradle_invocation = (
             bool(cmd)
