@@ -2474,10 +2474,26 @@ class LocalVideoPlayerActivity : MainActivity() {
         changed |= _replace_once(
             player_controls,
             "    onEpisodesClick: (() -> Unit)? = null,\n"
-            "    onChaptersClick: (() -> Unit)? = null,\n",
+            "    onChaptersClick: (() -> Unit)? = null,\n"
+            "    onLiveChannelsClick: (() -> Unit)? = null,\n"
+            "    qualityLabel: String? = null,\n"
+            "    onQualityClick: (() -> Unit)? = null,\n"
+            "    seekPreview: SeekPreviewController? = null,\n"
+            "    onTimelineTouchChange: (Boolean) -> Unit = {},\n"
+            "    onPictureInPictureClick: (() -> Unit)? = null,\n"
+            "    modifier: Modifier = Modifier,\n"
+            ") {\n",
             "    onEpisodesClick: (() -> Unit)? = null,\n"
             "    onNextEpisodeClick: (() -> Unit)? = null,\n"
-            "    onChaptersClick: (() -> Unit)? = null,\n",
+            "    onChaptersClick: (() -> Unit)? = null,\n"
+            "    onLiveChannelsClick: (() -> Unit)? = null,\n"
+            "    qualityLabel: String? = null,\n"
+            "    onQualityClick: (() -> Unit)? = null,\n"
+            "    seekPreview: SeekPreviewController? = null,\n"
+            "    onTimelineTouchChange: (Boolean) -> Unit = {},\n"
+            "    onPictureInPictureClick: (() -> Unit)? = null,\n"
+            "    modifier: Modifier = Modifier,\n"
+            ") {\n",
             "ProgressControls add onNextEpisodeClick parameter",
         )
         changed |= _replace_once(
