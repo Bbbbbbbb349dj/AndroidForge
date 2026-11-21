@@ -303,7 +303,7 @@ def _patch_navigation_and_downloads_tab(root: Path) -> list[str]:
             "                DownloadsScreen(\n"
             "                    onBack = null,\n"
             "                    onOpenDownload = { item -> actions.onOpenDownload?.invoke(item) },\n"
-            "                    onOpenDetails = actions.onDownloadDetailsClick,\n"
+            "                    onOpenDetails = { item -> actions.onDownloadDetailsClick?.invoke(item) },\n"
             "                    onNavigateToShow = actions.onDownloadShowClick,\n"
             "                    onOpenSettings = actions.onDownloadSettingsClick,\n"
             "                )\n"
@@ -441,6 +441,38 @@ def _patch_navigation_and_downloads_tab(root: Path) -> list[str]:
         )
         if changed:
             patched.append(str(enhanced_settings.relative_to(root)))
+
+    dl_screen = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/downloads/DownloadsScreen.kt"
+    if dl_screen.is_file():
+        changed = False
+        changed |= _replace_once(
+            dl_screen,
+            "@Composable\n"
+            "fun DownloadsScreen(\n"
+            "    onBack: () -> Unit,\n",
+            "@Composable\n"
+            "fun DownloadsScreen(\n"
+            "    onBack: (() -> Unit)? = null,\n",
+            "DownloadsScreen optional onBack parameter",
+        )
+        changed |= _replace_once(
+            dl_screen,
+            "                onBack = {\n"
+            "                    if (selectedShowId != null) {\n"
+            "                        onBackFromShow?.invoke() ?: run { selectedShowId = null }\n"
+            "                    } else {\n"
+            "                        onBack()\n"
+            "                    }\n"
+            "                },\n",
+            "                onBack = if (selectedShowId != null) {\n"
+            "                    { onBackFromShow?.invoke() ?: run { selectedShowId = null } }\n"
+            "                } else {\n"
+            "                    onBack\n"
+            "                },\n",
+            "DownloadsScreen hide back arrow when top-level tab",
+        )
+        if changed:
+            patched.append(str(dl_screen.relative_to(root)))
 
     return patched
 
