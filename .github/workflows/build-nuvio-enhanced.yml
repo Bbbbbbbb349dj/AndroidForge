@@ -1,0 +1,148 @@
+name: Build Nuvio Enhanced APK
+
+on:
+  push:
+    branches:
+      - "arena/17a4641a-androidforge"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  checks: write
+  actions: write
+
+jobs:
+  audit-source:
+    name: Audit Nuvio Enhanced Source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download & inspect Nuvio Enhanced 2 v1.1.2 source archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/nuvio-work
+          url="https://github.com/Bbbbbbbb349dj/AndroidForge/releases/download/nuvio-source-v1.1.2/Nuvio-Enhanced-2-v1.1.2-cloudstream-settings-source.zip"
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o /tmp/nuvio-work/source.zip
+          sha256sum /tmp/nuvio-work/source.zip
+          mkdir -p /tmp/nuvio-work/src
+          unzip -q /tmp/nuvio-work/source.zip -d /tmp/nuvio-work/src
+
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          src = Path("/tmp/nuvio-work/src")
+          entries = sorted(src.iterdir())
+          # Find root
+          root = src
+          if len(entries) == 1 and entries[0].is_dir():
+              root = entries[0]
+
+          report = []
+          report.append(f"ROOT: {root}")
+          report.append("TOP LEVEL:")
+          for p in sorted(root.iterdir()):
+              report.append(f"  {'dir ' if p.is_dir() else 'file'} {p.name}")
+
+          key_files = [
+              ".github/workflows/build-apk.yml",
+              "gradle.properties",
+              "gradle/wrapper/gradle-wrapper.properties",
+              "settings.gradle.kts",
+              "build.gradle.kts",
+              "gradle/libs.versions.toml",
+              "iosApp/Configuration/Version.xcconfig",
+              "androidApp/build.gradle.kts",
+              "composeApp/build.gradle.kts",
+          ]
+          wrapper_jar = root / "gradle/wrapper/gradle-wrapper.jar"
+          report.append(f"\ngradle-wrapper.jar exists: {wrapper_jar.exists()} (size={wrapper_jar.stat().st_size if wrapper_jar.exists() else 0})")
+
+          # List workflow files, policy files, aar files, native Cargo.toml files
+          report.append("\nWORKFLOW FILES:")
+          for p in sorted(root.glob(".github/workflows/*")):
+              report.append(f"  {p.relative_to(root)}")
+
+          report.append("\nPOLICY / BUILD CORE FILES:")
+          for p in sorted(root.rglob("*Policy*")):
+              if p.is_file():
+                  report.append(f"  {p.relative_to(root)}")
+          for p in sorted(root.rglob("core/build/*")):
+              if p.is_file():
+                  report.append(f"  {p.relative_to(root)}")
+
+          report.append("\nAAR / LIBS FILES:")
+          for p in sorted(root.rglob("*.aar")):
+              report.append(f"  {p.relative_to(root)} ({p.stat().st_size} bytes)")
+          for p in sorted(root.rglob("*.so")):
+              report.append(f"  {p.relative_to(root)} ({p.stat().st_size} bytes)")
+
+          report.append("\nNATIVE / CARGO FILES:")
+          for p in sorted(root.rglob("Cargo.toml")):
+              report.append(f"  {p.relative_to(root)}")
+          for p in sorted(root.rglob("CMakeLists.txt")):
+              report.append(f"  {p.relative_to(root)}")
+
+          # Find all usages of AppFeaturePolicy and TrailerPlaybackMode across the repo
+          usages = set()
+          for kt in root.rglob("*.kt"):
+              txt = kt.read_text(encoding="utf-8", errors="replace")
+              for m in re.finditer(r"AppFeaturePolicy\.[A-Za-z0-9_]+|TrailerPlaybackMode\.[A-Za-z0-9_]+", txt):
+                  usages.add(m.group(0))
+          report.append("\nAPPFEATUREPOLICY / TRAILERPLAYBACKMODE USAGES:")
+          for u in sorted(usages):
+              report.append(f"  {u}")
+
+          # Dump all *AppFeaturePolicy* files
+          for p in sorted(root.rglob("*AppFeaturePolicy*")):
+              if p.is_file():
+                  report.append(f"\n=== FILE: {p.relative_to(root)} ===")
+                  report.append(p.read_text(encoding="utf-8", errors="replace"))
+
+          # Dump key files
+          for rel in key_files:
+              p = root / rel
+              report.append(f"\n=== FILE: {rel} (exists={p.exists()}) ===")
+              if p.exists():
+                  report.append(p.read_text(encoding="utf-8", errors="replace"))
+
+          # Also check git status / recent files modified if .git exists or cloudstream files
+          report.append("\nCLOUDSTREAM FILES:")
+          for p in sorted(root.rglob("*CloudStream*")) + sorted(root.rglob("*cloudstream*")):
+              if p.is_file():
+                  report.append(f"  {p.relative_to(root)}")
+
+          full_text = "\n".join(report)
+          payload = json.dumps({
+              "content": base64.b64encode(full_text.encode("utf-8")).decode("ascii"),
+              "encoding": "base64",
+          }).encode("utf-8")
+
+          repo = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/git/blobs",
+              data=payload,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "AndroidForge-Audit",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              res = json.loads(resp.read().decode("utf-8"))
+          sha = res["sha"]
+          print(f"::notice title=AUDIT_BLOB::{sha}")
+          print(f"Uploaded audit blob: {sha} ({len(full_text)} chars)")
+          PY
