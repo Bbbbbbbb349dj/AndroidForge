@@ -177,15 +177,22 @@ def main() -> int:
     )
 
     for cmd in all_commands:
+        # AndroidForge detects Nuvio's tasks as bare aggregate task names
+        # (assembleDebug / assembleRelease / bundleDebug), not necessarily
+        # module-qualified names such as :androidApp:assembleDebug.
+        is_android_aggregate_task = any(
+            not arg.startswith("-")
+            and (
+                "assemble" in arg.lower()
+                or "bundle" in arg.lower()
+            )
+            for arg in cmd[1:]
+        )
         if (
             is_nuvio_project
             and cmd
             and cmd[0].endswith("gradlew")
-            and any(
-                arg.startswith(":androidApp:") and
-                (":assemble" in arg or ":bundle" in arg)
-                for arg in cmd[1:]
-            )
+            and is_android_aggregate_task
             and not any(arg.startswith("-Pnuvio.android.distribution=") for arg in cmd)
         ):
             cmd = [cmd[0], "-Pnuvio.android.distribution=full", *cmd[1:]]
