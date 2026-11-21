@@ -21,13 +21,16 @@ name: Build Android APK
 #  11. On failure, run automated diagnosis
 
 on:
+  push:
+    paths:
+      - ".androidforge/rebuild-nuvio.txt"
   workflow_dispatch:
     inputs:
       zip_source:
         description: "Where should the workflow get the source ZIP from?"
         type: choice
         required: true
-        default: "input-directory"
+        default: "release-asset"
         options:
           - "input-directory"
           - "download-url"
