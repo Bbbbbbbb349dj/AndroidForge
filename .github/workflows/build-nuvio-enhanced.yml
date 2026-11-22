@@ -1,6 +1,6 @@
 name: Build Nuvio Enhanced APK
 
-# Dedicated, reproducible APK build pipeline for Nuvio Enhanced 2 (v1.17)
+# Dedicated, reproducible APK build pipeline for Nuvio Enhanced 2 (v1.18)
 # pinned solely to the verified `nuvio-source-v1.1.2` GitHub Release archive
 # (never reads from `input/`).
 
@@ -22,9 +22,9 @@ on:
         description: "GitHub Release tag where the compiled APK will be published"
         required: true
         type: string
-        default: "nuvio-enhanced-v1.17-apk"
+        default: "nuvio-enhanced-v1.18-apk"
       export_source_only:
-        description: "Export sanitized Nuvio Enhanced v1.17 source archive without compiling APK"
+        description: "Export sanitized Nuvio Enhanced v1.18 source archive without compiling APK"
         required: false
         type: boolean
         default: false
@@ -40,15 +40,16 @@ permissions:
 
 jobs:
   export-nuvio-source:
-    name: Export Sanitized Nuvio Enhanced v1.17 Source
-    if: ${{ inputs.export_source_only == true || contains(github.event.head_commit.message, '[source-export]') }}
+    name: Export Sanitized Nuvio Enhanced v1.18 Source
+    needs: [build-nuvio-apk]
+    if: ${{ always() && (inputs.export_source_only == true || contains(github.event.head_commit.message, '[source-export]') || needs.build-nuvio-apk.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout helpers
         uses: actions/checkout@v4
 
-      - name: Build & sanitize Nuvio Enhanced v1.17 standalone source ZIP
+      - name: Build & sanitize Nuvio Enhanced v1.18 standalone source ZIP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -78,7 +79,7 @@ jobs:
             --root "$PROJECT_ROOT" \
             --no-global-gradle
 
-          CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.17"
+          CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.18"
           mv "$PROJECT_ROOT" "$CLEAN_ROOT"
 
           # Scrub all GitHub workflows, git metadata, signing keystores, local paths, and internal audit files
@@ -89,6 +90,7 @@ jobs:
             "$CLEAN_ROOT/.idea" \
             "$CLEAN_ROOT/keystore" \
             "$CLEAN_ROOT/.nuvio_enhanced_v117_applied" \
+            "$CLEAN_ROOT/.nuvio_enhanced_v118_applied" \
             "$CLEAN_ROOT/local.properties" \
             "$CLEAN_ROOT/PATCH_NOTES_AUDIT.md" \
             "$CLEAN_ROOT/AAR_CLASSES_LIST.txt" \
@@ -105,8 +107,8 @@ jobs:
             exit 1
           fi
 
-          OUT_ZIP="$WORK_DIR/Nuvio-Enhanced-v1.17-source.zip"
-          (cd "$WORK_DIR/stage" && zip -qr -9 "$OUT_ZIP" "Nuvio-Enhanced-v1.17")
+          OUT_ZIP="$WORK_DIR/Nuvio-Enhanced-v1.18-source.zip"
+          (cd "$WORK_DIR/stage" && zip -qr -9 "$OUT_ZIP" "Nuvio-Enhanced-v1.18")
           ls -lh "$OUT_ZIP"
 
           python3 - <<'PY' "$OUT_ZIP"
@@ -119,7 +121,7 @@ jobs:
           repo = os.environ["REPO"]
           token = os.environ["GH_TOKEN"]
           head_sha = os.environ["HEAD_SHA"]
-          out_tag = "nuvio-enhanced-v1.17-apk"
+          out_tag = "nuvio-enhanced-v1.18-apk"
 
           def api_req(url: str, method: str = "GET", body: bytes | None = None, content_type: str = "application/json") -> dict:
               req = urllib.request.Request(
@@ -158,7 +160,7 @@ jobs:
               f"https://api.github.com/repos/{repo}/check-runs",
               method="POST",
               body=json.dumps({
-                  "name": "nuvio-source-v117-manifest",
+                  "name": "nuvio-source-v118-manifest",
                   "head_sha": head_sha,
                   "status": "completed",
                   "conclusion": "success",
@@ -344,7 +346,7 @@ jobs:
             exit 1
           fi
 
-          FINAL_NAME="Nuvio-Enhanced-2-v1.17-full-arm64-v8a-release.apk"
+          FINAL_NAME="Nuvio-Enhanced-2-v1.18-full-arm64-v8a-release.apk"
           FINAL_APK="$OUT_DIR/$FINAL_NAME"
           cp "$RAW_APK" "$FINAL_APK"
           ls -lh "$FINAL_APK"
@@ -354,9 +356,9 @@ jobs:
           "$BT_DIR/apksigner" verify --print-certs "$FINAL_APK"
           BADGING=$("$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35)
           echo "$BADGING"
-          echo "$BADGING" | grep -q "versionName='1.17'"
-          echo "$BADGING" | grep -q "versionCode='170'"
-          echo "✓ Verified APK versionName=1.17 versionCode=170"
+          echo "$BADGING" | grep -q "versionName='1.18'"
+          echo "$BADGING" | grep -q "versionCode='180'"
+          echo "✓ Verified APK versionName=1.18 versionCode=180"
           "$BT_DIR/aapt2" dump xmltree "$FINAL_APK" --file AndroidManifest.xml | grep -q "com.nuvio.app.LocalVideoPlayerActivity"
           echo "✓ Verified com.nuvio.app.LocalVideoPlayerActivity in merged APK AndroidManifest.xml"
 
@@ -366,7 +368,7 @@ jobs:
       - name: Upload APK as GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nuvio-Enhanced-2-v1.17-APK
+          name: Nuvio-Enhanced-2-v1.18-APK
           path: ${{ steps.collect.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
@@ -378,7 +380,7 @@ jobs:
           REPO: ${{ github.repository }}
           APK_PATH: ${{ steps.collect.outputs.apk_path }}
           APK_NAME: ${{ steps.collect.outputs.apk_name }}
-          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.17-apk' }}
+          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.18-apk' }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -421,10 +423,10 @@ jobs:
                   return json.loads(body) if body else {}
 
           release_body = (
-              f"## Nuvio Enhanced 2 v1.17 — Full Android Release APK\n\n"
+              f"## Nuvio Enhanced 2 v1.18 — Full Android Release APK\n\n"
               f"- **Source Archive**: `nuvio-source-v1.1.2` (`Nuvio-Enhanced-2-v1.1.2-cloudstream-settings-source.zip`)\n"
               f"- **Package ID**: `com.nuvio.enhanced`\n"
-              f"- **Version**: `1.17` (`versionCode` `170`)\n"
+              f"- **Version**: `1.18` (`versionCode` `180`)\n"
               f"- **Distribution Flavor**: `full` (`arm64-v8a`)\n"
               f"- **APK File**: `{apk_name}` ({apk_size:,} bytes / {apk_size / (1024 * 1024):.2f} MiB)\n"
               f"- **SHA-256**: `{apk_sha256}`\n"
@@ -438,7 +440,7 @@ jobs:
                   f"https://api.github.com/repos/{repo}/releases/{rel_id}",
                   method="PATCH",
                   data=json.dumps({
-                      "name": "Nuvio Enhanced 2 v1.17 APK",
+                      "name": "Nuvio Enhanced 2 v1.18 APK",
                       "body": release_body,
                       "draft": False,
                       "prerelease": False,
@@ -453,7 +455,7 @@ jobs:
                   data=json.dumps({
                       "tag_name": out_tag,
                       "target_commitish": "main",
-                      "name": "Nuvio Enhanced 2 v1.17 APK",
+                      "name": "Nuvio Enhanced 2 v1.18 APK",
                       "body": release_body,
                       "draft": False,
                       "prerelease": False,
