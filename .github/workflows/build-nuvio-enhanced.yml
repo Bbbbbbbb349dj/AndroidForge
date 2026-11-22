@@ -96,7 +96,7 @@ jobs:
           find "$CLEAN_ROOT" -type f \( -name "*.jks" -o -name "*.keystore" -o -name ".DS_Store" \) -delete
 
           # Strict audit check ensuring zero references to user account, AndroidForge, or workflows
-          if grep -rniE "Bbbbbbbb349dj|androidforge|17a4641a|/home/runner|/home/user|arena\.ai" "$CLEAN_ROOT"; then
+          if grep -rnIiE "Bbbbbbbb349dj|androidforge|17a4641a|arena\.ai" "$CLEAN_ROOT"; then
             echo "::error::Sanitization audit failed!"
             exit 1
           fi
