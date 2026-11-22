@@ -23,6 +23,11 @@ on:
         required: true
         type: string
         default: "nuvio-enhanced-v1.17-apk"
+      export_source_only:
+        description: "Export sanitized Nuvio Enhanced v1.17 source archive without compiling APK"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: build-nuvio-enhanced-${{ github.ref }}
@@ -34,8 +39,137 @@ permissions:
   checks: write
 
 jobs:
+  export-nuvio-source:
+    name: Export Sanitized Nuvio Enhanced v1.17 Source
+    if: ${{ inputs.export_source_only == true || contains(github.event.head_commit.message, '[source-export]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v4
+
+      - name: Build & sanitize Nuvio Enhanced v1.17 standalone source ZIP
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          WORK_DIR="$RUNNER_TEMP/nuvio-src-export"
+          rm -rf "$WORK_DIR"
+          mkdir -p "$WORK_DIR/extracted" "$WORK_DIR/stage"
+
+          python3 scripts/acquire_zip.py \
+            --source release-asset \
+            --tag "nuvio-source-v1.1.2" \
+            --dest-dir "$WORK_DIR"
+
+          ZIP_FILE=$(ls "$WORK_DIR"/*.zip | head -1)
+          ACTUAL_SHA=$(sha256sum "$ZIP_FILE" | awk '{print $1}')
+          if [ "$ACTUAL_SHA" != "85a8a2bdc263f627322f9b182da02127d0b764cdb72b01196507afeffd72274c" ]; then
+            echo "::error::Source archive SHA-256 mismatch!"
+            exit 1
+          fi
+
+          unzip -q "$ZIP_FILE" -d "$WORK_DIR/extracted"
+          PROJECT_ROOT=$(python3 -c "import sys; from pathlib import Path; sys.path.insert(0, 'scripts'); from detect_project import find_project_root; print(find_project_root(Path('$WORK_DIR/extracted')))")
+
+          python3 "$GITHUB_WORKSPACE/scripts/nuvio_support.py" \
+            --root "$PROJECT_ROOT" \
+            --no-global-gradle
+
+          CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.17"
+          mv "$PROJECT_ROOT" "$CLEAN_ROOT"
+
+          # Scrub all GitHub workflows, git metadata, signing keystores, local paths, and internal audit files
+          rm -rf \
+            "$CLEAN_ROOT/.github" \
+            "$CLEAN_ROOT/.git" \
+            "$CLEAN_ROOT/.gradle" \
+            "$CLEAN_ROOT/.idea" \
+            "$CLEAN_ROOT/keystore" \
+            "$CLEAN_ROOT/.nuvio_enhanced_v117_applied" \
+            "$CLEAN_ROOT/local.properties" \
+            "$CLEAN_ROOT/PATCH_NOTES_AUDIT.md" \
+            "$CLEAN_ROOT/AAR_CLASSES_LIST.txt" \
+            "$CLEAN_ROOT/AAR_JAVAP_SIGNATURES.txt"
+          find "$CLEAN_ROOT" -type f \( -name "*.jks" -o -name "*.keystore" -o -name ".DS_Store" \) -delete
+
+          # Strict audit check ensuring zero references to user account, AndroidForge, or workflows
+          if grep -rniE "Bbbbbbbb349dj|androidforge|17a4641a|/home/runner|/home/user|arena\.ai" "$CLEAN_ROOT"; then
+            echo "::error::Sanitization audit failed!"
+            exit 1
+          fi
+          if [ -d "$CLEAN_ROOT/.github" ]; then
+            echo "::error::.github directory still present!"
+            exit 1
+          fi
+
+          OUT_ZIP="$WORK_DIR/Nuvio-Enhanced-v1.17-source.zip"
+          (cd "$WORK_DIR/stage" && zip -qr -9 "$OUT_ZIP" "Nuvio-Enhanced-v1.17")
+          ls -lh "$OUT_ZIP"
+
+          python3 - <<'PY' "$OUT_ZIP"
+          import base64, hashlib, json, os, sys, urllib.request
+          from pathlib import Path
+
+          zip_path = Path(sys.argv[1])
+          data = zip_path.read_bytes()
+          sha256 = hashlib.sha256(data).hexdigest()
+          repo = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+          head_sha = os.environ["HEAD_SHA"]
+
+          def api_req(url: str, payload: dict) -> dict:
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "Content-Type": "application/json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=180) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          chunk_size = 18 * 1024 * 1024
+          blob_shas = []
+          for offset in range(0, len(data), chunk_size):
+              chunk = data[offset:offset + chunk_size]
+              resp = api_req(
+                  f"https://api.github.com/repos/{repo}/git/blobs",
+                  {"content": base64.b64encode(chunk).decode("ascii"), "encoding": "base64"},
+              )
+              blob_shas.append(resp["sha"])
+
+          manifest = {
+              "zip_name": zip_path.name,
+              "zip_size": len(data),
+              "zip_sha256": sha256,
+              "blob_shas": blob_shas,
+          }
+          api_req(
+              f"https://api.github.com/repos/{repo}/check-runs",
+              {
+                  "name": "nuvio-source-v117-manifest",
+                  "head_sha": head_sha,
+                  "status": "completed",
+                  "conclusion": "success",
+                  "output": {
+                      "title": f"{zip_path.name} ({len(data):,} bytes)",
+                      "summary": json.dumps(manifest),
+                  },
+              },
+          )
+          print("Uploaded source ZIP manifest:", manifest["zip_name"], manifest["zip_size"], sha256)
+          PY
+
   build-nuvio-apk:
     name: Build Nuvio Enhanced 2 APK
+    if: ${{ inputs.export_source_only != true && !contains(github.event.head_commit.message, '[source-export]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
