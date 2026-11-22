@@ -383,7 +383,7 @@ fun LibraryDuplicateAlertDialog(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = "\"$candidateTitle\" is already in your Library.",
+                text = "“$candidateTitle” is already in your Library.",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = tokens.colors.textPrimary,
@@ -1758,7 +1758,7 @@ def _patch_library_screen_tabs_and_search(root: Path, changed: list[str]) -> Non
                                         HomeEmptyStateCard(
                                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                             title = "No matching titles",
-                                            message = "Nothing in your Library matched \"${savedSearchQuery.trim()}\".",
+                                            message = "Nothing in your Library matched “${savedSearchQuery.trim()}”.",
                                             actionLabel = "Clear search",
                                             onActionClick = { savedSearchQuery = "" },
                                         )
@@ -1799,7 +1799,7 @@ def _patch_library_screen_tabs_and_search(root: Path, changed: list[str]) -> Non
                                             },
                                             message = when {
                                                 savedSearchQuery.isNotBlank() ->
-                                                    "No titles matched \"${savedSearchQuery.trim()}\" in this view."
+                                                    "No titles matched “${savedSearchQuery.trim()}” in this view."
                                                 selectedCategory != null -> selectedCategory.emptyMessage
                                                 else -> stringResource(Res.string.library_empty_message)
                                             },
@@ -3490,7 +3490,7 @@ def _patch_fast_batch_downloads(root: Path, changed: list[str]) -> None:
         season: Int,
         episode: MetaVideo,
         streams: List<StreamItem>,
-        preferredResolution: com.nuvio.app.features.downloads.DownloadResolution,
+        preferredResolution: DownloadPreferredResolution,
         isFinal: Boolean,
     ) {
         val currentPlan = _activePlan.value
