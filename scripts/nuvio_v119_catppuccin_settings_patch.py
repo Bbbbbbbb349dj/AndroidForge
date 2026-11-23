@@ -1433,6 +1433,16 @@ internal fun BuyMeACoffeeSupportCard(
         "SettingsRootPage.purgeRajaJiFooter",
     )
 
+    readme_path = source_dir / "README.md"
+    if readme_path.is_file():
+        readme_text = readme_path.read_text(encoding="utf-8")
+        readme_text = readme_text.replace("Nuvio Enhanced 2.0", "Nuvio Enhanced")
+        readme_text = readme_text.replace(
+            "[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-raja__ji-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/raja_ji)",
+            "[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Development-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com)",
+        )
+        readme_path.write_text(readme_text, encoding="utf-8")
+
 
 def patch_nuvio_enhanced_settings_and_unit_tests(source_dir: Path) -> None:
     enhanced_page_path = (
