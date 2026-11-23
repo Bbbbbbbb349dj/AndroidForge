@@ -282,6 +282,12 @@ internal fun ExpandableDescription(
     series_path = source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/details/components/DetailSeriesContent.kt"
     _replace_once(
         series_path,
+        "import androidx.compose.foundation.layout.height",
+        "import androidx.compose.foundation.layout.height\nimport androidx.compose.foundation.layout.heightIn",
+        "DetailSeriesContent.heightInImport",
+    )
+    _replace_once(
+        series_path,
         """            if (!video.overview.isNullOrBlank()) {
                 Text(
                     text = video.overview,
@@ -1568,12 +1574,13 @@ object TraktCommentsRepository {
         var imdbId = resolveDirectPathId(meta)
         var tmdbId = resolveTmdbCandidate(meta)?.toString()
 
-        if (tmdbId == null && imdbId != null) {
-            tmdbId = runCatching { TmdbService.ensureTmdbId(imdbId, meta.type) }.getOrNull()
+        val initialImdbId = imdbId
+        if (tmdbId == null && initialImdbId != null) {
+            tmdbId = runCatching { TmdbService.ensureTmdbId(initialImdbId, meta.type) }.getOrNull()
         }
 
         if (imdbId == null && tmdbId == null && meta.name.isNotBlank()) {
-            val year = extractReleaseYearForDisplay(meta.releaseInfo)?.toIntOrNull()
+            val year = meta.releaseInfo?.let(::extractReleaseYearForDisplay)
             val searched = runCatching {
                 TmdbService.ensureTmdbIdBySearch(
                     title = meta.name,
@@ -1741,7 +1748,7 @@ private fun toTmdbReviewModel(dto: TmdbPublicReviewDto): TraktCommentReview {
         .replace(Regex("<[^>]+>"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
-    val syntheticId = -abs(dto.id.hashCode().coerceAtLeast(1))
+    val syntheticId = -abs(dto.id.hashCode().coerceAtLeast(1)).toLong()
 
     return TraktCommentReview(
         id = syntheticId,

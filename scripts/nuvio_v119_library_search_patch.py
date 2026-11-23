@@ -1549,6 +1549,12 @@ private data class StoredLibraryDisplaySettings(
     screen_kt = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/library/LibraryScreen.kt"
     _replace_once(
         screen_kt,
+        "import com.nuvio.app.core.ui.LocalVerticalBarPadding",
+        "import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding\nimport com.nuvio.app.core.ui.LocalVerticalBarPadding\nimport com.nuvio.app.core.ui.nuvioSafeBottomPadding",
+        "LibraryScreen bottom navigation overlay padding imports",
+    )
+    _replace_once(
+        screen_kt,
         r"""                    if (onDownloadsClick != null) {
                         LibraryDownloadsButton(onClick = onDownloadsClick)
                     }
@@ -1897,6 +1903,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
 import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.cloudstream.CloudStreamSearchItem
+import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.cloudstream.toMetaPreview
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
@@ -1986,7 +1993,11 @@ fun buildCloudStreamSearchSections(
             title = outcome.plugin.metadata.name,
             subtitle = "CloudStream Extension",
             addonName = "${outcome.plugin.metadata.name} · CloudStream",
-            type = previews.first().type,
+            target = CatalogTarget.Addon(
+                manifestUrl = "cloudstream://${outcome.plugin.metadata.id.value}",
+                contentType = previews.first().type,
+                catalogId = "search",
+            ),
             items = previews,
         )
     }
@@ -2583,7 +2594,7 @@ internal fun applySearchHistoryEntry(
     _replace_once(
         search_screen_kt,
         "import com.nuvio.app.features.home.MetaPreview",
-        "import com.nuvio.app.features.home.MetaPreview\nimport com.nuvio.app.features.cloudstream.CloudStreamPluginItem\nimport com.nuvio.app.features.cloudstream.CloudStreamRepository",
+        "import androidx.compose.ui.draw.clip\nimport com.nuvio.app.features.home.MetaPreview\nimport com.nuvio.app.features.cloudstream.CloudStreamPluginItem\nimport com.nuvio.app.features.cloudstream.CloudStreamRepository",
         "SearchScreen CloudStream imports",
     )
     _replace_once(

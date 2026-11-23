@@ -427,7 +427,7 @@ val AppTheme.isCatppuccin: Boolean
     val focusRing: Color,
     val focusBackground: Color,
     val background: Color = Color(0xFF0D0D0D),
-    val backgroundElevated: Color(0xFF1A1A1A),
+    val backgroundElevated: Color = Color(0xFF1A1A1A),
     val backgroundCard: Color = Color(0xFF242424),
     val isLight: Boolean = false,
     val textPrimary: Color = Color(0xFFF5F7F8),
@@ -938,7 +938,7 @@ import com.nuvio.app.core.ui.CatppuccinPalettes
 import com.nuvio.app.core.ui.catppuccinFlavorOrNull
 import com.nuvio.app.core.ui.isCatppuccin
 import com.nuvio.app.features.library.LibraryCategoryNavPosition
-import com.nuvio.app.features.library.LibraryPreferencesRepository""",
+import com.nuvio.app.features.library.LibraryDisplaySettingsRepository""",
         "AppearanceSettingsPage.imports",
     )
 
@@ -1010,7 +1010,10 @@ import com.nuvio.app.features.library.LibraryPreferencesRepository""",
                     onCheckedChange = onShowCatalogAccentToggle,
                 )
                 SettingsGroupDivider(isTablet = isTablet)
-                val libraryControlsState by LibraryPreferencesRepository.controlsState.collectAsStateWithLifecycle()
+                val libraryControlsState by remember {
+                    LibraryDisplaySettingsRepository.ensureLoaded()
+                    LibraryDisplaySettingsRepository.uiState
+                }.collectAsStateWithLifecycle()
                 SettingsNavigationRow(
                     title = "Library Category Bar Position",
                     description = if (libraryControlsState.categoryNavPosition == LibraryCategoryNavPosition.BOTTOM) {
@@ -1025,7 +1028,7 @@ import com.nuvio.app.features.library.LibraryPreferencesRepository""",
                         } else {
                             LibraryCategoryNavPosition.TOP
                         }
-                        LibraryPreferencesRepository.setCategoryNavPosition(next)
+                        LibraryDisplaySettingsRepository.setCategoryNavPosition(next)
                     },
                 )""",
         "AppearanceSettingsPage.libraryNavPositionRow",
@@ -1468,11 +1471,11 @@ def patch_nuvio_enhanced_settings_and_unit_tests(source_dir: Path) -> None:
                 SettingsSwitchRow(
                     title = "CloudStream Columns Grid Layout",
                     description = "Display CloudStream extension discovery catalogs in a multi-column poster grid instead of horizontal rows",
-                    checked = settings.cloudStreamHomeLayout == CloudStreamHomeLayout.Columns,
+                    checked = settings.cloudStreamHomeLayout == CloudStreamHomeLayout.COLUMNS,
                     isTablet = isTablet,
                     onCheckedChange = { useColumns ->
                         NuvioEnhancedSettingsRepository.setCloudStreamHomeLayout(
-                            if (useColumns) CloudStreamHomeLayout.Columns else CloudStreamHomeLayout.Rows,
+                            if (useColumns) CloudStreamHomeLayout.COLUMNS else CloudStreamHomeLayout.ROWS,
                         )
                     },
                 )
@@ -1495,6 +1498,7 @@ import com.nuvio.app.core.ui.CatppuccinAccent
 import com.nuvio.app.core.ui.CatppuccinFlavor
 import com.nuvio.app.core.ui.CatppuccinPalettes
 import com.nuvio.app.core.ui.ThemeColors
+import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.LibraryItem
@@ -1503,7 +1507,6 @@ import com.nuvio.app.features.library.mergeLibraryItemPreservingLocalMetadata
 import com.nuvio.app.features.library.normalizeLocalCategoryKeys
 import com.nuvio.app.features.library.toggleLocalCategoryMembership
 import com.nuvio.app.features.player.DynamicSwipeSeekCalculator
-import com.nuvio.app.features.player.SwipeSeekSensitivity
 import com.nuvio.app.features.search.buildSearchAutocompleteSuggestions
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -1580,8 +1583,13 @@ class NuvioV119VerificationTest {
         val section = HomeCatalogSection(
             key = "cinemeta_movies",
             title = "Popular Movies",
+            subtitle = "Featured",
             addonName = "Cinemeta",
-            type = "movie",
+            target = CatalogTarget.Addon(
+                manifestUrl = "https://v3-cinemeta.strem.io/manifest.json",
+                contentType = "movie",
+                catalogId = "top",
+            ),
             items = listOf(
                 MetaPreview(
                     id = "tt0816692",
@@ -1619,44 +1627,51 @@ class NuvioV119VerificationTest {
     @Test
     fun dynamicSwipeSeekScalesWithVelocitySensitivityAndClampsDuration() {
         val durationMs = 2L * 3_600_000L
+        val widthDp = 400f
 
-        val insideDeadZone = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = 6f,
-            smoothedVelocityDpPerSec = 40f,
+        val insideDeadZone = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = 6f,
+            velocityDpPerSec = 40f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Balanced,
+            sensitivity = 1.0f,
         )
         assertEquals(0L, insideDeadZone)
 
-        val slowSeek = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = 90f,
-            smoothedVelocityDpPerSec = 60f,
+        val slowSeek = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = 90f,
+            velocityDpPerSec = 60f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Balanced,
+            sensitivity = 1.0f,
         )
-        val mediumSeek = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = 90f,
-            smoothedVelocityDpPerSec = 320f,
+        val mediumSeek = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = 90f,
+            velocityDpPerSec = 320f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Balanced,
+            sensitivity = 1.0f,
         )
-        val fastSeek = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = 90f,
-            smoothedVelocityDpPerSec = 950f,
+        val fastSeek = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = 90f,
+            velocityDpPerSec = 950f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Balanced,
+            sensitivity = 1.0f,
         )
-        val turboSeek = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = 90f,
-            smoothedVelocityDpPerSec = 950f,
+        val turboSeek = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = 90f,
+            velocityDpPerSec = 950f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Turbo,
+            sensitivity = 1.75f,
         )
-        val backwardSeek = DynamicSwipeSeekCalculator.computeDeltaMs(
-            totalHorizontalDp = -90f,
-            smoothedVelocityDpPerSec = 320f,
+        val backwardSeek = DynamicSwipeSeekCalculator.calculateDeltaMs(
+            totalDragDp = -90f,
+            velocityDpPerSec = 320f,
+            surfaceWidthDp = widthDp,
             durationMs = durationMs,
-            sensitivity = SwipeSeekSensitivity.Balanced,
+            sensitivity = 1.0f,
         )
 
         assertTrue(slowSeek > 0L)
@@ -1670,15 +1685,15 @@ class NuvioV119VerificationTest {
 
     @Test
     fun catppuccinPalettesMatchOfficialSpecificationAndLightDarkInvariants() {
-        val latte = CatppuccinPalettes.forFlavor(CatppuccinFlavor.LATTE)
-        val frappe = CatppuccinPalettes.forFlavor(CatppuccinFlavor.FRAPPE)
-        val macchiato = CatppuccinPalettes.forFlavor(CatppuccinFlavor.MACCHIATO)
-        val mocha = CatppuccinPalettes.forFlavor(CatppuccinFlavor.MOCHA)
+        val latte = CatppuccinPalettes.tokensFor(CatppuccinFlavor.LATTE)
+        val frappe = CatppuccinPalettes.tokensFor(CatppuccinFlavor.FRAPPE)
+        val macchiato = CatppuccinPalettes.tokensFor(CatppuccinFlavor.MACCHIATO)
+        val mocha = CatppuccinPalettes.tokensFor(CatppuccinFlavor.MOCHA)
 
-        assertTrue(latte.isLight)
-        assertFalse(frappe.isLight)
-        assertFalse(macchiato.isLight)
-        assertFalse(mocha.isLight)
+        assertTrue(latte.flavor.isLight)
+        assertFalse(frappe.flavor.isLight)
+        assertFalse(macchiato.flavor.isLight)
+        assertFalse(mocha.flavor.isLight)
 
         assertEquals(Color(0xFFEFF1F5), latte.base)
         assertEquals(Color(0xFF4C4F69), latte.text)
@@ -1698,13 +1713,17 @@ class NuvioV119VerificationTest {
 
         assertEquals(14, CatppuccinAccent.entries.size)
         CatppuccinAccent.entries.forEach { accent ->
-            val latteScheme = ThemeColors.buildColorScheme(AppTheme.CATPPUCCIN_LATTE, null, accent)
-            val mochaScheme = ThemeColors.buildColorScheme(AppTheme.CATPPUCCIN_MOCHA, null, accent)
-            assertEquals(latte.base, latteScheme.background)
-            assertEquals(mocha.base, mochaScheme.background)
-            assertEquals(latte.accentColor(accent), latteScheme.primary)
-            assertEquals(mocha.accentColor(accent), mochaScheme.primary)
+            val lattePalette = CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.LATTE, accent)
+            val mochaPalette = CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.MOCHA, accent)
+            assertTrue(lattePalette.isLight)
+            assertFalse(mochaPalette.isLight)
+            assertEquals(latte.base, lattePalette.background)
+            assertEquals(mocha.base, mochaPalette.background)
+            assertEquals(latte.colorForAccent(accent), lattePalette.secondary)
+            assertEquals(mocha.colorForAccent(accent), mochaPalette.secondary)
         }
+        assertEquals(latte.base, ThemeColors.getColorPalette(AppTheme.CATPPUCCIN_LATTE).background)
+        assertEquals(mocha.base, ThemeColors.getColorPalette(AppTheme.CATPPUCCIN_MOCHA).background)
     }
 }
 ''',
