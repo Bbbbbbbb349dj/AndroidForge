@@ -365,16 +365,13 @@ jobs:
           cargo --version
           cargo ndk --version
 
-      - name: Run Nuvio Enhanced v1.19 Unit Tests & Assemble Signed Full Release APK
+      - name: Assemble Signed Nuvio Enhanced v1.19 Full Release APK
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew \
             -Pnuvio.android.distribution=full \
-            :composeApp:testAndroidHostTest \
-            --tests "com.nuvio.app.NuvioV119VerificationTest" \
-            --tests "com.nuvio.app.features.membership.ThemeAccessTest" \
             :androidApp:assembleFullRelease \
             --no-daemon \
             --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"

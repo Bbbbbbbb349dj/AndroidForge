@@ -582,22 +582,21 @@ internal fun TitleQuickDetailsSheet(
 
     val title = enrichedDetails?.name?.takeIf(String::isNotBlank) ?: item.name
     val posterUrl = enrichedDetails?.poster?.takeIf(String::isNotBlank) ?: item.poster
-    val releaseYear = extractReleaseYearForDisplay(
-        enrichedDetails?.releaseInfo ?: item.releaseInfo,
-    )
-    val runtimeLabel = enrichedDetails?.runtime?.let(::formatRuntimeForDisplay)
+    val releaseYear = (enrichedDetails?.releaseInfo ?: item.releaseInfo)
+        ?.let(::extractReleaseYearForDisplay)
+        ?.toString()
+    val runtimeLabel = (enrichedDetails?.runtime ?: item.runtime)?.let(::formatRuntimeForDisplay)
     val ratingLabel = (enrichedDetails?.imdbRating ?: item.imdbRating)
-        ?.takeIf { it > 0.0 }
-        ?.let { ((it * 10.0).toInt() / 10.0).toString() }
+        ?.trim()
+        ?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" }
     val ageRating = (enrichedDetails?.ageRating ?: item.ageRating)?.takeIf(String::isNotBlank)
     val genres = (enrichedDetails?.genres?.takeIf { it.isNotEmpty() } ?: item.genres).take(6)
     val synopsis = (enrichedDetails?.description?.takeIf(String::isNotBlank)
         ?: item.description?.takeIf(String::isNotBlank))
         ?.trim()
     val castMembers = enrichedDetails?.cast?.take(5).orEmpty()
-    val sourceBadge = remember(item.id, item.addonName) {
+    val sourceBadge = remember(item.id) {
         when {
-            !item.addonName.isNullOrBlank() -> item.addonName
             item.id.startsWith("cloudstream:", ignoreCase = true) -> {
                 val provider = item.id.removePrefix("cloudstream:").substringBefore(':')
                 "CloudStream • $provider"
