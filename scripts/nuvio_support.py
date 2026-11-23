@@ -45,6 +45,9 @@ from nuvio_cloudstream_ext_patch import apply_cloudstream_ext_patch
 from nuvio_local_media_patch import apply_local_media_patch
 from nuvio_v117_enhancements_patch import apply_v117_enhancements_patch
 from nuvio_v118_ux_overhaul_patch import apply_v118_ux_overhaul_patch
+from nuvio_v119_library_search_patch import apply_v119_library_search_patch
+from nuvio_v119_details_cloudstream_player_patch import apply_v119_details_cloudstream_player_patch
+from nuvio_v119_catppuccin_settings_patch import apply_v119_catppuccin_settings_patch
 
 
 APP_FEATURE_POLICY_FILES: dict[str, str] = {
@@ -3809,7 +3812,7 @@ def prepare_nuvio_source(
     restored_files: list[str] = []
     patched_files: list[str] = []
 
-    marker = root / ".nuvio_enhanced_v118_applied"
+    marker = root / ".nuvio_enhanced_v119_applied"
     if (root / "composeApp" / "build.gradle.kts").is_file() and not marker.exists():
         patched_files.extend(_patch_navigation_and_downloads_tab(root))
         patched_files.extend(_patch_cloudstream_host_and_settings(root))
@@ -3818,7 +3821,10 @@ def prepare_nuvio_source(
         patched_files.extend(apply_local_media_patch(root))
         patched_files.extend(apply_v117_enhancements_patch(root))
         patched_files.extend(apply_v118_ux_overhaul_patch(root))
-        marker.write_text("v1.18\n", encoding="utf-8")
+        apply_v119_library_search_patch(root)
+        apply_v119_details_cloudstream_player_patch(root)
+        apply_v119_catppuccin_settings_patch(root)
+        marker.write_text("v1.19\n", encoding="utf-8")
 
         for rel_path, content in APP_FEATURE_POLICY_FILES.items():
             target = root / rel_path
