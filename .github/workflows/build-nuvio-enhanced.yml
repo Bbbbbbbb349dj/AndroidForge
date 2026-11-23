@@ -214,6 +214,7 @@ jobs:
           key: nuvio-enhanced-release-keystore-v1
           restore-keys: |
             nuvio-enhanced-release-keystore-
+          save-always: true
 
       - name: Configure persistent release signing keystore
         id: signing
@@ -344,6 +345,7 @@ jobs:
             nuvio-enhanced-${{ runner.os }}-v119-
             nuvio-enhanced-${{ runner.os }}-v1-
             nuvio-enhanced-${{ runner.os }}-
+          save-always: true
 
       - name: Set up Rust (2024 edition) & cargo-ndk
         run: |
@@ -425,50 +427,85 @@ jobs:
         env:
           PROJECT_ROOT: ${{ steps.source.outputs.project_root }}
         run: |
-          set -euo pipefail
-          OUT_DIR="$GITHUB_WORKSPACE/output"
-          mkdir -p "$OUT_DIR"
-          rm -f "$OUT_DIR"/*.apk
+          python3 - <<'PY'
+          import os, re, shutil, subprocess
+          from pathlib import Path
 
-          RAW_APK=$(find "$PROJECT_ROOT/androidApp/build/outputs/apk" -name "*.apk" | sort | head -1)
-          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
-            echo "::error::No APK found under androidApp/build/outputs/apk"
-            exit 1
-          fi
+          project_root = Path(os.environ["PROJECT_ROOT"])
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          android_home = Path(os.environ["ANDROID_HOME"])
+          gh_output = Path(os.environ["GITHUB_OUTPUT"])
 
-          FINAL_NAME="Nuvio-Enhanced-v1.19-full-arm64-v8a-release.apk"
-          FINAL_APK="$OUT_DIR/$FINAL_NAME"
-          cp "$RAW_APK" "$FINAL_APK"
-          ls -lh "$FINAL_APK"
+          out_dir = workspace / "output"
+          out_dir.mkdir(parents=True, exist_ok=True)
+          for stale in out_dir.glob("*.apk"):
+              stale.unlink()
 
-          BT_DIR=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
-          echo "Verifying APK using build-tools: $BT_DIR"
-          SIGN_OUT=$("$BT_DIR/apksigner" verify --verbose --print-certs "$FINAL_APK")
-          echo "$SIGN_OUT"
-          echo "$SIGN_OUT" | grep -q "Verified using v1 scheme (JAR signing): true"
-          echo "$SIGN_OUT" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true"
-          echo "$SIGN_OUT" | grep -q "Verified using v3 scheme (APK Signature Scheme v3): true"
-          if echo "$SIGN_OUT" | grep -qi "CN=Android Debug"; then
-            echo "::error::APK was signed with Android Debug certificate instead of persistent release keystore!"
-            exit 1
-          fi
-          CERT_SHA256=$(echo "$SIGN_OUT" | grep "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}' | head -1)
-          CERT_DN=$(echo "$SIGN_OUT" | grep "Signer #1 certificate DN:" | sed 's/^Signer #1 certificate DN: //' | head -1)
-          echo "✓ Verified V1+V2+V3 release signature ($CERT_DN | SHA-256: $CERT_SHA256)"
+          apks = sorted((project_root / "androidApp" / "build" / "outputs" / "apk").rglob("*.apk"))
+          if not apks:
+              raise SystemExit("::error::No APK found under androidApp/build/outputs/apk")
 
-          BADGING=$("$BT_DIR/aapt2" dump badging "$FINAL_APK" | head -n 35)
-          echo "$BADGING"
-          echo "$BADGING" | grep -q "name='com.nuvio.enhanced'"
-          echo "$BADGING" | grep -q "versionName='1.19'"
-          echo "$BADGING" | grep -q "versionCode='190'"
-          echo "✓ Verified APK package=com.nuvio.enhanced versionName=1.19 versionCode=190"
-          "$BT_DIR/aapt2" dump xmltree "$FINAL_APK" --file AndroidManifest.xml | grep -q "com.nuvio.app.LocalVideoPlayerActivity"
-          echo "✓ Verified com.nuvio.app.LocalVideoPlayerActivity in merged APK AndroidManifest.xml"
+          final_name = "Nuvio-Enhanced-v1.19-full-arm64-v8a-release.apk"
+          final_apk = out_dir / final_name
+          shutil.copy2(apks[0], final_apk)
+          print(f"Collected APK: {final_apk} ({final_apk.stat().st_size:,} bytes)")
 
-          echo "apk_path=$FINAL_APK" >> "$GITHUB_OUTPUT"
-          echo "apk_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
-          echo "cert_sha256=$CERT_SHA256" >> "$GITHUB_OUTPUT"
-          echo "cert_dn=$CERT_DN" >> "$GITHUB_OUTPUT"
+          bt_dirs = sorted((android_home / "build-tools").iterdir(), key=lambda p: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", p.name)])
+          bt_dir = bt_dirs[-1]
+          print(f"Verifying APK with build-tools: {bt_dir}")
+
+          sign_out = subprocess.run(
+              [str(bt_dir / "apksigner"), "verify", "--verbose", "--print-certs", str(final_apk)],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          print(sign_out)
+
+          if "CN=Android Debug" in sign_out:
+              raise SystemExit("::error::APK was signed with Android Debug certificate instead of persistent release keystore!")
+          if "Verified using v2 scheme (APK Signature Scheme v2): true" not in sign_out:
+              raise SystemExit("::error::APK v2 signature verification missing!")
+          if "Verified using v3 scheme (APK Signature Scheme v3): true" not in sign_out:
+              raise SystemExit("::error::APK v3 signature verification missing!")
+
+          cert_sha256 = ""
+          cert_dn = ""
+          for line in sign_out.splitlines():
+              if "Signer #1 certificate SHA-256 digest:" in line:
+                  cert_sha256 = line.split(":")[-1].strip()
+              elif "Signer #1 certificate DN:" in line:
+                  cert_dn = line.split("Signer #1 certificate DN:", 1)[-1].strip()
+
+          badging = subprocess.run(
+              [str(bt_dir / "aapt2"), "dump", "badging", str(final_apk)],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          print("\n".join(badging.splitlines()[:25]))
+
+          for required in ("name='com.nuvio.enhanced'", "versionName='1.19'", "versionCode='190'"):
+              if required not in badging:
+                  raise SystemExit(f"::error::Expected {required} in APK badging!")
+
+          xmltree = subprocess.run(
+              [str(bt_dir / "aapt2"), "dump", "xmltree", str(final_apk), "--file", "AndroidManifest.xml"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          if "com.nuvio.app.LocalVideoPlayerActivity" not in xmltree:
+              raise SystemExit("::error::Missing LocalVideoPlayerActivity in merged AndroidManifest.xml")
+
+          print(f"✓ Verified release APK: com.nuvio.enhanced v1.19 (190) | {cert_dn} | SHA-256 {cert_sha256}")
+
+          with gh_output.open("a", encoding="utf-8") as fh:
+              fh.write(f"apk_path={final_apk}\n")
+              fh.write(f"apk_name={final_name}\n")
+              fh.write(f"cert_sha256={cert_sha256}\n")
+              fh.write(f"cert_dn={cert_dn}\n")
+          PY
 
       - name: Upload APK as GitHub Actions Artifact
         uses: actions/upload-artifact@v4
