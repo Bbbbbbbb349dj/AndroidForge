@@ -60,6 +60,8 @@ from nuvio_v120_offline_subs_patch import apply_v120_offline_subs_patch
 from nuvio_v120_stream_variants_patch import apply_v120_stream_variants_patch
 from nuvio_v120_downloads_core_patch import apply_v120_downloads_core_patch
 from nuvio_v120_player_core_v2_patch import apply_v120_player_core_v2_patch
+from nuvio_v120_ux_wave2_patch import apply_v120_ux_wave2_patch
+from nuvio_v120_library_auto_patch import apply_v120_library_auto_patch
 from nuvio_v120_player_layout_patch import apply_v120_player_layout_patch
 
 
@@ -3861,6 +3863,8 @@ def prepare_nuvio_source(
         apply_v120_downloads_core_patch(root)
         apply_v120_player_layout_patch(root)
         apply_v120_player_core_v2_patch(root)
+        apply_v120_ux_wave2_patch(root)
+        apply_v120_library_auto_patch(root)
         _patch_v120_version(root)
         marker.write_text("v1.20\n", encoding="utf-8")
 
