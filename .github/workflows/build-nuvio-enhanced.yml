@@ -313,15 +313,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          PROJECT_ROOT="${{ steps.source.outputs.project_root }}"
-          cd "$PROJECT_ROOT"
-          git init -q
-          git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" add -A
-          git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" commit -q -m "Clean Nuvio source snapshot [skip ci]"
-          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/nuvio-base-snapshot
-          rm -rf .git
-          echo "✓ Pushed clean source snapshot to nuvio-base-snapshot"
+          set -uo pipefail
+          REPORT=/tmp/snap-report.txt
+          {
+            echo "root='${{ steps.source.outputs.project_root }}'"
+            PROJECT_ROOT="${{ steps.source.outputs.project_root }}"
+            cd "$PROJECT_ROOT" || echo "CD_FAILED"
+            git init -q || echo "INIT_FAILED"
+            git config --global --add safe.directory "$PROJECT_ROOT" || true
+            git add -A 2>&1 | tail -3 || echo "ADD_FAILED"
+            git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" commit -q -m "Clean Nuvio source snapshot [skip ci]" && echo "COMMIT_OK" || echo "COMMIT_FAILED"
+            git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/nuvio-base-snapshot 2>&1 | tail -5 || echo "PUSH_FAILED"
+            git log --oneline -1 2>&1 || true
+            rm -rf .git
+          } > "$REPORT" 2>&1
+          if command -v gh >/dev/null 2>&1; then
+            SUMMARY=$(python3 -c "import pathlib; print(pathlib.Path('$REPORT').read_text()[:6000])")
+            GH_TOKEN="$GITHUB_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+              -f name="nuvio-base-snapshot" \
+              -f head_sha="$GITHUB_SHA" \
+              -f status="completed" \
+              -f conclusion="success" \
+              -f "output[title]=base snapshot" \
+              -f "output[summary]=$SUMMARY" >/dev/null 2>&1 || true
+          fi
+          cat "$REPORT"
 
       - name: Prepare Nuvio Enhanced v1.20 KMP source & verify branding hygiene
         run: |
