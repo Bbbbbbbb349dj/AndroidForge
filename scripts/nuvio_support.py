@@ -48,6 +48,18 @@ from nuvio_v118_ux_overhaul_patch import apply_v118_ux_overhaul_patch
 from nuvio_v119_library_search_patch import apply_v119_library_search_patch
 from nuvio_v119_details_cloudstream_player_patch import apply_v119_details_cloudstream_player_patch
 from nuvio_v119_catppuccin_settings_patch import apply_v119_catppuccin_settings_patch
+from nuvio_v120_search_patch import apply_v120_search_patch
+from nuvio_v120_details_layout_patch import apply_v120_details_layout_patch
+from nuvio_v120_cloudstream_filter_patch import apply_v120_cloudstream_filter_patch
+from nuvio_v120_app_background_patch import apply_v120_app_background_patch
+from nuvio_v120_profiles_patch import apply_v120_profiles_patch
+from nuvio_v120_player_codec_patch import apply_v120_player_codec_patch
+from nuvio_v120_source_fallback_patch import apply_v120_source_fallback_patch
+from nuvio_v120_subtitle_sync_patch import apply_v120_subtitle_sync_patch
+from nuvio_v120_offline_subs_patch import apply_v120_offline_subs_patch
+from nuvio_v120_stream_variants_patch import apply_v120_stream_variants_patch
+from nuvio_v120_downloads_core_patch import apply_v120_downloads_core_patch
+from nuvio_v120_player_layout_patch import apply_v120_player_layout_patch
 
 
 APP_FEATURE_POLICY_FILES: dict[str, str] = {
@@ -3803,6 +3815,17 @@ private fun streamSourceSummary(badge: String?, addon: String?, size: String?): 
     return patched
 
 
+def _patch_v120_version(root: Path) -> None:
+    """Nuvio Enhanced v1.20 version identity (versionName 1.20 / versionCode 200)."""
+    xcconfig = root / "iosApp/Configuration/Version.xcconfig"
+    _replace_once(xcconfig, "MARKETING_VERSION=1.19\n", "MARKETING_VERSION=1.20\n", "Version.xcconfig MARKETING_VERSION=1.20")
+    _replace_once(xcconfig, "CURRENT_PROJECT_VERSION=190\n", "CURRENT_PROJECT_VERSION=200\n", "Version.xcconfig CURRENT_PROJECT_VERSION=200")
+    _replace_once(root / "gradle.properties", "nuvio.app.versionName=1.19\n", "nuvio.app.versionName=1.20\n", "gradle.properties nuvio.app.versionName=1.20")
+    local_folder = root / "composeApp/src/androidMain/kotlin/com/nuvio/app/features/downloads/LocalFolderVideosPlatform.android.kt"
+    if local_folder.is_file():
+        _replace_once(local_folder, '"NuvioEnhanced/1.19"', '"NuvioEnhanced/1.20"', "User-Agent NuvioEnhanced/1.20")
+
+
 def prepare_nuvio_source(
     root: Path,
     android_sdk: str | None = None,
@@ -3824,7 +3847,20 @@ def prepare_nuvio_source(
         apply_v119_library_search_patch(root)
         apply_v119_details_cloudstream_player_patch(root)
         apply_v119_catppuccin_settings_patch(root)
-        marker.write_text("v1.19\n", encoding="utf-8")
+        apply_v120_search_patch(root)
+        apply_v120_details_layout_patch(root)
+        apply_v120_cloudstream_filter_patch(root)
+        apply_v120_app_background_patch(root)
+        apply_v120_profiles_patch(root)
+        apply_v120_player_codec_patch(root)
+        apply_v120_source_fallback_patch(root)
+        apply_v120_subtitle_sync_patch(root)
+        apply_v120_offline_subs_patch(root)
+        apply_v120_stream_variants_patch(root)
+        apply_v120_downloads_core_patch(root)
+        apply_v120_player_layout_patch(root)
+        _patch_v120_version(root)
+        marker.write_text("v1.20\n", encoding="utf-8")
 
         for rel_path, content in APP_FEATURE_POLICY_FILES.items():
             target = root / rel_path
