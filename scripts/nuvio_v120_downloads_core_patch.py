@@ -521,6 +521,58 @@ def _patch_action_receiver(root: Path) -> None:
     )
 
 
+def _patch_notification_source_line(source_dir: Path) -> None:
+    """v1.20 Section 9: download notifications must show source info — provider, quality and
+    SUB/DUB when known — alongside progress. Data already exists on DownloadItem; never
+    fabricate a field we don't have (missing parts are simply omitted)."""
+    models = source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/downloads/DownloadsModels.kt"
+    _replace_once(
+        models,
+        """    val displaySubtitle: String
+        get() = episodeTitle.orEmpty()
+""",
+        """    val displaySubtitle: String
+        get() = episodeTitle.orEmpty()
+
+    /** Provider / quality / audio-variant descriptor used by download notifications. */
+    val sourceInfoLine: String
+        get() {
+            val parts = mutableListOf<String>()
+            if (providerName.isNotBlank()) parts += "Source: $providerName"
+            qualityLabel?.let { parts += it }
+            audioVariant?.takeIf { it.isNotBlank() }?.let { parts += it }
+            return parts.joinToString(" | ")
+        }
+
+    private val qualityLabel: String?
+        get() {
+            val pattern = Regex("\\\\b(\\\\d{3,4}p)\\\\b", RegexOption.IGNORE_CASE)
+            return pattern.find(streamTitle)?.value
+                ?: streamSubtitle?.let { pattern.find(it)?.value }
+                ?: pattern.find(fileName)?.value
+        }
+""",
+        "DownloadItem source info line",
+    )
+    live = source_dir / "composeApp/src/androidMain/kotlin/com/nuvio/app/features/downloads/DownloadsLiveStatusPlatform.android.kt"
+    _replace_once(
+        live,
+        """    private fun buildSubtitle(item: DownloadItem): String {
+        val detail = item.displaySubtitle
+        return when (item.status) {""",
+        """    private fun buildSubtitle(item: DownloadItem): String {
+        // Section 9: "Title — S04E01 / Source: Provider | 1080p | SUB / progress".
+        val sourceLine = item.sourceInfoLine
+        val detail = when {
+            sourceLine.isBlank() -> item.displaySubtitle
+            item.displaySubtitle.isBlank() -> sourceLine
+            else -> "${item.displaySubtitle}\\n$sourceLine"
+        }
+        return when (item.status) {""",
+        "notification subtitle source info",
+    )
+
+
 def apply_v120_downloads_core_patch(source_dir: Path) -> None:
     _patch_models(source_dir)
     _patch_settings_page(source_dir)
@@ -530,6 +582,7 @@ def apply_v120_downloads_core_patch(source_dir: Path) -> None:
     _patch_speeds(source_dir)
     _patch_notifications(source_dir)
     _patch_action_receiver(source_dir)
+    _patch_notification_source_line(source_dir)
     print("[v1.20-module-12] Downloads: 16+Unlimited concurrency, foreground pool, HLS resume & rich notifications applied cleanly.")
 
 
