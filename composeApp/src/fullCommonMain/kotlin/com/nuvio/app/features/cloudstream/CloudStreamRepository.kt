@@ -547,7 +547,7 @@ actual object CloudStreamRepository {
                         RuntimeDiagnostics.recordLog("cs-search-provider-start id=$id")
                         val providerResult = withTimeoutOrNull(PROVIDER_SEARCH_TIMEOUT_MS) {
                             providerResult(id) { search(query.trim()) }
-                        } ?: Result.failure(
+                        } ?: Result.failure<List<CloudStreamSearchItem>>(
                             IllegalStateException("CloudStream provider search timed out after ${PROVIDER_SEARCH_TIMEOUT_MS}ms"),
                         ).also {
                             RuntimeDiagnostics.recordLog("cs-search-provider-timeout id=$id timeoutMs=$PROVIDER_SEARCH_TIMEOUT_MS")

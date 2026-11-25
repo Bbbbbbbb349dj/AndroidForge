@@ -271,7 +271,6 @@ internal fun CloudStreamSettingsSection() {
                         modifier = Modifier.padding(end = 4.dp),
                     )
                     IconButton(
-                        enabled = plugin.verified && plugin.compatibility.isRunnable,
                         onClick = {
                             repositoryUrl = repository.manifest.sourceUrl
                             editingRepositoryUrl = repository.manifest.sourceUrl

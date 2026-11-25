@@ -581,7 +581,8 @@ private fun SettingsProfileCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = if (isTablet) 24.dp else 16.dp, top = if (isTablet) 12.dp else 8.dp)
+            .padding(horizontal = if (isTablet) 24.dp else 16.dp)
+            .padding(top = if (isTablet) 12.dp else 8.dp)
             .clip(RoundedCornerShape(if (isTablet) 24.dp else 20.dp))
             .background(
                 Brush.linearGradient(
