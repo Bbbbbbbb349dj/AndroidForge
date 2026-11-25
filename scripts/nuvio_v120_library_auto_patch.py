@@ -156,6 +156,13 @@ def _patch_fully_watched_hook(source_dir: Path) -> None:
     path = source_dir / _MAIN
     _replace_once(
         path,
+        """import com.nuvio.app.features.player.externalPlaybackSession""",
+        """import com.nuvio.app.features.player.autoCompleteFullyWatchedSeries
+import com.nuvio.app.features.player.externalPlaybackSession""",
+        "auto-complete import",
+    )
+    _replace_once(
+        path,
         """    val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()""",
         """    val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     LaunchedEffect(fullyWatchedSeriesKeys) {
