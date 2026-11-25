@@ -148,10 +148,17 @@ def _patch_engine_escalation(root: Path) -> None:
     }
     var engineAutoEscalated by remember(playerSourceKey, requestedEngine) { mutableStateOf(false) }
     val surfaceOnError: (String?) -> Unit = { message ->
-        // Nuvio Enhanced: with the engine preference on Auto, a surface failure escalates
-        // ExoPlayer -> Libmpv exactly once per source as a codec/renderer compatibility fallback.
+        // Nuvio Enhanced: with the engine preference on Auto, a genuine CODEC/DECODER
+        // failure escalates ExoPlayer -> Libmpv exactly once per source. Link/HTTP/network
+        // errors must NOT escalate — the runtime's link-refresh path handles those first,
+        // and escalating them doubled load times (e.g. CloudStream expired links).
+        val looksLikeCodecFailure = message != null &&
+            Regex(
+                "decod|codec|renderer|MediaCodec|OMX|c2\\\\.|unsupported (video|audio|mime)|video format|format not supported",
+                RegexOption.IGNORE_CASE,
+            ).containsMatchIn(message)
         if (
-            message != null &&
+            looksLikeCodecFailure &&
             activeEngine == ResolvedAndroidPlaybackEngine.ExoPlayer &&
             requestedEngine == AndroidPlaybackEngine.Auto &&
             !engineAutoEscalated &&

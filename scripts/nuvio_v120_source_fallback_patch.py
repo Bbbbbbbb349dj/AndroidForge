@@ -406,6 +406,57 @@ def _patch_enable_by_default(root: Path) -> None:
         _replace_once(effects, old, new, label)
 
 
+def _patch_player_safety(source_dir: Path) -> None:
+    """v1.20 fixes for 'broke the player' reports: never swap a stream that is still
+    buffering, and never hide errors behind long empty source searches."""
+    path = source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeSourceFallback.kt"
+    _replace_once(
+        path,
+        """        val timeSource = TimeSource.Monotonic
+        var lastPositionMs = playbackSnapshot.positionMs
+        var lastProgressAt = timeSource.markNow()
+        while (true) {
+            delay(STALL_POLL_INTERVAL)
+            val snapshot = playbackSnapshot
+            if (snapshot.positionMs != lastPositionMs) {
+                lastPositionMs = snapshot.positionMs
+                lastProgressAt = timeSource.markNow()
+                continue
+            }""",
+        """        val timeSource = TimeSource.Monotonic
+        var lastPositionMs = playbackSnapshot.positionMs
+        var lastBufferedMs = playbackSnapshot.bufferedPositionMs
+        var lastProgressAt = timeSource.markNow()
+        while (true) {
+            delay(STALL_POLL_INTERVAL)
+            val snapshot = playbackSnapshot
+            // Buffering progress (e.g. slow CloudStream HLS start) is NOT a stall — only a
+            // frozen position with a frozen buffer counts, so working streams are never swapped.
+            val bufferAdvanced = snapshot.bufferedPositionMs > lastBufferedMs
+            lastBufferedMs = snapshot.bufferedPositionMs
+            if (snapshot.positionMs != lastPositionMs || bufferAdvanced) {
+                lastPositionMs = snapshot.positionMs
+                lastProgressAt = timeSource.markNow()
+                continue
+            }""",
+        "watchdog buffer-progress guard",
+    )
+    _replace_once(
+        path,
+        """                if (next == null) {
+                    val searchDone = state.emptyStateReason != null || (!state.isAnyLoading && state.groups.isNotEmpty())
+                    if (searchDone || polls >= SOURCE_FALLBACK_POLL_COUNT) break""",
+        """                if (next == null) {
+                    // Bail quickly when the shared search finished or produced nothing (~3s),
+                    // so errors surface promptly instead of hiding behind 15s of polling.
+                    val searchDone = state.emptyStateReason != null ||
+                        (!state.isAnyLoading && state.groups.isNotEmpty()) ||
+                        (!state.isAnyLoading && state.groups.isEmpty() && polls >= 6)
+                    if (searchDone || polls >= SOURCE_FALLBACK_POLL_COUNT) break""",
+        "fast bail on empty source search",
+    )
+
+
 def apply_v120_source_fallback_patch(source_dir: Path) -> None:
     _patch_state(source_dir)
     _patch_fallback(source_dir)
@@ -413,6 +464,7 @@ def apply_v120_source_fallback_patch(source_dir: Path) -> None:
     _patch_ui_call_site(source_dir)
     _patch_content_effects(source_dir)
     _patch_enable_by_default(source_dir)
+    _patch_player_safety(source_dir)
     print("[v1.20-module-8] Smart stream auto-switch: mid-playback/stall fallback + switching pill applied cleanly.")
 
 
