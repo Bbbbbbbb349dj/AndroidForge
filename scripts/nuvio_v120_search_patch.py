@@ -452,11 +452,82 @@ import com.nuvio.app.features.tmdb.TmdbService""",
     )
 
 
+def _patch_suggestion_long_press(source_dir: Path) -> None:
+    """v1.20 Section 1.1: single tap on a suggestion searches it; long press on a suggestion
+    that carries metadata opens the title details. combinedClickable gives correct tap/long-press
+    disambiguation with ripple feedback, accessibility semantics and scroll-gesture protection."""
+    path = source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/search/SearchEnhancements.kt"
+    _replace_once(
+        path,
+        "import androidx.compose.foundation.clickable",
+        "import androidx.compose.foundation.ExperimentalFoundationApi\nimport androidx.compose.foundation.clickable\nimport androidx.compose.foundation.combinedClickable",
+        "combinedClickable + opt-in imports",
+    )
+    _replace_once(
+        path,
+        """    onSelectSuggestion: (SearchSuggestionItem) -> Unit,
+    onFillQuery: (String) -> Unit,
+""",
+        """    onSelectSuggestion: (SearchSuggestionItem) -> Unit,
+    onFillQuery: (String) -> Unit,
+    onSuggestionLongPress: ((SearchSuggestionItem) -> Unit)? = null,
+""",
+        "card long-press param",
+    )
+    _replace_once(
+        path,
+        """internal fun SearchAutocompleteSuggestionsCard(""",
+        """@OptIn(ExperimentalFoundationApi::class)
+internal fun SearchAutocompleteSuggestionsCard(""",
+        "card opt-in",
+    )
+    _replace_once(
+        path,
+        """                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelectSuggestion(item) }
+                                    .padding(horizontal = 14.dp, vertical = 9.dp),""",
+        """                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = { onSelectSuggestion(item) },
+                                        // Long press only for suggestions that carry metadata;
+                                        // plain tap keeps searching and never navigates.
+                                        onLongClick = if (item.preview != null) {
+                                            { onSuggestionLongPress?.invoke(item) }
+                                        } else {
+                                            null
+                                        },
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 9.dp),""",
+        "suggestion row tap/long-press",
+    )
+    screen = source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/search/SearchScreen.kt"
+    _replace_once(
+        screen,
+        """                        onFillQuery = { text ->
+                            query = text
+                        },
+""",
+        """                        onFillQuery = { text ->
+                            query = text
+                        },
+                        onSuggestionLongPress = { suggestion ->
+                            suggestion.preview?.let { preview -> onPosterClick?.invoke(preview) }
+                        },
+""",
+        "SearchScreen wire long-press to details",
+    )
+
+
 def apply_v120_search_patch(source_dir: Path) -> None:
     _patch_tmdb_service(source_dir)
     _patch_search_repository(source_dir)
     _patch_search_enhancements(source_dir)
     _patch_search_screen(source_dir)
+    _patch_suggestion_long_press(source_dir)
     print("[v1.20-module-1] Search TMDB fallback, suggestions, and fill-and-search applied cleanly.")
 
 

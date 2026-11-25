@@ -455,6 +455,93 @@ def _patch_player_safety(source_dir: Path) -> None:
                     if (searchDone || polls >= SOURCE_FALLBACK_POLL_COUNT) break""",
         "fast bail on empty source search",
     )
+    # A crash inside the recovery job (e.g. a CloudStream extension throwing from loadSources)
+    # must fall through to the error display below — never die silently and leave the screen
+    # loading forever with no message.
+    _replace_once(
+        path,
+        """        } finally {
+            PlayerStreamsRepository.stopSourcesLoading()
+            sourceFallbackStatus = null
+        }""",
+        """        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            log.w { "Source fallback recovery failed: ${e.message}" }
+            // Fall through to the error display below instead of dying silently.
+        } finally {
+            PlayerStreamsRepository.stopSourcesLoading()
+            sourceFallbackStatus = null
+        }""",
+        "fallback job exception safety",
+    )
+    _replace_once(
+        source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeEffects.kt",
+        """            activeInitialPositionMs = savedPositionMs
+            activeInitialProgressFraction = null
+            showSourcesPanel = false
+            controlsVisible = true
+        } finally {
+            PlayerStreamsRepository.stopSourcesLoading()
+        }""",
+        """            activeInitialPositionMs = savedPositionMs
+            activeInitialProgressFraction = null
+            showSourcesPanel = false
+            controlsVisible = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            // Never fail silently: surface through the same fallback gate as other failures.
+            showErrorUnlessSourceFallback(message)
+        } finally {
+            PlayerStreamsRepository.stopSourcesLoading()
+        }""",
+        "credential refresh job exception safety",
+    )
+    _replace_once(
+        source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimePlaybackActions.kt",
+        """internal fun PlayerScreenRuntime.maybeFailoverPlaybackEngine(
+    resolvedAutoEngine: AndroidPlaybackEngine?,
+): Boolean {
+    if (!playerSettingsUiState.autoSwitchPlaybackEngineOnError) return false
+    if (engineFailoverDisarmed) return false
+    val sourceIdentity = activePlaybackIdentity
+    if (engineFailoverSourceIdentity == sourceIdentity) return false
+""",
+        """internal fun PlayerScreenRuntime.maybeFailoverPlaybackEngine(
+    resolvedAutoEngine: AndroidPlaybackEngine?,
+    message: String? = null,
+): Boolean {
+    if (!playerSettingsUiState.autoSwitchPlaybackEngineOnError) return false
+    if (engineFailoverDisarmed) return false
+    val sourceIdentity = activePlaybackIdentity
+    if (engineFailoverSourceIdentity == sourceIdentity) return false
+    // v1.20: never reload engines for local/offline sources — a full engine switch cannot fix
+    // file:// or content:// problems and only restarts playback of the same failing local file.
+    val failoverSourceUrl = activeSourceUrl
+    if (failoverSourceUrl.startsWith("file:") || failoverSourceUrl.startsWith("content:")) return false
+    // v1.20: when the failing message is known, only codec/decoder-class failures may escalate
+    // engines. Link/HTTP/network errors must flow through refresh/fallback first; escalating
+    // them caused a full Exo->Libmpv reload ahead of the runtime link-refresh (double reload,
+    // endless loading on CloudStream expired links). Callers passing no message keep legacy
+    // behaviour (host tests).
+    if (message != null) {
+        val looksLikeCodecFailure =
+            Regex(
+                "decod|codec|renderer|MediaCodec|OMX|c2\\\\.|unsupported (video|audio|mime)|video format|format not supported",
+                RegexOption.IGNORE_CASE,
+            ).containsMatchIn(message)
+        if (!looksLikeCodecFailure) return false
+    }
+""",
+        "engine failover codec/local gate",
+    )
+    _replace_once(
+        source_dir / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt",
+        """                        if (message != null && maybeFailoverPlaybackEngine(resolvedAutoEngine)) {""",
+        """                        if (message != null && maybeFailoverPlaybackEngine(resolvedAutoEngine, message)) {""",
+        "failover call passes failing message",
+    )
 
 
 def apply_v120_source_fallback_patch(source_dir: Path) -> None:
