@@ -321,6 +321,7 @@ jobs:
             cd "$PROJECT_ROOT" || echo "CD_FAILED"
             git init -q || echo "INIT_FAILED"
             git config --global --add safe.directory "$PROJECT_ROOT" || true
+            mkdir -p .git/info && echo ".github/" >> .git/info/exclude && echo "EXCLUDED_WORKFLOWS"
             git add -A 2>&1 | tail -3 || echo "ADD_FAILED"
             git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" commit -q -m "Clean Nuvio source snapshot [skip ci]" && echo "COMMIT_OK" || echo "COMMIT_FAILED"
             git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/nuvio-base-snapshot 2>&1 | tail -5 || echo "PUSH_FAILED"
