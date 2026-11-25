@@ -308,6 +308,21 @@ jobs:
           echo "Detected Nuvio project root: $PROJECT_ROOT"
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
+      - name: Snapshot clean source to nuvio-base-snapshot
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PROJECT_ROOT="${{ steps.source.outputs.project_root }}"
+          cd "$PROJECT_ROOT"
+          git init -q
+          git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" add -A
+          git -c user.email="snapshot@ci.local" -c user.name="nuvio-snapshot" commit -q -m "Clean Nuvio source snapshot [skip ci]"
+          git push -q -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/nuvio-base-snapshot
+          rm -rf .git
+          echo "✓ Pushed clean source snapshot to nuvio-base-snapshot"
+
       - name: Prepare Nuvio Enhanced v1.20 KMP source & verify branding hygiene
         run: |
           set -euo pipefail
