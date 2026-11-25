@@ -141,6 +141,14 @@ jobs:
           cargo --version
           cargo ndk --version
 
+      - name: Ensure local.properties exists (Gradle 9 input validation)
+        run: |
+          set -euo pipefail
+          if [ ! -f local.properties ]; then
+            printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          fi
+          cat local.properties
+
       - name: Assemble Signed Nuvio Enhanced Full Release APK
         run: |
           set -euo pipefail
