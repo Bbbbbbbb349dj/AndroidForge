@@ -275,12 +275,141 @@ def _patch_content_effects(root: Path) -> None:
     )
 
 
+def _patch_enable_by_default(root: Path) -> None:
+    """Section 13 fix: the fallback must actually engage on DEFAULT installs.
+
+    v1.20-0 kept three opt-in gates (streamAutoPlayFallbackOnFailure=false by default,
+    autoSwitchPlaybackEngineOnError=true exclusion, MANUAL mode yielding no candidates),
+    so the error/stall fallback never ran for a stock user.
+    """
+    path = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeSourceFallback.kt"
+    _replace_once(
+        path,
+        """    val settings = playerSettingsUiState
+    if (!settings.streamAutoPlayFallbackActive) return false
+    if (!isIos && settings.autoSwitchPlaybackEngineOnError) return false
+    // v1.20: covers pre-start errors, mid-playback fatal errors and sustained stalls,
+    // whether the failing source was auto-selected or manually picked.
+    val failedUrl = activeSourceUrl
+    if (failedUrl.isBlank()) return false
+    if (sourceFallbackAttempts >= settings.streamAutoPlayFallbackMaxSources) return false""",
+        """    val settings = playerSettingsUiState
+    // v1.20 Section 13: error/stall fallback engages on default installs — auto AND manual
+    // streams — instead of requiring three opt-in settings (fallback toggle off by default,
+    // engine-switch exclusion, MANUAL mode) to be flipped first.
+    if (settings.externalPlayerEnabled) return false
+    val failedUrl = activeSourceUrl
+    if (failedUrl.isBlank()) return false
+    if (sourceFallbackAttempts >= settings.streamAutoPlayFallbackMaxSources) return false""",
+        "ungate fallback for default installs",
+    )
+    _replace_once(
+        path,
+        """    return StreamAutoPlaySelector.evaluateAutoPlayStream(
+        streams = untried,
+        mode = settings.streamAutoPlayMode,
+        regexPattern = settings.streamAutoPlayRegex,
+        source = settings.streamAutoPlaySource,
+        installedAddonNames = installedAddonNames,
+        selectedAddons = settings.streamAutoPlaySelectedAddons,
+        selectedPlugins = settings.streamAutoPlaySelectedPlugins,
+        debridEnabled = debridEnabled,
+        activeResolverProviderId = activeResolverProviderId,
+    ).readyStreams.firstOrNull()
+}""",
+        """    StreamAutoPlaySelector.evaluateAutoPlayStream(
+        streams = untried,
+        mode = settings.streamAutoPlayMode,
+        regexPattern = settings.streamAutoPlayRegex,
+        source = settings.streamAutoPlaySource,
+        installedAddonNames = installedAddonNames,
+        selectedAddons = settings.streamAutoPlaySelectedAddons,
+        selectedPlugins = settings.streamAutoPlaySelectedPlugins,
+        debridEnabled = debridEnabled,
+        activeResolverProviderId = activeResolverProviderId,
+    ).readyStreams.firstOrNull()?.let { return it }
+    // v1.20: MANUAL mode yields no auto-selection candidates; still pick the best-ranked
+    // backup (quality/language/device aware) so error fallback works on default installs.
+    return SmartStreamRanking.rankForAutoPlay(
+        streams = untried,
+        settings = smartSettings,
+        device = currentSmartDeviceProfile(),
+        debridEnabled = debridEnabled,
+        isEpisode = isEpisode,
+    ).ranked.firstOrNull()?.stream
+}""",
+        "ranked fallback candidate for MANUAL mode",
+    )
+
+    effects = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeEffects.kt"
+    for label, old, new in [
+        (
+            "refresh: no candidate",
+            """            val candidate = refreshedStream
+            if (candidate == null) {
+                errorMessage = message
+                controlsVisible = !playerControlsLocked
+                return@launch
+            }""",
+            """            val candidate = refreshedStream
+            if (candidate == null) {
+                showErrorUnlessSourceFallback(message)
+                return@launch
+            }""",
+        ),
+        (
+            "refresh: debrid re-resolve failed",
+            """                is DirectDebridPlayableResult.Success -> resolved.stream
+                else -> {
+                    errorMessage = message
+                    controlsVisible = !playerControlsLocked
+                    return@launch
+                }""",
+            """                is DirectDebridPlayableResult.Success -> resolved.stream
+                else -> {
+                    showErrorUnlessSourceFallback(message)
+                    return@launch
+                }""",
+        ),
+        (
+            "refresh: same/blank url",
+            """            val refreshedUrl = stream.playableDirectUrl
+            if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
+                errorMessage = message
+                controlsVisible = !playerControlsLocked
+                return@launch
+            }""",
+            """            val refreshedUrl = stream.playableDirectUrl
+            if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
+                showErrorUnlessSourceFallback(message)
+                return@launch
+            }""",
+        ),
+        (
+            "server fallback failed",
+            """        val playback = ServerPlayback.fallback(failedUrl)
+        if (playback == null) {
+            errorMessage = message
+            controlsVisible = !playerControlsLocked
+            return@launch
+        }""",
+            """        val playback = ServerPlayback.fallback(failedUrl)
+        if (playback == null) {
+            showErrorUnlessSourceFallback(message)
+            return@launch
+        }""",
+        ),
+    ]:
+        _replace_once(effects, old, new, label)
+
+
 def apply_v120_source_fallback_patch(source_dir: Path) -> None:
     _patch_state(source_dir)
     _patch_fallback(source_dir)
     _patch_overlays(source_dir)
     _patch_ui_call_site(source_dir)
     _patch_content_effects(source_dir)
+    _patch_enable_by_default(source_dir)
     print("[v1.20-module-8] Smart stream auto-switch: mid-playback/stall fallback + switching pill applied cleanly.")
 
 
