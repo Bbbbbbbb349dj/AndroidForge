@@ -113,6 +113,7 @@ import com.nuvio.app.core.ui.AppIconResource
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.themePalette
 import com.nuvio.app.core.ui.accentBrush
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.appIconPainter
 import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvioTypeScale
@@ -1324,6 +1325,8 @@ private fun PlayerProgressTrack(
     chapterMarks: List<Float> = emptyList(),
 ) {
     val palette = MaterialTheme.themePalette
+    // Theme accent colors drive the player progress track so the player follows the app theme.
+    val accentColor = MaterialTheme.nuvio.colors.accent
     val inactiveTrackColors = SliderDefaults.colors(
         activeTrackColor = Color.Transparent,
         inactiveTrackColor = PlayerBaseTrackColor,
@@ -1331,9 +1334,9 @@ private fun PlayerProgressTrack(
         disabledInactiveTrackColor = PlayerBaseTrackColor,
     )
     val activeTrackColors = SliderDefaults.colors(
-        activeTrackColor = Color.White,
+        activeTrackColor = accentColor,
         inactiveTrackColor = Color.Transparent,
-        disabledActiveTrackColor = Color.White,
+        disabledActiveTrackColor = accentColor,
         disabledInactiveTrackColor = Color.Transparent,
     )
 

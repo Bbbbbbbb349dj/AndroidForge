@@ -4,6 +4,9 @@ import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.toLibraryItem
+import com.nuvio.app.features.watched.WatchedClock
 import com.nuvio.app.features.watched.WatchedItem
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watched.episodePlaybackId
@@ -170,6 +173,7 @@ object WatchingActions {
             markedAtEpochMs = entry.lastUpdatedEpochMs,
         )
         WatchedRepository.markWatchedFromPlaybackCompletion(watchedItem, syncRemote = syncRemote)
+        autoAddCompletedToLibrary(entry)
 
         if (!syncRemote || !entry.isEpisode) return
         actionScope.launch {
@@ -195,6 +199,56 @@ object WatchingActions {
         actionScope.launch {
             MetaDetailsRepository.fetch(type = item.parentMetaType, id = item.parentMetaId)
                 ?.let { meta -> reconcileSeriesWatchedState(meta) }
+        }
+    }
+
+    /**
+     * When a movie finishes, or every released episode of a series finishes, the title is
+     * added to the local library automatically so it lands in the Watched / Completed
+     * library categories without any manual step.
+     */
+    private fun autoAddCompletedToLibrary(entry: WatchProgressEntry) {
+        actionScope.launch {
+            runCatching {
+                val isEpisode = entry.isEpisode
+                if (isEpisode) {
+                    // Series: only auto-add once the whole series is done.
+                    val meta = MetaDetailsRepository.fetch(
+                        type = entry.parentMetaType,
+                        id = entry.parentMetaId,
+                    ) ?: return@runCatching
+                    reconcileSeriesWatchedState(meta)
+                    val fullyWatched = WatchedRepository.isFullyWatchedSeries(
+                        id = entry.parentMetaId,
+                        type = entry.parentMetaType,
+                    ) || WatchedRepository.isWatched(
+                        id = entry.parentMetaId,
+                        type = entry.parentMetaType,
+                    )
+                    if (!fullyWatched) return@runCatching
+                    val libraryItem = meta.toLibraryItem(savedAtEpochMs = WatchedClock.nowEpochMs())
+                    if (!LibraryRepository.isSaved(libraryItem.id, libraryItem.type)) {
+                        LibraryRepository.save(libraryItem)
+                    }
+                } else {
+                    // Movie: completion means it belongs in the library right away.
+                    val meta = MetaDetailsRepository.fetch(
+                        type = entry.parentMetaType,
+                        id = entry.parentMetaId,
+                    )
+                    val libraryItem = meta?.toLibraryItem(savedAtEpochMs = WatchedClock.nowEpochMs())
+                        ?: com.nuvio.app.features.library.LibraryItem(
+                            id = entry.parentMetaId,
+                            type = entry.parentMetaType,
+                            name = entry.title,
+                            poster = entry.poster,
+                            savedAtEpochMs = WatchedClock.nowEpochMs(),
+                        )
+                    if (!LibraryRepository.isSaved(libraryItem.id, libraryItem.type)) {
+                        LibraryRepository.save(libraryItem)
+                    }
+                }
+            }
         }
     }
 

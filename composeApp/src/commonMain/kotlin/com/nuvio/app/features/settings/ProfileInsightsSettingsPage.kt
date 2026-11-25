@@ -49,6 +49,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.CollectionsBookmark
@@ -427,12 +428,14 @@ private fun ProfileHeaderIconButton(
     contentDescription: String,
     onClick: () -> Unit,
 ) {
+    val tokens = MaterialTheme.nuvio
+    val accent = tokens.colors.accent
     Box(
         modifier = Modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+            .background(accent.copy(alpha = 0.22f))
+            .border(1.dp, accent.copy(alpha = 0.55f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -821,42 +824,49 @@ private fun ProfileMetricPillRow(
             value = stats.continueCount.toString(),
             label = stringResource(Res.string.profile_insights_hero_continue),
             collectionKind = ProfileInsightCollectionKind.Continue,
+            tint = Color(0xFF34D399),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.CollectionsBookmark,
             value = stats.libraryCount.toString(),
             label = stringResource(Res.string.profile_insights_hero_library),
             collectionKind = ProfileInsightCollectionKind.Library,
+            tint = Color(0xFF818CF8),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.CalendarMonth,
             value = stats.upcomingCount.toString(),
             label = stringResource(Res.string.profile_insights_hero_upcoming),
             collectionKind = ProfileInsightCollectionKind.Upcoming,
+            tint = Color(0xFFFBBF24),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.Movie,
             value = stats.watchedMovieCount.toString(),
             label = stringResource(Res.string.profile_insights_hero_watched),
             collectionKind = ProfileInsightCollectionKind.Watched,
+            tint = Color(0xFFF472B6),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.Favorite,
             value = stats.completedCount.toString(),
             label = stringResource(Res.string.profile_insights_stat_completed),
             collectionKind = ProfileInsightCollectionKind.Completed,
+            tint = Color(0xFFFB7185),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.Sync,
             value = stats.ongoingSeriesCount.toString(),
             label = stringResource(Res.string.profile_insights_stat_ongoing),
             collectionKind = ProfileInsightCollectionKind.Ongoing,
+            tint = Color(0xFF22D3EE),
         ),
         ProfileMetricPillSpec(
             icon = Icons.Rounded.Tv,
             value = stats.episodesWatchedCount.toString(),
             label = stringResource(Res.string.profile_insights_hero_episodes),
             collectionKind = null,
+            tint = Color(0xFFA78BFA),
         ),
     )
 
@@ -920,6 +930,7 @@ private data class ProfileMetricPillSpec(
     val value: String,
     val label: String,
     val collectionKind: ProfileInsightCollectionKind?,
+    val tint: Color = Color.White,
 )
 
 @Composable
@@ -927,12 +938,21 @@ private fun ProfileMetricPill(
     spec: ProfileMetricPillSpec,
     onClick: (() -> Unit)?,
 ) {
+    val pillShape = RoundedCornerShape(18.dp)
     Column(
         modifier = Modifier
             .width(ProfileMetricPillWidth)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.14f))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(18.dp))
+            .clip(pillShape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        spec.tint.copy(alpha = 0.55f),
+                        spec.tint.copy(alpha = 0.22f),
+                        Color.White.copy(alpha = 0.10f),
+                    ),
+                ),
+            )
+            .border(1.dp, spec.tint.copy(alpha = 0.65f), pillShape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -942,7 +962,7 @@ private fun ProfileMetricPill(
             imageVector = spec.icon,
             contentDescription = null,
             modifier = Modifier.size(18.dp),
-            tint = Color.White,
+            tint = spec.tint,
         )
         Text(
             text = spec.value,
@@ -952,13 +972,13 @@ private fun ProfileMetricPill(
             ),
             style = MaterialTheme.typography.titleLarge,
             color = Color.White,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
         )
         Text(
             text = spec.label,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.72f),
+            color = Color.White.copy(alpha = 0.82f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -968,31 +988,55 @@ private fun ProfileMetricPill(
 @Composable
 private fun ProfileWatchTimeRow(stats: ProfileInsightsStats) {
     val tokens = MaterialTheme.nuvio
-    Surface(
-        modifier = Modifier.fillMaxWidth().appGlassBackdrop(tokens.shapes.card),
-        color = tokens.colors.surface,
-        shape = tokens.shapes.card,
-        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+    val accent = tokens.colors.accent
+    val cardShape = tokens.shapes.card
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        accent.copy(alpha = 0.20f),
+                        tokens.colors.surfaceCard,
+                        tokens.colors.surfaceCard,
+                    ),
+                ),
+            )
+            .border(
+                1.dp,
+                Brush.linearGradient(listOf(accent.copy(alpha = 0.75f), accent.copy(alpha = 0.25f))),
+                cardShape,
+            ),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+                .padding(horizontal = 20.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                text = stringResource(Res.string.profile_insights_stat_time),
-                style = MaterialTheme.typography.titleMedium,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.AccessTime,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(Res.string.profile_insights_stat_time),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = accent,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Text(
                 text = profileInsightDurationLabel(stats.trackedDurationMs),
                 style = MaterialTheme.typography.displayMedium,
                 color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
             )

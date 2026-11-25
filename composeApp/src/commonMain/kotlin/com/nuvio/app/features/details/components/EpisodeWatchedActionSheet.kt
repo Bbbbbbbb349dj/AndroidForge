@@ -73,50 +73,6 @@ fun EpisodeWatchedActionSheet(
                 seasonLabel = seasonLabel,
             )
             NuvioBottomSheetDivider()
-            NuvioBottomSheetActionRow(
-                icon = Icons.Default.CheckCircle,
-                title = if (isEpisodeWatched) {
-                    stringResource(Res.string.episode_mark_unwatched)
-                } else {
-                    stringResource(Res.string.episode_mark_watched)
-                },
-                onClick = {
-                    onToggleWatched()
-                    coroutineScope.launch {
-                        dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                    }
-                },
-            )
-            if (canMarkPreviousEpisodes) {
-                NuvioBottomSheetActionRow(
-                    icon = Icons.Default.DoneAll,
-                    title = if (arePreviousEpisodesWatched) {
-                        stringResource(Res.string.episode_mark_previous_unwatched)
-                    } else {
-                        stringResource(Res.string.episode_mark_previous_watched)
-                    },
-                    onClick = {
-                        onTogglePreviousWatched()
-                        coroutineScope.launch {
-                            dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                        }
-                    },
-                )
-            }
-            NuvioBottomSheetActionRow(
-                icon = Icons.Default.PlaylistAddCheckCircle,
-                title = if (isSeasonWatched) {
-                    stringResource(Res.string.episode_mark_season_unwatched, seasonLabel)
-                } else {
-                    stringResource(Res.string.episode_mark_season_watched, seasonLabel)
-                },
-                onClick = {
-                    onToggleSeasonWatched()
-                    coroutineScope.launch {
-                        dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                    }
-                },
-            )
             if (onRate != null) {
                 UserRatingActionRow(
                     title = stringResource(Res.string.user_rating_rate_episode),
@@ -183,38 +139,12 @@ fun SeasonWatchedActionSheet(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             )
             NuvioBottomSheetDivider()
-            NuvioBottomSheetActionRow(
-                icon = Icons.Default.PlaylistAddCheckCircle,
-                title = if (isSeasonWatched) {
-                    stringResource(Res.string.episode_mark_season_unwatched, seasonLabel)
-                } else {
-                    stringResource(Res.string.episode_mark_season_watched, seasonLabel)
-                },
-                onClick = {
-                    onToggleSeasonWatched()
-                    coroutineScope.launch {
-                        dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                    }
-                },
-            )
             if (onRate != null) {
                 UserRatingActionRow(
                     title = stringResource(Res.string.user_rating_rate_season, seasonLabel),
                     userRating = userRating,
                     onClick = {
                         onRate()
-                        coroutineScope.launch {
-                            dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                        }
-                    },
-                )
-            }
-            if (canMarkPreviousSeasons) {
-                NuvioBottomSheetActionRow(
-                    icon = Icons.Default.DoneAll,
-                    title = stringResource(Res.string.episode_mark_previous_seasons_watched),
-                    onClick = {
-                        onMarkPreviousSeasonsWatched()
                         coroutineScope.launch {
                             dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
                         }

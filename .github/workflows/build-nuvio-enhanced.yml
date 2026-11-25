@@ -1,0 +1,233 @@
+name: Build Nuvio Enhanced APK
+
+# Builds the Nuvio Enhanced source that lives directly on this branch
+# (no external ZIP): signs a full-release APK and uploads it as an artifact.
+
+on:
+  push:
+    branches:
+      - "arena/cc992719-androidforge"
+  workflow_dispatch:
+
+concurrency:
+  group: build-nuvio-enhanced-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+  checks: write
+
+jobs:
+  build-nuvio-apk:
+    name: Build Nuvio Enhanced Signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Nuvio Enhanced source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Zulu)
+        uses: actions/setup-java@v5
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      - name: Cache persistent Nuvio Enhanced release keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuvio-signing
+          key: nuvio-enhanced-release-keystore-v1
+          restore-keys: |
+            nuvio-enhanced-release-keystore-
+          save-always: true
+
+      - name: Configure persistent release signing keystore
+        id: signing
+        env:
+          SECRET_KEYSTORE_B64: ${{ secrets.NUVIO_RELEASE_KEYSTORE_BASE64 }}
+          SECRET_STORE_PASS: ${{ secrets.NUVIO_RELEASE_STORE_PASSWORD }}
+          SECRET_KEY_ALIAS: ${{ secrets.NUVIO_RELEASE_KEY_ALIAS }}
+          SECRET_KEY_PASS: ${{ secrets.NUVIO_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SIGN_DIR="$HOME/.nuvio-signing"
+          mkdir -p "$SIGN_DIR"
+          chmod 700 "$SIGN_DIR"
+
+          if [ -n "${SECRET_KEYSTORE_B64:-}" ] && [ -n "${SECRET_STORE_PASS:-}" ] && [ -n "${SECRET_KEY_ALIAS:-}" ]; then
+            echo "Using repository secret release keystore (NUVIO_RELEASE_KEYSTORE_BASE64)"
+            KS_FILE="$RUNNER_TEMP/nuvio-secret-release.jks"
+            printf '%s' "$SECRET_KEYSTORE_B64" | base64 -d > "$KS_FILE"
+            KS_PASS="$SECRET_STORE_PASS"
+            KS_ALIAS="$SECRET_KEY_ALIAS"
+            KEY_PASS="${SECRET_KEY_PASS:-$SECRET_STORE_PASS}"
+          else
+            KS_FILE="$SIGN_DIR/nuvio-enhanced-release.jks"
+            PassFile="$SIGN_DIR/nuvio-enhanced-release.pass"
+            KS_ALIAS="nuvioenhanced"
+            if [ ! -f "$KS_FILE" ] || [ ! -f "$PassFile" ]; then
+              echo "Generating persistent release keystore in cached ~/.nuvio-signing..."
+              openssl rand -hex 24 > "$PassFile"
+              chmod 600 "$PassFile"
+              GEN_PASS=$(cat "$PassFile")
+              keytool -genkeypair \
+                -v \
+                -keystore "$KS_FILE" \
+                -storetype PKCS12 \
+                -alias "$KS_ALIAS" \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -storepass "$GEN_PASS" \
+                -keypass "$GEN_PASS" \
+                -dname "CN=Nuvio Enhanced, OU=Mobile, O=Nuvio Enhanced, L=Global, ST=Global, C=US"
+              chmod 600 "$KS_FILE"
+            else
+              echo "Restored cached persistent release keystore from ~/.nuvio-signing"
+            fi
+            KS_PASS=$(cat "$PassFile")
+            KEY_PASS="$KS_PASS"
+          fi
+
+          echo "::add-mask::$KS_PASS"
+          echo "::add-mask::$KEY_PASS"
+          echo "NUVIO_RELEASE_STORE_FILE=$KS_FILE" >> "$GITHUB_ENV"
+          echo "NUVIO_RELEASE_STORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+          echo "NUVIO_RELEASE_KEY_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
+          echo "NUVIO_RELEASE_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+
+      - name: Accept Android SDK licenses & ensure CMake 3.22.1
+        run: |
+          set -euo pipefail
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+          if [ ! -d "$ANDROID_HOME/cmake/3.22.1" ]; then
+            yes | "$SDKM" "cmake;3.22.1" >/dev/null 2>&1 || true
+          fi
+
+      - name: Cache Gradle & Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: nuvio-enhanced-branch-${{ runner.os }}-${{ hashFiles('gradle/**', 'native/**/Cargo.lock') }}
+          restore-keys: |
+            nuvio-enhanced-branch-${{ runner.os }}-
+            nuvio-enhanced-${{ runner.os }}-
+          save-always: true
+
+      - name: Set up Rust (2024 edition) & cargo-ndk
+        run: |
+          set -euo pipefail
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            i686-linux-android \
+            x86_64-linux-android
+          mkdir -p "$HOME/.cargo/bin"
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v3.5.4/cargo-ndk-v3.5.4-x86_64-unknown-linux-musl.tar.gz" \
+              | tar -xz -C "$HOME/.cargo/bin" cargo-ndk \
+              || cargo install cargo-ndk --locked
+          fi
+          rustc --version
+          cargo --version
+          cargo ndk --version
+
+      - name: Assemble Signed Nuvio Enhanced Full Release APK
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            -Pnuvio.android.distribution=full \
+            :androidApp:assembleFullRelease \
+            --no-daemon \
+            --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+
+      - name: Publish Gradle Failure Diagnostics
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+          LOG_FILE: ${{ runner.temp }}/gradle-build.log
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+          head_sha = os.environ["HEAD_SHA"]
+          log_path = Path(os.environ["LOG_FILE"])
+          text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else "No gradle log found"
+          err_lines = [ln for ln in text.splitlines() if ln.startswith("e: ") or "FAILURE:" in ln or "Exception" in ln or "error:" in ln.lower() or "FAILED" in ln]
+          summary = "\n".join(err_lines[-140:]) + "\n\n=== LOG TAIL ===\n" + "\n".join(text.splitlines()[-160:])
+          summary = summary[-60000:]
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/check-runs",
+              data=json.dumps({
+                  "name": "nuvio-build-diagnostics",
+                  "head_sha": head_sha,
+                  "status": "completed",
+                  "conclusion": "failure",
+                  "output": {
+                      "title": "Gradle Build / Test Failure Diagnostics",
+                      "summary": f"```text\n{summary[:60000]}\n```",
+                  },
+              }).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+              method="POST",
+          )
+          urllib.request.urlopen(req, timeout=60).close()
+          PY
+
+      - name: Collect signed APK
+        id: collect
+        run: |
+          set -euo pipefail
+          APK=$(find androidApp/build/outputs/apk -name "*.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::No APK produced"
+            exit 1
+          fi
+          echo "APK: $APK"
+          cp "$APK" "$RUNNER_TEMP/Nuvio-Enhanced.apk"
+          echo "apk_path=$RUNNER_TEMP/Nuvio-Enhanced.apk" >> "$GITHUB_OUTPUT"
+          ls -lh "$RUNNER_TEMP/Nuvio-Enhanced.apk"
+
+      - name: Upload APK as GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nuvio-Enhanced-APK
+          path: ${{ steps.collect.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK_PATH: ${{ steps.collect.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          TAG="nuvio-enhanced-apk"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Nuvio Enhanced APK" \
+              --notes "Latest signed Nuvio Enhanced APK built from branch $GITHUB_REF_NAME."
+          fi
+          gh release upload "$TAG" "$APK_PATH" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Published to release $TAG"

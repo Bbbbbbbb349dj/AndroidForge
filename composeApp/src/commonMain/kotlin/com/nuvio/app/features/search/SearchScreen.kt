@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowOutward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.animation.AnimatedVisibility
@@ -56,6 +57,8 @@ import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvio
+import androidx.compose.foundation.layout.size
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioNetworkOfflineCard
 import com.nuvio.app.core.ui.NuvioScreenHeader
@@ -85,6 +88,7 @@ import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.home_empty_no_sources_title
 import nuvio.composeapp.generated.resources.search_empty_no_sources_message
+import nuvio.composeapp.generated.resources.collections_tab_all
 import nuvio.composeapp.generated.resources.compose_search_clear
 import nuvio.composeapp.generated.resources.compose_search_discover_title
 import nuvio.composeapp.generated.resources.compose_search_empty_failed_message
@@ -111,6 +115,10 @@ fun SearchScreen(
     var isSearchFocused by remember { mutableStateOf(false) }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var searchFocusRequest by remember { mutableIntStateOf(0) }
+    // CloudStream-style suggestions: visible only while typing, hidden the moment a search runs.
+    var suggestionsDismissed by remember { mutableStateOf(false) }
+    // Type filter for search results (All / Movies / Series / ...).
+    var searchTypeFilter by rememberSaveable { mutableStateOf("") }
 
     ScreenActivityEffect(listState) { screenActive ->
         if (!screenActive) {
@@ -140,6 +148,7 @@ fun SearchScreen(
         HomeCatalogSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     val recentSearches by SearchHistoryRepository.uiState.collectAsStateWithLifecycle()
+    val searchSuggestions by SearchSuggestionRepository.suggestions.collectAsStateWithLifecycle()
     val watchedUiState by WatchedRepository.uiState.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
@@ -176,6 +185,9 @@ fun SearchScreen(
             lastRequestedQuery = null
             SearchRepository.clear()
         } else {
+            // A search is executing: close suggestions until the user edits the query again.
+            suggestionsDismissed = true
+            SearchSuggestionRepository.clear()
             delay(350)
             lastRequestedQuery = normalizedQuery
             SearchRepository.search(
@@ -299,16 +311,35 @@ fun SearchScreen(
                     androidx.compose.foundation.layout.Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                         NuvioInputField(
                             value = query,
-                            onValueChange = { query = it },
+                            onValueChange = { newValue ->
+                                query = newValue
+                                // Typing re-opens suggestions; a blank query hides them.
+                                suggestionsDismissed = false
+                                if (newValue.isBlank()) {
+                                    SearchSuggestionRepository.clear()
+                                } else {
+                                    SearchSuggestionRepository.fetchSuggestions(newValue)
+                                }
+                            },
                             placeholder = stringResource(Res.string.compose_search_placeholder),
                             textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
                             shape = RoundedCornerShape(NuvioTokens.Radius.xl),
                             modifier = Modifier
                                 .focusRequester(focusRequester)
-                                .onFocusChanged { isSearchFocused = it.isFocused },
+                                .onFocusChanged { focused ->
+                                    isSearchFocused = focused.isFocused
+                                    if (!focused.isFocused) {
+                                        suggestionsDismissed = true
+                                        SearchSuggestionRepository.clear()
+                                    }
+                                },
                             trailingContent = if (query.isNotBlank()) {
                                 {
-                                    IconButton(onClick = { query = "" }) {
+                                    IconButton(onClick = {
+                                        query = ""
+                                        suggestionsDismissed = true
+                                        SearchSuggestionRepository.clear()
+                                    }) {
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
                                             contentDescription = stringResource(Res.string.compose_search_clear),
@@ -318,6 +349,27 @@ fun SearchScreen(
                                 }
                             } else {
                                 null
+                            },
+                        )
+                    }
+                    // CloudStream-style suggestion dropdown: closes as soon as a search executes.
+                    val showSuggestions = isSearchFocused &&
+                        !suggestionsDismissed &&
+                        query.isNotBlank() &&
+                        searchSuggestions.isNotEmpty()
+                    AnimatedVisibility(
+                        visible = showSuggestions,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut(),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    ) {
+                        SearchSuggestionDropdown(
+                            suggestions = searchSuggestions,
+                            onSuggestionClick = { suggestion ->
+                                query = suggestion
+                                suggestionsDismissed = true
+                                SearchSuggestionRepository.clear()
+                                isSearchFocused = false
                             },
                         )
                     }
@@ -425,8 +477,36 @@ fun SearchScreen(
                         }
 
                         else -> {
+                            // Movie / Series / Anime type filter chips (CloudStream-style).
+                            val availableTypes = uiState.sections
+                                .map { section -> section.target.contentType.lowercase() }
+                                .distinct()
+                                .sorted()
+                            val activeTypeFilter = searchTypeFilter.takeIf { type ->
+                                availableTypes.any { it.equals(type, ignoreCase = true) }
+                            }
+                            if (availableTypes.size > 1) {
+                                item(key = "search_type_filter") {
+                                    SearchTypeFilterRow(
+                                        types = availableTypes,
+                                        selectedType = activeTypeFilter,
+                                        onTypeSelected = { selected ->
+                                            searchTypeFilter = selected ?: ""
+                                        },
+                                        modifier = Modifier.padding(
+                                            start = homeSectionPadding,
+                                            end = homeSectionPadding,
+                                            bottom = 10.dp,
+                                        ),
+                                    )
+                                }
+                            }
+                            val filteredSections = uiState.sections.filter { section ->
+                                activeTypeFilter == null ||
+                                    section.target.contentType.equals(activeTypeFilter, ignoreCase = true)
+                            }
                             items(
-                                items = uiState.sections.withDuplicateSafeLazyKeys { section -> section.key },
+                                items = filteredSections.withDuplicateSafeLazyKeys { section -> section.key },
                                 key = { section -> section.lazyKey },
                             ) { keyedSection ->
                                 val section = keyedSection.value
@@ -438,6 +518,15 @@ fun SearchScreen(
                                     onPosterClick = onPosterClick,
                                     onPosterLongClick = onPosterLongClick,
                                 )
+                            }
+                            if (filteredSections.isEmpty()) {
+                                item(key = "search_type_empty") {
+                                    HomeEmptyStateCard(
+                                        title = stringResource(Res.string.compose_search_empty_no_results_title),
+                                        message = stringResource(Res.string.compose_search_empty_no_results_message),
+                                        modifier = Modifier.padding(horizontal = homeSectionPadding),
+                                    )
+                                }
                             }
                             if (uiState.isLoading) {
                                 item(key = "search_loading_more") {
@@ -510,6 +599,112 @@ private fun SearchEmptyStateCard(
         },
         onActionClick = if (reason == SearchEmptyStateReason.RequestFailed) onRetry else null,
     )
+}
+
+@Composable
+private fun SearchTypeFilterRow(
+    types: List<String>,
+    selectedType: String?,
+    onTypeSelected: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SearchTypeChip(
+            label = stringResource(Res.string.collections_tab_all),
+            selected = selectedType == null,
+            onClick = { onTypeSelected(null) },
+            tokens = tokens,
+        )
+        types.forEach { type ->
+            SearchTypeChip(
+                label = type.replaceFirstChar { char ->
+                    if (char.isLowerCase()) char.titlecase() else char.toString()
+                },
+                selected = selectedType.equals(type, ignoreCase = true),
+                onClick = { onTypeSelected(type) },
+                tokens = tokens,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchTypeChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    tokens: com.nuvio.app.core.ui.NuvioThemeTokens,
+) {
+    Box(
+        modifier = Modifier
+            .background(
+                color = if (selected) tokens.colors.accent.copy(alpha = 0.18f) else tokens.colors.surfaceCard,
+                shape = RoundedCornerShape(50),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) tokens.colors.accent else tokens.colors.textMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun SearchSuggestionDropdown(
+    suggestions: List<String>,
+    onSuggestionClick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                color = tokens.colors.surfaceCard,
+                shape = RoundedCornerShape(NuvioTokens.Radius.xl),
+            )
+            .padding(vertical = 4.dp),
+    ) {
+        suggestions.forEach { suggestion ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSuggestionClick(suggestion) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = null,
+                    tint = tokens.colors.textMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = suggestion,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
+                    color = tokens.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Icon(
+                    imageVector = Icons.Rounded.ArrowOutward,
+                    contentDescription = null,
+                    tint = tokens.colors.textMuted,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable

@@ -1278,13 +1278,11 @@ fun MetaDetailsScreen(
                                                             playLabel = playButtonLabel,
                                                             playEnabled = isPrimaryPlayEnabled,
                                                             isSaved = isSaved,
-                                                            isWatched = isWatched,
                                                             shuffleEnabled = shuffleSettings.enabled,
                                                             landscape = isTabletLandscape,
                                                             onPlayClick = onPrimaryPlayClick,
                                                             onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,
                                                             onShuffleClick = onShuffleClick,
-                                                            onWatchedClick = toggleWatched,
                                                             onSaveClick = toggleSaved,
                                                             onSaveLongClick = openLibraryListPicker,
                                                             onDownloadClick = onDownloadClick,
@@ -1898,59 +1896,6 @@ fun MetaDetailsScreen(
                 depthSurface = NuvioCardDepthSurface.EpisodeCards,
                 anchor = zoomAnchor,
                 actions = buildList {
-                    add(
-                        PosterZoomOverlayAction(
-                            icon = Icons.Default.CheckCircle,
-                            label = if (isSelectedEpisodeWatched) {
-                                stringResource(Res.string.episode_mark_unwatched)
-                            } else {
-                                stringResource(Res.string.episode_mark_watched)
-                            },
-                            onSelected = {
-                                WatchingActions.toggleEpisodeWatched(
-                                    meta = meta,
-                                    episode = selectedEpisode,
-                                    isCurrentlyWatched = isSelectedEpisodeWatched,
-                                )
-                            },
-                        ),
-                    )
-                    if (previousEpisodes.isNotEmpty()) {
-                        add(
-                            PosterZoomOverlayAction(
-                                icon = Icons.Default.DoneAll,
-                                label = if (arePreviousEpisodesWatched) {
-                                    stringResource(Res.string.episode_mark_previous_unwatched)
-                                } else {
-                                    stringResource(Res.string.episode_mark_previous_watched)
-                                },
-                                onSelected = {
-                                    WatchingActions.togglePreviousEpisodesWatched(
-                                        meta = meta,
-                                        episodes = previousEpisodes,
-                                        areCurrentlyWatched = arePreviousEpisodesWatched,
-                                    )
-                                },
-                            ),
-                        )
-                    }
-                    add(
-                        PosterZoomOverlayAction(
-                            icon = Icons.Default.PlaylistAddCheckCircle,
-                            label = if (isSeasonWatched) {
-                                stringResource(Res.string.episode_mark_season_unwatched, seasonLabel)
-                            } else {
-                                stringResource(Res.string.episode_mark_season_watched, seasonLabel)
-                            },
-                            onSelected = {
-                                WatchingActions.toggleSeasonWatched(
-                                    meta = meta,
-                                    episodes = seasonEpisodes,
-                                    areCurrentlyWatched = isSeasonWatched,
-                                )
-                            },
-                        ),
-                    )
                     if (canRateZoomEpisode && zoomEpisodeRatingTarget != null) {
                         add(
                             PosterZoomOverlayAction(
@@ -2501,14 +2446,12 @@ private fun ConfiguredMetaSections(
                     playLabel = playButtonLabel,
                     playEnabled = isPrimaryPlayEnabled,
                     isSaved = isSaved,
-                    isWatched = isWatched,
                     isTablet = isTablet,
                     shuffleEnabled = shuffleEnabled,
                     onPlayClick = onPrimaryPlayClick,
                     onDownloadClick = onDownloadClick,
                     onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,
                     onShuffleClick = onShuffleClick,
-                    onWatchedClick = onWatchedClick,
                     onSaveClick = onSaveClick,
                     onSaveLongClick = onSaveLongClick,
                     onPlayFromStartClick = onPlayFromStartClick,

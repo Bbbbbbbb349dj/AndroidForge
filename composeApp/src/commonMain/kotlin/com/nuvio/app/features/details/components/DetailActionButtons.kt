@@ -357,13 +357,11 @@ fun DetailActions(
     playLabel: String,
     playEnabled: Boolean,
     isSaved: Boolean,
-    isWatched: Boolean,
     isTablet: Boolean,
     shuffleEnabled: Boolean,
     onPlayClick: () -> Unit,
     onPlayLongClick: (() -> Unit)?,
     onShuffleClick: (() -> Unit)?,
-    onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onDownloadClick: (() -> Unit)? = null,
@@ -375,10 +373,8 @@ fun DetailActions(
 ) {
     val actionSet = detailActionSet(
         isSaved = isSaved,
-        isWatched = isWatched,
         shuffleEnabled = shuffleEnabled,
         onShuffleClick = onShuffleClick,
-        onWatchedClick = onWatchedClick,
         onSaveClick = onSaveClick,
         onSaveLongClick = onSaveLongClick,
         onDownloadClick = onDownloadClick,
@@ -386,7 +382,6 @@ fun DetailActions(
         onPlayExternallyClick = onPlayExternallyClick,
     )
     val shuffleAction = actionSet.shuffle
-    val watchedAction = actionSet.watched
     val saveAction = actionSet.save
     val iconActions = actionSet.icons
     DetailActionButtons(
@@ -397,7 +392,6 @@ fun DetailActions(
         iconActions = iconActions,
         secondaryActions = buildList {
             if (!shuffleEnabled) shuffleAction?.let(::add)
-            add(watchedAction)
             add(saveAction)
         },
         isTablet = isTablet,
@@ -411,7 +405,6 @@ fun DetailActions(
 
 private class DetailActionSet(
     val shuffle: DetailSecondaryAction?,
-    val watched: DetailSecondaryAction,
     val save: DetailSecondaryAction,
     val icons: List<DetailSecondaryAction>,
 )
@@ -419,10 +412,8 @@ private class DetailActionSet(
 @Composable
 private fun detailActionSet(
     isSaved: Boolean,
-    isWatched: Boolean,
     shuffleEnabled: Boolean,
     onShuffleClick: (() -> Unit)?,
-    onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onDownloadClick: (() -> Unit)?,
@@ -437,12 +428,6 @@ private fun detailActionSet(
             onClick = onClick,
         )
     }
-    val watchedAction = DetailSecondaryAction(
-        label = stringResource(if (isWatched) Res.string.hero_mark_unwatched else Res.string.hero_mark_watched),
-        icon = if (isWatched) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-        isActive = isWatched,
-        onClick = onWatchedClick,
-    )
     val saveAction = DetailSecondaryAction(
         label = stringResource(if (isSaved) Res.string.hero_remove_from_library else Res.string.hero_add_to_library),
         icon = Icons.Default.Add,
@@ -471,10 +456,9 @@ private fun detailActionSet(
                 ),
             )
         }
-        add(watchedAction)
         add(saveAction)
     }
-    return DetailActionSet(shuffleAction, watchedAction, saveAction, iconActions)
+    return DetailActionSet(shuffleAction, saveAction, iconActions)
 }
 
 @Composable
@@ -482,13 +466,11 @@ fun TabletDetailHeroActions(
     playLabel: String,
     playEnabled: Boolean,
     isSaved: Boolean,
-    isWatched: Boolean,
     shuffleEnabled: Boolean,
     landscape: Boolean,
     onPlayClick: () -> Unit,
     onPlayLongClick: (() -> Unit)?,
     onShuffleClick: (() -> Unit)?,
-    onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -500,10 +482,8 @@ fun TabletDetailHeroActions(
 ) {
     val actionSet = detailActionSet(
         isSaved = isSaved,
-        isWatched = isWatched,
         shuffleEnabled = shuffleEnabled,
         onShuffleClick = onShuffleClick,
-        onWatchedClick = onWatchedClick,
         onSaveClick = onSaveClick,
         onSaveLongClick = onSaveLongClick,
         onDownloadClick = onDownloadClick,

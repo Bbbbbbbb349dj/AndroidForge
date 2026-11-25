@@ -793,7 +793,9 @@ private fun ExoPlayerSurface(
 
                 val isSourceError = error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW ||
                         error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
-                        error.cause?.toString()?.contains("UnrecognizedInputFormatException") == true
+                        error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                        error.cause?.toString()?.contains("UnrecognizedInputFormatException") == true ||
+                        error.cause?.toString()?.contains("UnsupportedDrmException") == true
 
                 if (isSourceError && !probeAttempted) {
                     probeAttempted = true
@@ -3213,7 +3215,15 @@ private fun PlaybackException.isDecoderFailure(): Boolean =
         PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
         PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED,
-    )
+    ) ||
+        // Renderer / audio-track failures vary by device codec support; match by name so any
+        // "the device cannot decode this" error retries with app decoders before failing over.
+        errorCodeName.let { name ->
+            name.contains("DECODER") ||
+                name.contains("DECODING") ||
+                name.contains("AUDIO_TRACK") ||
+                name.contains("RENDERER")
+        }
 
 private fun PlayerResizeMode.toExoResizeMode(): Int =
     when (this) {

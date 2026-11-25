@@ -2187,19 +2187,6 @@ internal fun MainAppContent(
                                     }
                                 },
                             ),
-                            PosterZoomOverlayAction(
-                                icon = if (isWatched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
-                                label = if (isWatched) {
-                                    stringResource(Res.string.hero_mark_unwatched)
-                                } else {
-                                    stringResource(Res.string.hero_mark_watched)
-                                },
-                                onSelected = {
-                                    coroutineScope.launch {
-                                        WatchingActions.togglePosterWatched(preview)
-                                    }
-                                },
-                            ),
                         ),
                         backdrop = posterOverlayBackdrop,
                         onDismissed = {
@@ -2262,15 +2249,6 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 }
-                                if (item.canMarkWatched()) {
-                                    add(
-                                        PosterZoomOverlayAction(
-                                            icon = Icons.Default.CheckCircle,
-                                            label = stringResource(Res.string.hero_mark_watched),
-                                            onSelected = { onContinueWatchingMarkWatched(item) },
-                                        ),
-                                    )
-                                }
                                 add(
                                     PosterZoomOverlayAction(
                                         icon = Icons.Default.DeleteOutline,
@@ -2312,9 +2290,6 @@ internal fun MainAppContent(
                     ?.let { item -> { onContinueWatchingStartFromBeginning(item) } },
                 onPlayManually = selectedContinueWatchingForActions
                     ?.let { item -> { onContinueWatchingPlayManually(item) } },
-                onMarkWatched = selectedContinueWatchingForActions
-                    ?.takeIf { it.canMarkWatched() }
-                    ?.let { item -> { onContinueWatchingMarkWatched(item) } },
                 onRemove = {
                     selectedContinueWatchingForActions?.let(onContinueWatchingRemove)
                 },
