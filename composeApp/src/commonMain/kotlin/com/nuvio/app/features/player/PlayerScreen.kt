@@ -1,0 +1,121 @@
+package com.nuvio.app.features.player
+
+import com.nuvio.app.features.details.MetaLookupOutcome
+import com.nuvio.app.features.details.MetaDetailsRepository
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import com.nuvio.app.features.party.PartyMedia
+
+@Composable
+fun PlayerScreen(
+    profileId: Int,
+    title: String,
+    sourceUrl: String,
+    sourceAudioUrl: String? = null,
+    sourceHeaders: Map<String, String> = emptyMap(),
+    sourceResponseHeaders: Map<String, String> = emptyMap(),
+    externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle> = emptyList(),
+    streamType: String? = null,
+    providerName: String,
+    streamTitle: String,
+    streamSubtitle: String?,
+    initialBingeGroup: String? = null,
+    pauseDescription: String? = null,
+    onBack: () -> Unit,
+    onOpenInExternalPlayer: ((ExternalPlayerPlaybackRequest) -> Unit)? = null,
+    onOpenExternalUrl: ((String) -> Unit)? = null,
+    onOpenMetaDetails: ((com.nuvio.app.features.home.MetaPreview) -> Unit)? = null,
+    onOpenPartyMedia: (PartyMedia) -> Unit = {},
+    modifier: Modifier = Modifier,
+    logo: String? = null,
+    poster: String? = null,
+    background: String? = null,
+    seasonNumber: Int? = null,
+    episodeNumber: Int? = null,
+    episodeTitle: String? = null,
+    episodeThumbnail: String? = null,
+    contentType: String? = null,
+    videoId: String? = null,
+    parentMetaId: String,
+    parentMetaType: String,
+    providerAddonId: String? = null,
+    torrentInfoHash: String? = null,
+    torrentFileIdx: Int? = null,
+    torrentFilename: String? = null,
+    torrentTrackers: List<String> = emptyList(),
+    initialPositionMs: Long = 0L,
+    initialProgressFraction: Float? = null,
+    contentLanguage: String? = null,
+    subtitleExtras: SubtitleRequestExtras? = null,
+    launchId: Long? = null,
+    sourceFilename: String? = null,
+    stream: com.nuvio.app.features.streams.StreamItem? = null,
+    sourceFromLinkCache: Boolean = false,
+    sourceAutoSelected: Boolean = false,
+) {
+    val resolvedLogo by produceState(
+        initialValue = logo?.takeIf { it.isNotBlank() }
+            ?: MetaDetailsRepository.peek(type = parentMetaType, id = parentMetaId)?.logo?.takeIf { it.isNotBlank() },
+        logo,
+        parentMetaType,
+        parentMetaId,
+    ) {
+        if (value != null || parentMetaType in PlayerLogoLookupSkippedTypes) return@produceState
+        val lookup = runCatching {
+            MetaDetailsRepository.fetchLightweight(type = parentMetaType, id = parentMetaId)
+        }.getOrNull()
+        value = (lookup as? MetaLookupOutcome.Loaded)?.meta?.logo?.takeIf { it.isNotBlank() }
+    }
+    PlayerScreenContent(
+        PlayerScreenArgs(
+            profileId = profileId,
+            title = title,
+            sourceUrl = sourceUrl,
+            sourceAudioUrl = sourceAudioUrl,
+            sourceHeaders = sourceHeaders,
+            sourceResponseHeaders = sourceResponseHeaders,
+            externalSubtitles = externalSubtitles,
+            streamType = streamType,
+            providerName = providerName,
+            streamTitle = streamTitle,
+            streamSubtitle = streamSubtitle,
+            initialBingeGroup = initialBingeGroup,
+            pauseDescription = pauseDescription,
+            onBack = onBack,
+            onOpenInExternalPlayer = onOpenInExternalPlayer,
+            onOpenExternalUrl = onOpenExternalUrl,
+            onOpenMetaDetails = onOpenMetaDetails,
+            modifier = modifier,
+            logo = resolvedLogo,
+            poster = poster,
+            background = background,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            episodeTitle = episodeTitle,
+            episodeThumbnail = episodeThumbnail,
+            contentType = contentType,
+            videoId = videoId,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            providerAddonId = providerAddonId,
+            torrentInfoHash = torrentInfoHash,
+            torrentFileIdx = torrentFileIdx,
+            torrentFilename = torrentFilename,
+            torrentTrackers = torrentTrackers,
+            initialPositionMs = initialPositionMs,
+            initialProgressFraction = initialProgressFraction,
+            contentLanguage = contentLanguage,
+            subtitleExtras = subtitleExtras,
+            launchId = launchId,
+            sourceFilename = sourceFilename,
+            onOpenPartyMedia = onOpenPartyMedia,
+            stream = stream,
+            sourceFromLinkCache = sourceFromLinkCache,
+            sourceAutoSelected = sourceAutoSelected,
+        )
+    )
+}
+
+private val PlayerLogoLookupSkippedTypes = setOf("tv", "channel")

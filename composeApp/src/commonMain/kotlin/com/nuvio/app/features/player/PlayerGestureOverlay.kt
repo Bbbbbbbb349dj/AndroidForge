@@ -1,0 +1,214 @@
+package com.nuvio.app.features.player
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContent
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.accentBrush
+import com.nuvio.app.core.ui.nuvioTypeScale
+import com.nuvio.app.core.ui.themePalette
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_player_brightness
+import nuvio.composeapp.generated.resources.compose_player_volume
+import org.jetbrains.compose.resources.stringResource
+import kotlin.math.roundToInt
+
+@Composable
+internal fun PlayerGestureOverlay(
+    currentFeedback: GestureFeedbackState?,
+    renderedFeedback: GestureFeedbackState?,
+    useLegacyLayout: Boolean,
+    horizontalSafePadding: Dp,
+    horizontalPadding: Dp,
+) {
+    AnimatedVisibility(
+        visible = currentFeedback != null,
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (useLegacyLayout) {
+                renderedFeedback?.let { feedback ->
+                    GestureFeedbackPill(
+                        feedback = feedback,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
+                            .padding(horizontal = horizontalSafePadding)
+                            .padding(top = 40.dp),
+                    )
+                }
+            } else {
+                (currentFeedback ?: renderedFeedback)?.let { feedback ->
+                    PlayerGestureFeedback(
+                        feedback = feedback,
+                        horizontalSafePadding = horizontalSafePadding,
+                        horizontalPadding = horizontalPadding,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerGestureFeedback(
+    feedback: GestureFeedbackState,
+    horizontalSafePadding: Dp,
+    horizontalPadding: Dp,
+) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            when (feedback.icon) {
+                GestureFeedbackIcon.Brightness, GestureFeedbackIcon.Volume, GestureFeedbackIcon.VolumeMuted -> {
+                    val isBrightness = feedback.icon == GestureFeedbackIcon.Brightness
+                    val description = stringResource(
+                        if (isBrightness) Res.string.compose_player_brightness else Res.string.compose_player_volume,
+                    )
+                    val maxLevel = if (isBrightness) 1f else 2f
+                    val rawLevel = feedback.level?.coerceIn(0f, maxLevel) ?: 0f
+                    val isBoosted = !isBrightness && rawLevel > 1.001f
+                    val percent = (rawLevel * 100f).roundToInt()
+                    val trackHeight = minOf(maxHeight / 4, 104.dp)
+                    val baseLevel = rawLevel.coerceIn(0f, 1f)
+                    val boostLevel = (rawLevel - 1f).coerceIn(0f, 1f)
+                    val animatedBaseLevel by animateFloatAsState(baseLevel, tween(80), label = "playerGestureBaseLevel")
+                    val animatedBoostLevel by animateFloatAsState(boostLevel, tween(80), label = "playerGestureBoostLevel")
+                    // Fork: gestures can supply their own reading (e.g. a custom label) via messageArgs.
+                    val reading = feedback.messageArgs.firstOrNull()?.toString() ?: percent.toString()
+                    Column(
+                        modifier = Modifier
+                            .align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
+                            .padding(horizontal = horizontalSafePadding + 8.dp)
+                            .width(6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        // Centered on the bar; unbounded width lets the digits overflow the 6dp
+                        // column evenly on both sides so the bar itself never moves.
+                        Text(
+                            text = reading,
+                            color = if (isBoosted) Color(0xFFFF5252) else Color.White,
+                            style = MaterialTheme.nuvioTypeScale.bodySm.copy(
+                                fontWeight = if (isBoosted) FontWeight.Bold else FontWeight.SemiBold,
+                                shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f),
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.wrapContentWidth(unbounded = true),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .semantics {
+                                    contentDescription = description
+                                    progressBarRangeInfo = ProgressBarRangeInfo(rawLevel, 0f..maxLevel)
+                                }
+                                .width(6.dp)
+                                .height(trackHeight)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White.copy(alpha = 0.3f)),
+                        ) {
+                            Box(
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(animatedBaseLevel)
+                                    .background(MaterialTheme.themePalette.accentBrush()),
+                            )
+                            if (boostLevel > 0f) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .fillMaxHeight(animatedBoostLevel)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(Color(0xFFFF5252), Color(0xFFE53935))
+                                            )
+                                        ),
+                                )
+                            }
+                        }
+                    }
+                }
+                GestureFeedbackIcon.Speed, GestureFeedbackIcon.SeekForward, GestureFeedbackIcon.SeekBackward -> {
+                    val message = feedback.messageRes?.let { stringResource(it, *feedback.messageArgs.toTypedArray()) }
+                        ?: feedback.message.orEmpty()
+                    val secondaryMessage = feedback.secondaryMessageRes?.let {
+                        stringResource(it, *feedback.secondaryMessageArgs.toTypedArray())
+                    } ?: feedback.secondaryMessage
+                    val shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
+                            .padding(horizontal = horizontalSafePadding + horizontalPadding)
+                            .padding(top = 40.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = message,
+                            color = Color.White,
+                            style = MaterialTheme.nuvioTypeScale.bodyLg.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                shadow = shadow,
+                            ),
+                        )
+                        secondaryMessage?.let {
+                            Text(
+                                text = it,
+                                color = feedback.secondaryMessageColor ?: Color.White,
+                                style = MaterialTheme.nuvioTypeScale.bodyMd.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    shadow = shadow,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
