@@ -299,6 +299,9 @@ def _patch_enable_by_default(root: Path) -> None:
     // engine-switch exclusion, MANUAL mode) to be flipped first.
     if (settings.externalPlayerEnabled) return false
     val failedUrl = activeSourceUrl
+    // Nuvio Enhanced: never replace local/offline sources (file://, content://) — there is
+    // nothing to fall back to, and slow local seeks must not trigger network source search.
+    if (failedUrl.startsWith("file:") || failedUrl.startsWith("content:")) return false
     if (failedUrl.isBlank()) return false
     if (sourceFallbackAttempts >= settings.streamAutoPlayFallbackMaxSources) return false""",
         "ungate fallback for default installs",
