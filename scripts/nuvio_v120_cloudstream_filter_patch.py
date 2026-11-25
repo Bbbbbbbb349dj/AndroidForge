@@ -30,8 +30,20 @@ import androidx.compose.material3.Button""",
         """import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button""",
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState""",
         "Badge imports",
+    )
+    _replace_once(
+        path,
+        """@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun CloudStreamSettingsSection() {""",
+        """@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+internal fun CloudStreamSettingsSection() {""",
+        "CloudStreamSettingsSection opt-in",
     )
     _replace_once(
         path,
@@ -200,7 +212,11 @@ import com.nuvio.app.core.ui.NuvioPrimaryButton""",
                 },
             )
             if (showFilterSheet) {
-                NuvioModalBottomSheet(onDismissRequest = { showFilterSheet = false }) {
+                val filterSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                NuvioModalBottomSheet(
+                    onDismissRequest = { showFilterSheet = false },
+                    sheetState = filterSheetState,
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()

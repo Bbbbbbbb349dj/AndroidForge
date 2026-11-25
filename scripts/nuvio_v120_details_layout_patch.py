@@ -869,12 +869,26 @@ def _patch_meta_details_screen(root: Path) -> None:
     )
 
 
+def _patch_meta_page_rating_map_imports(root: Path) -> None:
+    """Generated string accessors need explicit imports (no wildcard in this project)."""
+    path = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/MetaScreenSettingsPage.kt"
+    _replace_once(
+        path,
+        """import nuvio.composeapp.generated.resources.layout_random_episode_sub""",
+        """import nuvio.composeapp.generated.resources.layout_rating_map
+import nuvio.composeapp.generated.resources.layout_rating_map_sub
+import nuvio.composeapp.generated.resources.layout_random_episode_sub""",
+        "MetaScreenSettingsPage layout_rating_map imports",
+    )
+
+
 def apply_v120_details_layout_patch(source_dir: Path) -> None:
     _patch_remove_watched_action(source_dir)
     _patch_settings_repository(source_dir)
     _patch_strings(source_dir)
     _patch_ratings_settings(source_dir)
     _patch_settings_page(source_dir)
+    _patch_meta_page_rating_map_imports(source_dir)
     _patch_detail_meta_info(source_dir)
     _patch_meta_details_screen(source_dir)
     print("[v1.20-module-2] Mark-watched removal & Rating Map overhaul applied cleanly.")
