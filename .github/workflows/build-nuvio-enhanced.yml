@@ -399,6 +399,14 @@ jobs:
             --tests '*V121Test' --tests '*V122Test' --tests '*V123Test' --tests '*NuvioV119VerificationTest' \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
 
+      - name: Build embedded VLC native playback smoke test
+        working-directory: ${{ steps.source.outputs.project_root }}
+        run: |
+          set -euo pipefail
+          ./gradlew -Pnuvio.android.distribution=full -Pnuvio.playerSmokeTest=true \
+            :androidApp:assembleFullDebug :androidApp:assembleFullDebugAndroidTest \
+            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
+
       - name: Assemble Signed Nuvio Enhanced v1.23 Full Release APK
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
@@ -409,14 +417,6 @@ jobs:
             :androidApp:assembleFullRelease \
             --no-daemon \
             --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
-
-      - name: Build embedded VLC native playback smoke test
-        working-directory: ${{ steps.source.outputs.project_root }}
-        run: |
-          set -euo pipefail
-          ./gradlew -Pnuvio.android.distribution=full -Pnuvio.playerSmokeTest=true \
-            :androidApp:assembleFullDebug :androidApp:assembleFullDebugAndroidTest \
-            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
 
       - name: Publish Gradle Failure Diagnostics
         if: failure()

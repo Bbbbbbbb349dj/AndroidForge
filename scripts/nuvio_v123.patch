@@ -16,19 +16,6 @@ index f5b32b6..f31e574 100644
      packaging {
          resources {
              excludes += "/META-INF/{AL2.0,LGPL2.1}"
-diff --git a/androidApp/src/debug/AndroidManifest.xml b/androidApp/src/debug/AndroidManifest.xml
-index d6c5cbc..35fd34c 100644
---- a/androidApp/src/debug/AndroidManifest.xml
-+++ b/androidApp/src/debug/AndroidManifest.xml
-@@ -1,6 +1,8 @@
- <?xml version="1.0" encoding="utf-8"?>
- <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-     <application>
-+        <activity android:name="androidx.activity.ComponentActivity" android:exported="true"
-+            android:theme="@style/Theme.Nuvio" />
-         <activity
-             android:name="com.nuvio.android.BackgroundDownloadTestActivity"
-             android:exported="true"
 diff --git a/androidApp/src/v123AndroidTest/kotlin/com/nuvio/android/VlcPlaybackV123Test.kt b/androidApp/src/v123AndroidTest/kotlin/com/nuvio/android/VlcPlaybackV123Test.kt
 new file mode 100644
 index 0000000..16c1118
