@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test the exact published APK, not a rebuilt or re-signed approximation.
 set -euo pipefail
+PACKAGE_ID="${PACKAGE_ID:-com.nuvio.enhanced}"
 mkdir -p install-diagnostics
 adb shell getprop > install-diagnostics/emulator-properties.txt
 adb logcat -c
@@ -13,14 +14,14 @@ if [ "$install_status" -ne 0 ]; then
   echo "::error::Android 16 rejected the published APK. See install-result.txt for the actual INSTALL_* code."
   exit "$install_status"
 fi
-adb shell dumpsys package com.nuvio.enhanced > install-diagnostics/installed-package.txt
-if ! grep -q 'versionCode=210' install-diagnostics/installed-package.txt; then
-  echo '::error::Installed package is not the expected v1.21 build.'
+adb shell dumpsys package "$PACKAGE_ID" > install-diagnostics/installed-package.txt
+if ! grep -q "versionCode=${EXPECTED_VERSION_CODE:-220}" install-diagnostics/installed-package.txt; then
+  echo '::error::Installed package is not the expected v1.22 build.'
   exit 1
 fi
 {
   echo '## Android 16 installation check'
   echo ''
-  echo 'Exact published v1.21 ARM64 APK installed successfully on an API 36 Google APIs emulator.'
+  echo 'Exact signed v1.22 ARM64 APK installed successfully on an API 36 Google APIs emulator.'
   echo 'This validates installation on that emulator, not on a physical Motorola device.'
 } >> "$GITHUB_STEP_SUMMARY"

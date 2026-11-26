@@ -6,10 +6,10 @@ import kotlin.test.*
 class BundledReleaseNotesV121Test {
     @Test fun notesWorkWithoutNetworkAndDoNotDuplicateTheCurrentRelease() {
         val offline = BundledReleaseNotes.merge(null, "1.21")
-        assertEquals("1.21", offline.snapshot.releases.single().version)
+        assertEquals("1.21", offline.snapshot.releases.first { it.version == "1.21" }.version)
         assertTrue(offline.snapshot.hasCompleteSinceVersion)
-        assertTrue(offline.snapshot.releases.single().notes.size >= 17)
-        assertEquals(1, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
+        assertTrue(offline.snapshot.releases.first { it.version == "1.21" }.notes.size >= 17)
+        assertEquals(2, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
     }
 
     @Test fun forkReleaseTagsAndTwoPartVersionsAreRecognized() {

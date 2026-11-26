@@ -45,6 +45,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install published APK using Android 16 package manager
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EXPECTED_VERSION_CODE: '210'
         with:
           api-level: 36
           target: google_apis

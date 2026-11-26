@@ -115,7 +115,7 @@ private enum class CloudStreamSortOrder(val key: String) {
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-internal fun CloudStreamSettingsSection() {
+internal fun CloudStreamAdvancedSettingsSection() {
     LaunchedEffect(Unit) {
         ThemeSettingsRepository.ensureLoaded()
         CloudStreamRepository.initialize()
@@ -793,7 +793,7 @@ private fun CloudStreamBulkInstallResult.toUserMessage(copy: CloudStreamSettings
 }
 
 @Composable
-private fun CloudStreamPluginCard(
+internal fun CloudStreamPluginCard(
     plugin: CloudStreamPluginItem,
     securityWarningAccepted: Boolean,
     pinnedSourceIds: Set<String>,
@@ -959,7 +959,7 @@ private fun CloudStreamPluginCard(
     }
 }
 
-private class CloudStreamSettingsCopy private constructor(
+internal class CloudStreamSettingsCopy private constructor(
     private val turkish: Boolean,
 ) {
     val sectionTitle: String =
@@ -1298,7 +1298,7 @@ private enum class NuvioExtConfigTab {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CloudStreamExtensionSettingsDialog(
+internal fun CloudStreamExtensionSettingsDialog(
     plugin: CloudStreamPluginItem,
     onDismiss: () -> Unit,
     onLaunchNativeSettings: () -> Unit,

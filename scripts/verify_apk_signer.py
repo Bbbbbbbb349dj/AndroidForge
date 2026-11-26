@@ -1,4 +1,4 @@
-"""Fail closed rather than publish an APK that cannot update the installed v1.20 app.
+"""Fail closed rather than publish an APK that cannot update the reference app.
 
 Only public certificate fingerprints are read. Private signing material stays in
 GitHub Actions secrets/cache and is never downloaded to the working repository.
@@ -29,15 +29,15 @@ def verify_same_signer(apksigner: str, previous: str, candidate: str) -> None:
         )
         return certificate_fingerprints(result.stdout)
     old, new = fingerprints(previous), fingerprints(candidate)
-    print("v1.20 public signing-certificate SHA-256:", ", ".join(sorted(old)))
-    print("v1.21 public signing-certificate SHA-256:", ", ".join(sorted(new)))
+    print("Reference public signing-certificate SHA-256:", ", ".join(sorted(old)))
+    print("Candidate public signing-certificate SHA-256:", ", ".join(sorted(new)))
     if old != new:
         raise SystemExit(
             "::error::Signing certificate changed. APK publication is blocked to protect upgrade compatibility. "
             "Configure the existing release keystore in the repository's NUVIO_RELEASE_* Actions secrets; "
             "do not uninstall the installed app or commit/upload private keys to the repository."
         )
-    print("Signing identity matches v1.20; an in-place upgrade is permitted.")
+    print("Signing identity matches the reference APK; an in-place upgrade is permitted.")
 
 
 if __name__ == "__main__":

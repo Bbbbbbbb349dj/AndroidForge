@@ -1,0 +1,694 @@
+--- a/composeApp/build.gradle.kts
++++ b/composeApp/build.gradle.kts
+@@ -569,12 +569,12 @@
+         }
+         // The pinned archive contains obsolete server tests that do not compile against
+         // its own APIs. Keep the full suite available; opt into a focused release gate.
+-        if (providers.gradleProperty("nuvio.testSuite").orNull == "v121") {
++        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122")) {
+             named("commonTest") {
+-                kotlin.include("**/*V121Test.kt", "**/NuvioV119VerificationTest.kt")
++                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/NuvioV119VerificationTest.kt")
+             }
+             named("androidHostTest") {
+-                kotlin.include("**/*V121Test.kt")
++                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt")
+             }
+         }
+         commonTest.dependencies {
+--- a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlaybackBuffering.android.kt
++++ b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlaybackBuffering.android.kt
+@@ -50,8 +50,8 @@
+             .setBufferDurationsMs(
+                 LOCAL_FILE_MIN_BUFFER_MS,
+                 LOCAL_FILE_MAX_BUFFER_MS,
+-                if (localFileSource) 250 else 1_000,
+-                if (localFileSource) 250 else 1_000,
++                PlaybackStartupPolicy.startBufferMs,
++                PlaybackStartupPolicy.localRebufferMs,
+             )
+             .setTargetBufferBytes(minOf(LOCAL_FILE_TARGET_BUFFER_MB * MB, heapLimitBytes).toInt())
+             .setPrioritizeTimeOverSizeThresholds(false)
+@@ -64,8 +64,8 @@
+             .setBufferDurationsMs(
+                 MEMORY_SAFE_MIN_BUFFER_MS,
+                 MEMORY_SAFE_MAX_BUFFER_MS,
+-                if (localFileSource) 250 else 1_000,
+-                2_500,
++                PlaybackStartupPolicy.startBufferMs,
++                PlaybackStartupPolicy.networkRebufferMs,
+             )
+             .setTargetBufferBytes(minOf(MEMORY_SAFE_TARGET_BUFFER_MB * MB, heapLimitBytes).toInt())
+             .setPrioritizeTimeOverSizeThresholds(false)
+@@ -84,8 +84,8 @@
+             .setBufferDurationsMs(
+                 120_000,
+                 600_000,
+-                if (localFileSource) 250 else 1_000,
+-                2_500,
++                PlaybackStartupPolicy.startBufferMs,
++                PlaybackStartupPolicy.networkRebufferMs,
+             )
+             .setTargetBufferBytes(heapLimitBytes.toInt())
+         else -> builder
+@@ -93,8 +93,8 @@
+             .setBufferDurationsMs(
+                 DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                 50_000,
+-                if (localFileSource) 250 else 1_000,
+-                2_500,
++                PlaybackStartupPolicy.startBufferMs,
++                PlaybackStartupPolicy.networkRebufferMs,
+             )
+     }
+     return builder.build()
+--- a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt
++++ b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt
+@@ -376,7 +376,9 @@
+         PlayerOutputAudioProcessor(stereoDownmixEnabled = !playerSettings.androidAudioPassthroughEnabled)
+     }
+ 
+-    var resolvedMediaItem by remember(playerSourceKey, externalSubtitles) {
++    // Subtitle catalog updates must not replace the media item and re-prepare the video.
++    // New user/auto selections attach through the sidecar subtitle controller instead.
++    var resolvedMediaItem by remember(playerSourceKey) {
+         mutableStateOf(
+             playbackMediaItemFromUrl(
+                 url = sourceUrl,
+@@ -1978,6 +1980,8 @@
+         mpv.setOptionString("tls-verify", "yes")
+         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
+         mpv.setOptionString("demuxer-lavf-o", "protocol_whitelist=[file,crypto,data,http,https,tcp,tls]").logIfMpvError("demuxer-lavf-o")
++        // Keep read-ahead/rebuffer protection, but do not pause at open to fill the cache.
++        mpv.setOptionString("cache-pause-initial", "no").logIfMpvError("cache-pause-initial")
+         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
+         mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-back-bytes")
+         mpv.setOptionString("vd-lavc-film-grain", "cpu")
+--- /dev/null
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/cloudstream/CloudStreamBrowserModels.kt
+@@ -0,0 +1,51 @@
++package com.nuvio.app.features.cloudstream
++
++/** Mutually exclusive buckets; disabling a repository also disables its installed extensions. */
++internal data class CloudStreamExtensionSummary(val downloaded: Int, val disabled: Int, val available: Int) {
++    val total: Int get() = downloaded + disabled + available
++}
++
++internal fun cloudStreamExtensionSummary(
++    plugins: List<CloudStreamPluginItem>,
++    disabledRepositories: Set<String> = emptySet(),
++): CloudStreamExtensionSummary = CloudStreamExtensionSummary(
++    downloaded = plugins.count { it.isInstalled && it.enabled && it.metadata.repositoryManifestUrl !in disabledRepositories },
++    disabled = plugins.count { it.isInstalled && (!it.enabled || it.metadata.repositoryManifestUrl in disabledRepositories) },
++    available = plugins.count { !it.isInstalled },
++)
++
++internal val cloudStreamBrowserTypes = listOf("Movie", "Series", "Anime", "Cartoon", "Asian Drama")
++
++internal fun cloudStreamMatchesBrowserType(rawTypes: List<String>, selected: String?): Boolean {
++    if (selected == null) return true
++    val accepted = when (selected) {
++        "Movie" -> setOf("movie")
++        "Series" -> setOf("tvseries", "series")
++        "Anime" -> setOf("anime", "animemovie", "ova")
++        "Cartoon" -> setOf("cartoon")
++        "Asian Drama" -> setOf("asiandrama")
++        else -> setOf(selected.lowercase().replace(" ", ""))
++    }
++    return rawTypes.any { it.substringAfterLast('.').lowercase().replace(" ", "") in accepted }
++}
++
++internal fun cloudStreamBrowserLanguage(code: String?): String = when (code?.lowercase()) {
++    "en" -> "🇬🇧 English"
++    "hi" -> "🇮🇳 Hindi"
++    "ta" -> "🇮🇳 Tamil"
++    "te" -> "🇮🇳 Telugu"
++    "ml" -> "🇮🇳 Malayalam"
++    "bn" -> "🇧🇩 Bengali"
++    "es" -> "🇪🇸 Spanish"
++    "es-mx" -> "🇲🇽 Spanish (Mexico)"
++    "de" -> "🇩🇪 German"
++    "fr" -> "🇫🇷 French"
++    "ja" -> "🇯🇵 Japanese"
++    "ko" -> "🇰🇷 Korean"
++    "tr" -> "🇹🇷 Turkish"
++    "ar" -> "Arabic"
++    "pt", "pt-br" -> "Portuguese"
++    "multi", "all" -> "Multi-language"
++    null, "" -> "Unspecified language"
++    else -> code.uppercase()
++}
+--- /dev/null
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt
+@@ -0,0 +1,9 @@
++package com.nuvio.app.features.player
++
++/** Start at the first decodable sample, without waiting to accumulate extra playback time. */
++internal object PlaybackStartupPolicy {
++    const val startBufferMs = 0
++    // Initial startup and recovery are separate: don't repeatedly resume into an empty buffer.
++    const val networkRebufferMs = 2_500
++    const val localRebufferMs = 250
++}
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt
+@@ -25,6 +25,8 @@
+ import androidx.compose.runtime.produceState
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.snapshotFlow
++import kotlinx.coroutines.flow.first
+ import androidx.compose.runtime.snapshots.Snapshot
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+@@ -181,6 +183,9 @@
+         )
+ 
+         if (shouldInspectHls) {
++            // A second master-playlist request must not compete with first-frame loading.
++            // This effect is cancelled on a source/header change while waiting or inspecting.
++            snapshotFlow { playbackSnapshot.isPlaying && isControllerOnActivePlayback() }.first { it }
+             val resolved = runCatching {
+                 kotlinx.coroutines.withTimeout(5_000L) {
+                     PlayerQualityResolver.resolve(
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
+@@ -29,8 +29,23 @@
+         ),
+     )
+ 
++    val v122 = WhatsNewRelease(
++        version = "1.22",
++        title = "Nuvio Enhanced 1.22 — Extensions & first-frame playback",
++        publishedAt = null,
++        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.22-apk",
++        notes = listOf(
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "CloudStream now opens a repository-first extension browser with repository icons, installed counts, descriptions, search, add/remove and a repository extension page.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Added Movie, Series, Anime, Cartoon and Asian Drama filters, language selection, compact extension download/update rows and live Downloaded/Disabled/Not downloaded totals. Existing provider settings, pinning, bulk actions and compatibility tools remain under Advanced management or the extension details sheet.", null),
++            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "ExoPlayer no longer waits to accumulate an extra startup buffer when using default buffers. It starts when a decodable frame is available; explicit custom buffers and separate recovery/read-ahead protection remain.", null),
++            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "MPV skips initial cache-fill pausing while retaining normal read-ahead and rebuffer protection. HLS quality inspection now waits until playback is running instead of competing for the connection at startup.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FIXES, "Subtitle catalog changes no longer recreate the ExoPlayer media item and trigger another prepare/rebuffer cycle. Subtitle selection continues through the existing subtitle controller.", null),
++            WhatsNewNote(WhatsNewNoteCategory.OTHER, "The release gate now checks APK alignment and installs the exact signed APK on Android 16 before publication. Provider response time, media layout, decoding and connection speed can still cause loading; zero latency or uninterrupted streaming is not guaranteed.", null),
++        ),
++    )
++
+     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
+-        val releases = listOf(v121) + content?.snapshot?.releases.orEmpty()
++        val releases = listOf(v122, v121) + content?.snapshot?.releases.orEmpty()
+         return WhatsNewContent(
+             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
+             fromCache = content?.fromCache ?: true,
+--- /dev/null
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/cloudstream/CloudStreamBrowserV122Test.kt
+@@ -0,0 +1,36 @@
++package com.nuvio.app.features.cloudstream
++
++import kotlin.test.*
++
++class CloudStreamBrowserV122Test {
++    @Test fun screenshotTypeFiltersRecognizeProviderWireTypes() {
++        assertTrue(cloudStreamMatchesBrowserType(listOf("TvSeries"), "Series"))
++        assertTrue(cloudStreamMatchesBrowserType(listOf("AnimeMovie"), "Anime"))
++        assertTrue(cloudStreamMatchesBrowserType(listOf("TvType.AsianDrama"), "Asian Drama"))
++        assertFalse(cloudStreamMatchesBrowserType(listOf("Movie"), "Anime"))
++        assertTrue(cloudStreamMatchesBrowserType(emptyList(), null))
++        assertEquals(5, cloudStreamBrowserTypes.size)
++    }
++
++    @Test fun summaryBucketsAreExclusiveAndIncludeDisabledRepositories() {
++        val metadata = CloudStreamRepositoryParser.parsePluginList(
++            "https://example.com/repo.json", "https://example.com/plugins.json",
++            """[{"name":"Example","internalName":"Example","url":"https://example.com/p.cs3","version":1,"status":1}]""",
++        ).single()
++        val available = CloudStreamPluginItem(metadata, CloudStreamCompatibilityResolver.resolve(metadata, true))
++        val enabled = available.copy(installedVersion = 1, enabled = true)
++        val disabled = enabled.copy(enabled = false)
++        val summary = cloudStreamExtensionSummary(listOf(available, enabled, disabled))
++        assertEquals(CloudStreamExtensionSummary(1, 1, 1), summary)
++        assertEquals(3, summary.total)
++        assertEquals(CloudStreamExtensionSummary(0, 2, 1),
++            cloudStreamExtensionSummary(listOf(available, enabled, disabled), setOf(metadata.repositoryManifestUrl)))
++        assertEquals(0, cloudStreamExtensionSummary(emptyList()).total)
++    }
++
++    @Test fun languageLabelsKeepUnrecognizedLanguagesVisible() {
++        assertTrue(cloudStreamBrowserLanguage("hi").contains("Hindi"))
++        assertEquals("XX", cloudStreamBrowserLanguage("xx"))
++        assertEquals("Unspecified language", cloudStreamBrowserLanguage(null))
++    }
++}
+--- /dev/null
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlaybackStartupV122Test.kt
+@@ -0,0 +1,14 @@
++package com.nuvio.app.features.player
++
++import kotlin.test.*
++
++class PlaybackStartupV122Test {
++    @Test fun defaultStartupDoesNotWaitForAnExtraTimeBuffer() {
++        assertEquals(0, PlaybackStartupPolicy.startBufferMs)
++    }
++
++    @Test fun recoveryStillHasBufferProtection() {
++        assertTrue(PlaybackStartupPolicy.networkRebufferMs > 0)
++        assertTrue(PlaybackStartupPolicy.localRebufferMs > 0)
++    }
++}
+--- a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt
+@@ -6,10 +6,10 @@
+ class BundledReleaseNotesV121Test {
+     @Test fun notesWorkWithoutNetworkAndDoNotDuplicateTheCurrentRelease() {
+         val offline = BundledReleaseNotes.merge(null, "1.21")
+-        assertEquals("1.21", offline.snapshot.releases.single().version)
++        assertEquals("1.21", offline.snapshot.releases.first { it.version == "1.21" }.version)
+         assertTrue(offline.snapshot.hasCompleteSinceVersion)
+-        assertTrue(offline.snapshot.releases.single().notes.size >= 17)
+-        assertEquals(1, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
++        assertTrue(offline.snapshot.releases.first { it.version == "1.21" }.notes.size >= 17)
++        assertEquals(2, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
+     }
+ 
+     @Test fun forkReleaseTagsAndTwoPartVersionsAreRecognized() {
+--- /dev/null
++++ b/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamRepositoryBrowser.kt
+@@ -0,0 +1,304 @@
++package com.nuvio.app.features.plugins
++
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.layout.*
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.items
++import androidx.compose.foundation.lazy.rememberLazyListState
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.rounded.ArrowBack
++import androidx.compose.material.icons.rounded.*
++import androidx.compose.material3.*
++import androidx.compose.runtime.*
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import coil3.compose.AsyncImage
++import com.nuvio.app.core.ui.PlatformBackHandler
++import com.nuvio.app.core.ui.NuvioToastController
++import com.nuvio.app.features.cloudstream.*
++import com.nuvio.app.features.settings.AppLanguage
++import com.nuvio.app.features.streams.StreamSourcePreferencesRepository
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.launch
++
++/** Repository-first browser; the app's existing Settings header and bottom navigation remain. */
++@OptIn(ExperimentalMaterial3Api::class)
++@Composable
++internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
++    LaunchedEffect(Unit) { CloudStreamRepository.initialize() }
++    val state by CloudStreamRepository.uiState.collectAsStateWithLifecycle()
++    val scope = rememberCoroutineScope()
++    var repositoryUrl by rememberSaveable { mutableStateOf<String?>(null) }
++    var repositoryQuery by rememberSaveable { mutableStateOf("") }
++    var extensionQuery by rememberSaveable(repositoryUrl) { mutableStateOf("") }
++    var type by rememberSaveable(repositoryUrl) { mutableStateOf<String?>(null) }
++    var language by rememberSaveable(repositoryUrl) { mutableStateOf<String?>(null) }
++    var status by rememberSaveable(repositoryUrl) { mutableStateOf("all") }
++    var showLanguages by remember { mutableStateOf(false) }
++    var showAdd by remember { mutableStateOf(false) }
++    var addUrl by rememberSaveable { mutableStateOf("") }
++    var adding by remember { mutableStateOf(false) }
++    var addError by remember { mutableStateOf<String?>(null) }
++    var removeUrl by remember { mutableStateOf<String?>(null) }
++    var showMenu by remember { mutableStateOf(false) }
++    var advanced by rememberSaveable { mutableStateOf(false) }
++    var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
++    var configuringPluginId by rememberSaveable { mutableStateOf<String?>(null) }
++    val selectedRepository = state.repositories.firstOrNull { it.manifest.sourceUrl == repositoryUrl }
++    LaunchedEffect(state.repositories, repositoryUrl) {
++        if (repositoryUrl != null && selectedRepository == null) repositoryUrl = null
++    }
++    val back: () -> Unit = { if (advanced) advanced = false else repositoryUrl = null }
++    PlatformBackHandler(enabled = advanced || repositoryUrl != null, onBack = back)
++    val scopedPlugins = remember(state.plugins, repositoryUrl) {
++        state.plugins.filter { repositoryUrl == null || it.metadata.repositoryManifestUrl == repositoryUrl }
++    }
++    val disabledRepos = remember(state.repositories) {
++        state.repositories.filterNot { it.enabled }.map { it.manifest.sourceUrl }.toSet()
++    }
++    val summary = remember(scopedPlugins, disabledRepos) { cloudStreamExtensionSummary(scopedPlugins, disabledRepos) }
++    val plugins = remember(scopedPlugins, extensionQuery, type, language, status, disabledRepos) {
++        val query = extensionQuery.trim()
++        scopedPlugins.filter {
++            (query.isBlank() || it.metadata.name.contains(query, true) || it.metadata.description.orEmpty().contains(query, true)) &&
++                cloudStreamMatchesBrowserType(it.metadata.rawTvTypes, type) &&
++                (language == null || it.metadata.language == language) && when (status) {
++                    "downloaded" -> it.isInstalled && it.enabled && it.metadata.repositoryManifestUrl !in disabledRepos
++                    "disabled" -> it.isInstalled && (!it.enabled || it.metadata.repositoryManifestUrl in disabledRepos)
++                    "available" -> !it.isInstalled
++                    else -> true
++                }
++        }.sortedBy { it.metadata.name.lowercase() }
++    }
++    val repositories = remember(state.repositories, repositoryQuery) {
++        state.repositories.filter { it.manifest.name.contains(repositoryQuery.trim(), true) ||
++            it.manifest.description.orEmpty().contains(repositoryQuery.trim(), true) }
++    }
++    val listState = rememberLazyListState()
++    LaunchedEffect(repositoryUrl, advanced, type, language, status) { listState.scrollToItem(0) }
++
++    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
++        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
++            if (repositoryUrl != null || advanced) IconButton(onClick = back) {
++                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to repositories")
++            }
++            Text(if (advanced) "Advanced management" else selectedRepository?.manifest?.name ?: "Extensions",
++                style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
++                modifier = Modifier.weight(1f))
++            if (!advanced) {
++                if (selectedRepository != null) IconButton(onClick = { showLanguages = true }) {
++                    Icon(Icons.Rounded.Translate, "Filter extension language")
++                }
++                Box {
++                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Rounded.MoreVert, "Extension options") }
++                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
++                        DropdownMenuItem(text = { Text("Refresh repositories") }, onClick = {
++                            showMenu = false
++                            repositoryUrl?.let(CloudStreamRepository::refreshRepository) ?: CloudStreamRepository.refreshAll()
++                        })
++                        if (selectedRepository != null) DropdownMenuItem(text = {
++                            Text(if (selectedRepository.enabled) "Disable repository" else "Enable repository")
++                        }, onClick = {
++                            CloudStreamRepository.setRepositoryEnabled(selectedRepository.manifest.sourceUrl, !selectedRepository.enabled)
++                            showMenu = false
++                        })
++                        DropdownMenuItem(text = { Text("Advanced management & settings") }, onClick = { showMenu = false; advanced = true })
++                    }
++                }
++            }
++        }
++        if (advanced) {
++            LazyColumn(Modifier.weight(1f)) { item { Column { CloudStreamAdvancedSettingsSection() } } }
++        } else {
++            OutlinedTextField(
++                value = if (repositoryUrl == null) repositoryQuery else extensionQuery,
++                onValueChange = { if (repositoryUrl == null) repositoryQuery = it else extensionQuery = it },
++                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
++                placeholder = { Text("Search…") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
++                shape = RoundedCornerShape(32.dp), singleLine = true,
++            )
++            if (repositoryUrl != null) {
++                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    cloudStreamBrowserTypes.forEach { label ->
++                        FilterChip(selected = type == label, onClick = { type = if (type == label) null else label }, label = { Text(label) })
++                    }
++                }
++                if (language != null || status != "all") TextButton(onClick = { language = null; status = "all" }) {
++                    Text("Clear filters · ${language?.let(::cloudStreamBrowserLanguage) ?: status}")
++                }
++                if (selectedRepository?.enabled == false) Text("This repository is disabled. Enable it from the options menu to use its providers.",
++                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
++            }
++            Box(Modifier.weight(1f).fillMaxWidth()) {
++                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (repositoryUrl == null) 88.dp else 16.dp)) {
++                    if (!state.securityWarningAccepted) item {
++                        ElevatedCard(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
++                            Column(Modifier.padding(16.dp)) {
++                                Text("Third-party extensions", fontWeight = FontWeight.Bold)
++                                Text("Extensions run third-party code and contact external services. Install only repositories you trust.")
++                                TextButton(onClick = CloudStreamRepository::acceptSecurityWarning) { Text("I understand") }
++                            }
++                        }
++                    }
++                    if (repositoryUrl == null) {
++                        items(repositories, key = { it.manifest.sourceUrl }) { repository ->
++                            val entries = state.plugins.filter { it.metadata.repositoryManifestUrl == repository.manifest.sourceUrl }
++                            Row(Modifier.fillMaxWidth().clickable { repositoryUrl = repository.manifest.sourceUrl }.padding(vertical = 20.dp),
++                                verticalAlignment = Alignment.CenterVertically) {
++                                BrowserIcon(repository.manifest.iconUrl, repository.manifest.name)
++                                Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
++                                    Text(repository.manifest.name, style = MaterialTheme.typography.titleMedium)
++                                    Text("Downloaded: ${entries.count { it.isInstalled }}/${entries.size}" + if (!repository.enabled) " · Disabled" else "",
++                                        style = MaterialTheme.typography.labelMedium)
++                                    repository.manifest.description?.let { Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
++                                    repository.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
++                                }
++                                if (repository.isRefreshing) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
++                                else IconButton(onClick = { removeUrl = repository.manifest.sourceUrl }) { Icon(Icons.Rounded.DeleteOutline, "Remove ${repository.manifest.name}") }
++                            }
++                        }
++                        if (repositories.isEmpty()) item { BrowserEmpty(if (state.repositories.isEmpty()) "Add a repository to browse its extensions." else "No matching repositories.") }
++                    } else {
++                        items(plugins, key = { it.metadata.id.value }) { plugin ->
++                            Row(Modifier.fillMaxWidth().clickable { selectedPluginId = plugin.metadata.id.value }.padding(vertical = 18.dp),
++                                verticalAlignment = Alignment.CenterVertically) {
++                                BrowserIcon(plugin.metadata.iconUrl, plugin.metadata.name)
++                                Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
++                                    Text(plugin.metadata.name, style = MaterialTheme.typography.titleMedium)
++                                    val size = plugin.metadata.fileSize?.let { "  ${it / 1024} kB" }.orEmpty()
++                                    Text("${cloudStreamBrowserLanguage(plugin.metadata.language)}  v${plugin.installedVersion ?: plugin.metadata.version}$size",
++                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                                    plugin.metadata.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium,
++                                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
++                                    if (plugin.isInstalled && !plugin.enabled) Text("Disabled", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.labelSmall)
++                                    plugin.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
++                                }
++                                if (plugin.isInstalling) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
++                                else IconButton(enabled = plugin.isInstalled || (state.securityWarningAccepted && plugin.metadata.status.canInstall && plugin.compatibility.isRunnable), onClick = {
++                                    if (plugin.isInstalled && !plugin.hasUpdate) selectedPluginId = plugin.metadata.id.value
++                                    else scope.launch {
++                                        val result = if (plugin.hasUpdate) CloudStreamRepository.updatePlugin(plugin.metadata.id.value)
++                                            else CloudStreamRepository.installPlugin(plugin.metadata.id.value)
++                                        NuvioToastController.show(when (result) {
++                                            is CloudStreamInstallResult.Success -> "Installed ${result.plugin.metadata.name}"
++                                            is CloudStreamInstallResult.Error -> result.message
++                                        })
++                                    }
++                                }) { Icon(when { plugin.hasUpdate -> Icons.Rounded.Update; plugin.isInstalled -> Icons.Rounded.CheckCircleOutline; else -> Icons.Rounded.DownloadForOffline },
++                                    if (plugin.hasUpdate) "Update ${plugin.metadata.name}" else if (plugin.isInstalled) "Manage ${plugin.metadata.name}" else "Download ${plugin.metadata.name}") }
++                            }
++                        }
++                        if (plugins.isEmpty()) item { BrowserEmpty(if (selectedRepository?.isRefreshing == true) "Loading extensions…" else "No extensions match your filters. Try clearing search, type or language.") }
++                    }
++                }
++                if (repositoryUrl == null) ExtendedFloatingActionButton(onClick = { showAdd = true; addError = null },
++                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp), icon = { Icon(Icons.Rounded.Add, null) }, text = { Text("Add repository") })
++            }
++            ExtensionSummary(summary, status) { selection ->
++                if (repositoryUrl == null) NuvioToastController.show("Open a repository to filter its extensions")
++                else status = if (status == selection) "all" else selection
++            }
++        }
++    }
++    if (showAdd) AlertDialog(onDismissRequest = { if (!adding) showAdd = false }, title = { Text("Add repository") },
++        text = { Column {
++            Text("Paste a repository URL, or enter MegaRepo to discover repositories.")
++            OutlinedTextField(value = addUrl, onValueChange = { addUrl = it; addError = null }, singleLine = true, label = { Text("Repository URL") })
++            addError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
++        } }, confirmButton = { TextButton(enabled = addUrl.isNotBlank() && !adding, onClick = {
++            adding = true
++            scope.launch {
++                try {
++                    val input = addUrl.trim()
++                    if (input.equals("MegaRepo", true) || input.equals("MegaProvider", true)) {
++                        CloudStreamRepository.discoverRepositories(input).fold(onSuccess = {
++                            showAdd = false; advanced = true; addUrl = ""
++                            NuvioToastController.show("Discovered $it repositories. Choose which to install.")
++                        }, onFailure = { addError = it.message ?: "Discovery failed" })
++                    } else when (val result = CloudStreamRepository.addRepository(input)) {
++                        is AddCloudStreamRepositoryResult.Success -> { showAdd = false; addUrl = "" }
++                        is AddCloudStreamRepositoryResult.Error -> addError = result.message
++                    }
++                } catch (error: CancellationException) {
++                    throw error
++                } catch (error: Exception) {
++                    addError = error.message ?: "Could not add repository"
++                } finally {
++                    adding = false
++                }
++            }
++        }) { Text(if (adding) "Adding…" else "Add") } }, dismissButton = { TextButton(enabled = !adding, onClick = { showAdd = false }) { Text("Cancel") } })
++    removeUrl?.let { url -> AlertDialog(onDismissRequest = { removeUrl = null }, title = { Text("Remove repository?") },
++        text = { Text("This also removes its downloaded extensions. Other repositories are not affected.") },
++        confirmButton = { TextButton(onClick = { CloudStreamRepository.removeRepository(url); removeUrl = null }) { Text("Remove") } },
++        dismissButton = { TextButton(onClick = { removeUrl = null }) { Text("Cancel") } }) }
++    if (showLanguages) AlertDialog(onDismissRequest = { showLanguages = false }, title = { Text("Extension language") },
++        text = { LazyColumn { item { TextButton(onClick = { language = null; showLanguages = false }) { Text("All languages") } }
++            items(scopedPlugins.mapNotNull { it.metadata.language }.distinct().sorted()) { code ->
++                TextButton(onClick = { language = code; showLanguages = false }) { Text(cloudStreamBrowserLanguage(code)) }
++            }
++        } }, confirmButton = { TextButton(onClick = { showLanguages = false }) { Text("Close") } })
++    val selectedPlugin = state.plugins.firstOrNull { it.metadata.id.value == selectedPluginId }
++    if (selectedPlugin != null) {
++        val sourcePreferences by remember { StreamSourcePreferencesRepository.ensureLoaded(); StreamSourcePreferencesRepository.uiState }.collectAsStateWithLifecycle()
++        ModalBottomSheet(onDismissRequest = { selectedPluginId = null }) {
++            Column(Modifier.fillMaxWidth().padding(16.dp)) {
++                CloudStreamPluginCard(selectedPlugin, state.securityWarningAccepted, sourcePreferences.pinnedSources.map { it.id }.toSet(),
++                    CloudStreamSettingsCopy.forLanguage(AppLanguage.ENGLISH), CloudStreamExtensionConfigBridge.preferNuvioSettingsUi(),
++                    onMessage = { NuvioToastController.show(it) }, onOpenConfig = { configuringPluginId = selectedPluginId; selectedPluginId = null })
++            }
++        }
++    }
++    state.plugins.firstOrNull { it.metadata.id.value == configuringPluginId }?.let { plugin ->
++        CloudStreamExtensionSettingsDialog(plugin, onDismiss = { configuringPluginId = null }, onLaunchNativeSettings = {
++            configuringPluginId = null
++            scope.launch { CloudStreamRepository.openPluginSettings(plugin.metadata.id.value).onFailure { NuvioToastController.show(it.message ?: "Settings unavailable") } }
++        })
++    }
++}
++
++@Composable private fun BrowserIcon(url: String?, name: String) {
++    Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
++        Text(name.take(1), color = MaterialTheme.colorScheme.primary)
++        AsyncImage(model = url, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
++    }
++}
++
++@Composable private fun BrowserEmpty(message: String) { Text(message, Modifier.fillMaxWidth().padding(vertical = 40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
++
++@Composable private fun ExtensionSummary(summary: CloudStreamExtensionSummary, selected: String, onSelect: (String) -> Unit) {
++    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
++        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
++            Text("Extensions", style = MaterialTheme.typography.titleMedium)
++            Row(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
++                if (summary.downloaded > 0) Box(Modifier.weight(summary.downloaded.toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
++                if (summary.disabled > 0) Box(Modifier.weight(summary.disabled.toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.tertiary))
++                if (summary.available > 0) Box(Modifier.weight(summary.available.toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
++            }
++            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                listOf(Triple("downloaded", "Downloaded: ${summary.downloaded}", MaterialTheme.colorScheme.primary),
++                    Triple("disabled", "Disabled: ${summary.disabled}", MaterialTheme.colorScheme.tertiary),
++                    Triple("available", "Not downloaded: ${summary.available}", MaterialTheme.colorScheme.outline)).forEach { (key, label, color) ->
++                    Row(Modifier.clickable { onSelect(key) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
++                        Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color))
++                        Text(label, Modifier.padding(start = 5.dp), style = MaterialTheme.typography.labelSmall,
++                            fontWeight = if (selected == key) FontWeight.Bold else FontWeight.Normal)
++                    }
++                }
++            }
++        }
++    }
++}
+--- a/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamSettingsSection.kt
++++ b/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamSettingsSection.kt
+@@ -115,7 +115,7 @@
+ 
+ @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+ @Composable
+-internal fun CloudStreamSettingsSection() {
++internal fun CloudStreamAdvancedSettingsSection() {
+     LaunchedEffect(Unit) {
+         ThemeSettingsRepository.ensureLoaded()
+         CloudStreamRepository.initialize()
+@@ -793,7 +793,7 @@
+ }
+ 
+ @Composable
+-private fun CloudStreamPluginCard(
++internal fun CloudStreamPluginCard(
+     plugin: CloudStreamPluginItem,
+     securityWarningAccepted: Boolean,
+     pinnedSourceIds: Set<String>,
+@@ -959,7 +959,7 @@
+     }
+ }
+ 
+-private class CloudStreamSettingsCopy private constructor(
++internal class CloudStreamSettingsCopy private constructor(
+     private val turkish: Boolean,
+ ) {
+     val sectionTitle: String =
+@@ -1298,7 +1298,7 @@
+ 
+ @OptIn(ExperimentalLayoutApi::class)
+ @Composable
+-private fun CloudStreamExtensionSettingsDialog(
++internal fun CloudStreamExtensionSettingsDialog(
+     plugin: CloudStreamPluginItem,
+     onDismiss: () -> Unit,
+     onLaunchNativeSettings: () -> Unit,
+--- a/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/settings/CloudStreamSettingsPage.kt
++++ b/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/settings/CloudStreamSettingsPage.kt
+@@ -1,20 +1,12 @@
+ package com.nuvio.app.features.settings
+ 
+-import androidx.compose.foundation.layout.Arrangement
+-import androidx.compose.foundation.layout.Column
+-import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.lazy.LazyListScope
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.unit.dp
+ import com.nuvio.app.features.plugins.CloudStreamSettingsSection
+ 
+ internal actual fun LazyListScope.cloudStreamSettingsContent() {
+     item {
+-        Column(
+-            modifier = Modifier.fillMaxWidth(),
+-            verticalArrangement = Arrangement.spacedBy(12.dp),
+-        ) {
+-            CloudStreamSettingsSection()
+-        }
++        // A bounded viewport lets the repository browser recycle hundreds of extension rows.
++        CloudStreamSettingsSection(modifier = Modifier.fillParentMaxHeight())
+     }
+ }
+--- /dev/null
++++ b/docs/releases/1.22.md
+@@ -0,0 +1,34 @@
++# Nuvio Enhanced 1.22 (220)
++
++## CloudStream extension browser
++
++Settings → Content & Discovery → CloudStream now opens a repository-first browser inspired by the supplied CloudStream screenshots:
++
++- Repository icons, names, descriptions and actual installed/total counts; search, refresh, enable/disable and confirmed removal.
++- Add repository floating action; direct manifest URLs and MegaRepo discovery. Discovered repositories remain opt-in through Advanced management.
++- Open a repository to browse its extensions with icon, language, version, package size, description and download/update/installed actions.
++- Movie, Series, Anime, Cartoon and Asian Drama chips, language selection, extension search and status filters.
++- Live Downloaded / Disabled / Not downloaded totals and a proportional status bar. These are disjoint buckets; installed providers in a disabled repository count as disabled.
++- Virtualized extension/repository lists. No screenshots' example repositories or counts are fabricated or silently installed.
++- Extension detail sheets retain enable/disable, pinning, configuration, update/reinstall, removal and compatibility information. Existing bulk tools and UI-mode preferences remain under Advanced management & settings.
++- Third-party code consent and platform compatibility checks remain enforced. Repository removal asks for confirmation because it also removes that repository's installed extensions.
++
++## Tap source → first-frame playback
++
++- Default ExoPlayer startup-buffer hold is now **0 ms**: start when the extractor/decoder has enough media for playback, without first accumulating an additional one-second buffer.
++- MPV disables initial cache-fill pausing (`cache-pause-initial=no`), retaining normal read-ahead/cache and rebuffer protection.
++- HLS quality inspection waits until playback is running so its duplicate master request does not compete with first-frame loading. It remains bounded/cancellable and never restarts the adaptive master automatically.
++- Subtitle catalog updates no longer recreate ExoPlayer's media item or trigger another prepare cycle. Subtitle selections continue through the existing subtitle controller.
++- Explicit custom buffer settings remain authoritative. Network rebuffer protection remains 2.5 seconds by default; local playback keeps a separate 250 ms recovery threshold. Background downloading/read-ahead is not disabled to make a startup claim.
++
++**Limits:** this removes application-added waits; it cannot eliminate DNS/TLS, provider response time, HLS segment availability, file container/index reads, codec initialization, debrid/torrent resolution, or insufficient network throughput. It cannot guarantee literal instantaneous playback or zero stalls for arbitrary internet sources. No speculative background downloads of every source are started.
++
++## Verification and upgrade identity
++
++- Version 1.22 / code 220; original package ID `com.nuvio.enhanced`. The abandoned separate-package experiment is not included.
++- Upgrade signing must match the actually delivered v1.21 fresh-install APK, not the older v1.20 certificate. No private signing material is downloaded or committed.
++- APK publication additionally requires zip alignment checks and installation of the exact signed ARM64 APK on an Android 16 (API 36) Google APIs emulator. This is not a physical Moto G85 test.
++- Focused Kotlin suite includes existing v1.21 / v1.19 regressions plus v1.22 browser/count/filter/startup-policy tests. Run `./gradlew -Pnuvio.android.distribution=full -Pnuvio.testSuite=v122 :composeApp:testAndroidHostTest`.
++- Six Python verifier/installer-gate tests cover certificate matching and publication blocking on Android installation/wrong-version failures. Existing unrelated legacy test compilation limitations remain documented in 1.21.md.
++
++Device confirmation is still required for visual fidelity, actual tap-to-first-frame times, provider playback and sustained buffering behavior. The earlier reported invalid-package incident was resolved by the user identifying that a different app had been downloaded; it is not evidence of a defect in this app's installer.
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -13,4 +13,4 @@
+ #Android
+ android.nonTransitiveRClass=true
+ android.useAndroidX=true
+-nuvio.app.versionName=1.21
++nuvio.app.versionName=1.22
+--- a/iosApp/Configuration/Version.xcconfig
++++ b/iosApp/Configuration/Version.xcconfig
+@@ -1,2 +1,2 @@
+-CURRENT_PROJECT_VERSION=210
+-MARKETING_VERSION=1.21
++CURRENT_PROJECT_VERSION=220
++MARKETING_VERSION=1.22

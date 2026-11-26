@@ -29,8 +29,23 @@ internal object BundledReleaseNotes {
         ),
     )
 
+    val v122 = WhatsNewRelease(
+        version = "1.22",
+        title = "Nuvio Enhanced 1.22 — Extensions & first-frame playback",
+        publishedAt = null,
+        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.22-apk",
+        notes = listOf(
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "CloudStream now opens a repository-first extension browser with repository icons, installed counts, descriptions, search, add/remove and a repository extension page.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Added Movie, Series, Anime, Cartoon and Asian Drama filters, language selection, compact extension download/update rows and live Downloaded/Disabled/Not downloaded totals. Existing provider settings, pinning, bulk actions and compatibility tools remain under Advanced management or the extension details sheet.", null),
+            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "ExoPlayer no longer waits to accumulate an extra startup buffer when using default buffers. It starts when a decodable frame is available; explicit custom buffers and separate recovery/read-ahead protection remain.", null),
+            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "MPV skips initial cache-fill pausing while retaining normal read-ahead and rebuffer protection. HLS quality inspection now waits until playback is running instead of competing for the connection at startup.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FIXES, "Subtitle catalog changes no longer recreate the ExoPlayer media item and trigger another prepare/rebuffer cycle. Subtitle selection continues through the existing subtitle controller.", null),
+            WhatsNewNote(WhatsNewNoteCategory.OTHER, "The release gate now checks APK alignment and installs the exact signed APK on Android 16 before publication. Provider response time, media layout, decoding and connection speed can still cause loading; zero latency or uninterrupted streaming is not guaranteed.", null),
+        ),
+    )
+
     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
-        val releases = listOf(v121) + content?.snapshot?.releases.orEmpty()
+        val releases = listOf(v122, v121) + content?.snapshot?.releases.orEmpty()
         return WhatsNewContent(
             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
             fromCache = content?.fromCache ?: true,

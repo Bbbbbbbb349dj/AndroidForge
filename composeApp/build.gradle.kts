@@ -569,12 +569,12 @@ kotlin {
         }
         // The pinned archive contains obsolete server tests that do not compile against
         // its own APIs. Keep the full suite available; opt into a focused release gate.
-        if (providers.gradleProperty("nuvio.testSuite").orNull == "v121") {
+        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122")) {
             named("commonTest") {
-                kotlin.include("**/*V121Test.kt", "**/NuvioV119VerificationTest.kt")
+                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/NuvioV119VerificationTest.kt")
             }
             named("androidHostTest") {
-                kotlin.include("**/*V121Test.kt")
+                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt")
             }
         }
         commonTest.dependencies {

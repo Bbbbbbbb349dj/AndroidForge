@@ -25,6 +25,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -181,6 +183,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         )
 
         if (shouldInspectHls) {
+            // A second master-playlist request must not compete with first-frame loading.
+            // This effect is cancelled on a source/header change while waiting or inspecting.
+            snapshotFlow { playbackSnapshot.isPlaying && isControllerOnActivePlayback() }.first { it }
             val resolved = runCatching {
                 kotlinx.coroutines.withTimeout(5_000L) {
                     PlayerQualityResolver.resolve(

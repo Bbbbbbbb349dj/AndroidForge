@@ -376,7 +376,9 @@ private fun ExoPlayerSurface(
         PlayerOutputAudioProcessor(stereoDownmixEnabled = !playerSettings.androidAudioPassthroughEnabled)
     }
 
-    var resolvedMediaItem by remember(playerSourceKey, externalSubtitles) {
+    // Subtitle catalog updates must not replace the media item and re-prepare the video.
+    // New user/auto selections attach through the sidecar subtitle controller instead.
+    var resolvedMediaItem by remember(playerSourceKey) {
         mutableStateOf(
             playbackMediaItemFromUrl(
                 url = sourceUrl,
@@ -1978,6 +1980,8 @@ private class NuvioLibmpvView(
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("demuxer-lavf-o", "protocol_whitelist=[file,crypto,data,http,https,tcp,tls]").logIfMpvError("demuxer-lavf-o")
+        // Keep read-ahead/rebuffer protection, but do not pause at open to fill the cache.
+        mpv.setOptionString("cache-pause-initial", "no").logIfMpvError("cache-pause-initial")
         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
         mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-back-bytes")
         mpv.setOptionString("vd-lavc-film-grain", "cpu")
