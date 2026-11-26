@@ -377,7 +377,7 @@ jobs:
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
           set -euo pipefail
-          ./gradlew -Pnuvio.android.distribution=full :composeApp:testAndroidHostTest \
+          ./gradlew -Pnuvio.android.distribution=full -Pnuvio.testSuite=v121 :composeApp:testAndroidHostTest \
             --tests '*V121Test' --tests '*NuvioV119VerificationTest' \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
 
@@ -410,7 +410,7 @@ jobs:
           log_path = Path(os.environ["LOG_FILE"])
           text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else "No gradle log found"
           err_lines = [ln for ln in text.splitlines() if ln.startswith("e: ") or "FAILURE:" in ln or "Exception" in ln or "error:" in ln.lower() or "FAILED" in ln]
-          summary = "\n".join(err_lines[-140:]) + "\n\n=== LOG TAIL ===\n" + "\n".join(text.splitlines()[-160:])
+          summary = "\n".join(err_lines[:70] + err_lines[-70:]) + "\n\n=== LOG TAIL ===\n" + "\n".join(text.splitlines()[-160:])
           summary = summary[-60000:]
 
           req = urllib.request.Request(

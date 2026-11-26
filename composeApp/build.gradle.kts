@@ -567,6 +567,16 @@ kotlin {
             implementation(libs.supabase.realtime)
             implementation(libs.reorderable)
         }
+        // The pinned archive contains obsolete server tests that do not compile against
+        // its own APIs. Keep the full suite available; opt into a focused release gate.
+        if (providers.gradleProperty("nuvio.testSuite").orNull == "v121") {
+            named("commonTest") {
+                kotlin.include("**/*V121Test.kt", "**/NuvioV119VerificationTest.kt")
+            }
+            named("androidHostTest") {
+                kotlin.include("**/*V121Test.kt")
+            }
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.kotlinx.coroutines.get()}")
