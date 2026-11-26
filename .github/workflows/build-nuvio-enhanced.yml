@@ -87,6 +87,10 @@ jobs:
 
           CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.21"
           mv "$PROJECT_ROOT" "$CLEAN_ROOT"
+          if [ -f "$GITHUB_WORKSPACE/docs/releases/1.21-validation.md" ]; then
+            mkdir -p "$CLEAN_ROOT/docs/releases"
+            cp "$GITHUB_WORKSPACE/docs/releases/1.21-validation.md" "$CLEAN_ROOT/docs/releases/"
+          fi
 
           # Scrub GitHub workflows, git metadata, signing keystores, local paths, and internal audit files
           rm -rf \
@@ -160,8 +164,8 @@ jobs:
                   body=json.dumps({
                       "tag_name": out_tag,
                       "target_commitish": "main",
-                      "name": "Nuvio Enhanced v1.21 APK",
-                      "body": "Nuvio Enhanced v1.21 Release Assets",
+                      "name": "Nuvio Enhanced v1.21 Source",
+                      "body": "Nuvio Enhanced v1.21 source archive. APK assets are published separately only after regression tests, release assembly and signing-continuity checks pass. See docs/releases/1.21-validation.md in the source archive for validation status.",
                       "draft": False,
                       "prerelease": False,
                   }).encode("utf-8"),
