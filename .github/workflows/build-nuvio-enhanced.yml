@@ -222,9 +222,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Test release signing verifier
-        run: python3 -m unittest discover -s tests -p 'test_*.py'
-
       - name: Set up JDK 17 (Zulu)
         uses: actions/setup-java@v5
         with:
@@ -391,22 +388,6 @@ jobs:
           cargo --version
           cargo ndk --version
 
-      - name: Run v1.23 regression tests
-        working-directory: ${{ steps.source.outputs.project_root }}
-        run: |
-          set -euo pipefail
-          ./gradlew -Pnuvio.android.distribution=full -Pnuvio.testSuite=v123 :composeApp:testAndroidHostTest \
-            --tests '*V121Test' --tests '*V122Test' --tests '*V123Test' --tests '*NuvioV119VerificationTest' \
-            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
-
-      - name: Build embedded VLC native playback smoke test
-        working-directory: ${{ steps.source.outputs.project_root }}
-        run: |
-          set -euo pipefail
-          ./gradlew -Pnuvio.android.distribution=full -Pnuvio.playerSmokeTest=true \
-            :androidApp:assembleFullDebug :androidApp:assembleFullDebugAndroidTest \
-            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
-
       - name: Assemble Signed Nuvio Enhanced v1.23 Full Release APK
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
@@ -414,6 +395,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew \
             -Pnuvio.android.distribution=full \
+            -PreleaseMinifyEnabled=false \
             :androidApp:assembleFullRelease \
             --no-daemon \
             --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/gradle-build.log"
@@ -570,37 +552,6 @@ jobs:
             --previous "$RUNNER_TEMP/v121-reference/Nuvio-Enhanced-v1.21-full-arm64-v8a-fresh-install.apk" \
             --candidate "$CANDIDATE_APK"
 
-      - name: Enable Android 16 install-test acceleration
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Verify exact signed APK installs on Android 16 before publication
-        uses: reactivecircus/android-emulator-runner@v2
-        env:
-          APK_PATH: ${{ steps.collect.outputs.apk_path }}
-          PACKAGE_ID: ${{ steps.collect.outputs.package_id }}
-          EXPECTED_VERSION_CODE: '230'
-          PROJECT_ROOT: ${{ steps.source.outputs.project_root }}
-        with:
-          api-level: 36
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash scripts/verify_android_install.sh && bash scripts/verify_vlc_playback.sh
-
-      - name: Preserve APK install-test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-android16-install-diagnostics
-          path: install-diagnostics/**
-          if-no-files-found: ignore
-          retention-days: 14
-
       - name: Upload APK as GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -681,6 +632,10 @@ jobs:
               f"- **Signing Certificate DN**: `{cert_dn}`\n"
               f"- **Signing Cert SHA-256**: `{cert_sha256}` (V1 + V2 + V3 Verified)\n"
               f"- **Workflow Run**: `{run_id}`\n"
+              "\n> **Build-only release requested by the user:** code/resource shrinking is disabled. "
+              "No regression tests, emulator installation or native VLC playback tests were run for this build. "
+              "Signing continuity, package identity, ZIP alignment and VLC ELF alignment are checked. "
+              "This is not verified playback/performance acceptance.\n"
           )
 
           if fresh_install:
