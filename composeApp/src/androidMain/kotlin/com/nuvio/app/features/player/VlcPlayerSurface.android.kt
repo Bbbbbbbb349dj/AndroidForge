@@ -24,7 +24,7 @@ import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.util.concurrent.atomic.AtomicBoolean
 
-private val vlcReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+private val vlcReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
 /** Native LibVLC renders straight into its SurfaceView; Compose only receives 2 Hz snapshots. */
 @Composable
@@ -198,7 +198,14 @@ private class VlcSession(
         override fun pause() { wantsPlayback = false; if (!closed.get()) player.pause() }
         override fun seekTo(positionMs: Long) { if (!closed.get() && player.isSeekable) player.setTime(positionMs.coerceAtLeast(0)) }
         override fun seekBy(offsetMs: Long) { if (!closed.get()) seekTo(player.time + offsetMs) }
-        override fun retry() { if (!closed.get()) { player.stop(); player.play() } }
+        override fun retry() {
+            if (closed.get()) return
+            wantsPlayback = true
+            vlcReleaseScope.launch {
+                if (!closed.get()) player.stop()
+                withContext(Dispatchers.Main.immediate) { if (!closed.get() && wantsPlayback) player.play() }
+            }
+        }
         override fun setPlaybackSpeed(speed: Float) { if (!closed.get()) player.setRate(speed.coerceIn(0.25f, 4f)) }
         override fun currentPlayerVolume() = if (closed.get()) PlayerAudioLevel(1f, false) else PlayerAudioLevel(player.volume.coerceIn(0, 100) / 100f, player.volume == 0)
         override fun setPlayerVolume(level: Float): PlayerAudioLevel { if (!closed.get()) player.setVolume((level.coerceIn(0f, 1f) * 100).toInt()); return currentPlayerVolume() }

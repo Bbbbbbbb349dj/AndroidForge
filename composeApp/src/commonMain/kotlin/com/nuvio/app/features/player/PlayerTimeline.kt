@@ -113,7 +113,7 @@ internal fun PlayerTimelineDetails(
                 lineHeight = metrics.titleSize * 1.16f,
                 fontWeight = FontWeight.ExtraBold,
             ),
-            textColor = Color.White,
+            textColor = playerControlForeground,
             maxLines = 1,
             maxLogoHeight = metrics.timelineLogoMaxHeight,
             maxLogoWidth = metrics.logoMaxWidth,
@@ -131,17 +131,17 @@ internal fun PlayerTimelineDetails(
                         modifier = Modifier
                             .border(
                                 width = 1.dp,
-                                color = Color.White.copy(alpha = 0.45f),
+                                color = playerControlForeground.copy(alpha = 0.45f),
                                 shape = RoundedCornerShape(999.dp),
                             )
-                            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
+                            .playerLiquidGlass(RoundedCornerShape(999.dp))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = pill,
                             style = typeScale.labelSm.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White,
+                            color = playerControlForeground,
                             maxLines = 1,
                         )
                     }
@@ -157,7 +157,7 @@ internal fun PlayerTimelineDetails(
             Text(
                 text = if (displayEpisodeTitle.isNullOrBlank()) episodeCode else "$episodeCode • $displayEpisodeTitle",
                 style = typeScale.bodyMd.copy(fontSize = metrics.episodeInfoSize),
-                color = Color.White.copy(alpha = 0.9f),
+                color = playerControlForeground.copy(alpha = 0.9f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -166,7 +166,7 @@ internal fun PlayerTimelineDetails(
             Text(
                 text = releaseInfo,
                 style = typeScale.bodyMd.copy(fontSize = metrics.metadataSize),
-                color = Color.White.copy(alpha = 0.85f),
+                color = playerControlForeground.copy(alpha = 0.85f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -312,7 +312,7 @@ internal fun PlayerChapterTitle(
     Text(
         text = title,
         style = MaterialTheme.nuvioTypeScale.bodyMd,
-        color = Color.White.copy(alpha = 0.9f),
+        color = playerControlForeground.copy(alpha = 0.9f),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(horizontal = PlayerTimelineContentInset),

@@ -198,10 +198,10 @@ index 5be72d0..7a93f7d 100644
          mpv.setOptionString("vd-lavc-film-grain", "cpu")
 diff --git a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt
 new file mode 100644
-index 0000000..0f4fd34
+index 0000000..b0f05d6
 --- /dev/null
 +++ b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,247 @@
 +package com.nuvio.app.features.player
 +
 +import android.content.Context
@@ -228,7 +228,7 @@ index 0000000..0f4fd34
 +import org.videolan.libvlc.util.VLCVideoLayout
 +import java.util.concurrent.atomic.AtomicBoolean
 +
-+private val vlcReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++private val vlcReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 +
 +/** Native LibVLC renders straight into its SurfaceView; Compose only receives 2 Hz snapshots. */
 +@Composable
@@ -402,7 +402,14 @@ index 0000000..0f4fd34
 +        override fun pause() { wantsPlayback = false; if (!closed.get()) player.pause() }
 +        override fun seekTo(positionMs: Long) { if (!closed.get() && player.isSeekable) player.setTime(positionMs.coerceAtLeast(0)) }
 +        override fun seekBy(offsetMs: Long) { if (!closed.get()) seekTo(player.time + offsetMs) }
-+        override fun retry() { if (!closed.get()) { player.stop(); player.play() } }
++        override fun retry() {
++            if (closed.get()) return
++            wantsPlayback = true
++            vlcReleaseScope.launch {
++                if (!closed.get()) player.stop()
++                withContext(Dispatchers.Main.immediate) { if (!closed.get() && wantsPlayback) player.play() }
++            }
++        }
 +        override fun setPlaybackSpeed(speed: Float) { if (!closed.get()) player.setRate(speed.coerceIn(0.25f, 4f)) }
 +        override fun currentPlayerVolume() = if (closed.get()) PlayerAudioLevel(1f, false) else PlayerAudioLevel(player.volume.coerceIn(0, 100) / 100f, player.volume == 0)
 +        override fun setPlayerVolume(level: Float): PlayerAudioLevel { if (!closed.get()) player.setVolume((level.coerceIn(0f, 1f) * 100).toInt()); return currentPlayerVolume() }
@@ -536,18 +543,46 @@ index 45ad9d1..9edde54 100644
 +    val tint: Color? = null,
  )
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
-index de7057e..70f2fbe 100644
+index de7057e..45a2628 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
-@@ -197,6 +197,7 @@ internal fun PlayerControlsShell(
+@@ -197,34 +197,10 @@ internal fun PlayerControlsShell(
      onTimelineTouchChange: (Boolean) -> Unit = {},
      titleLogo: String? = null,
      showTitleLogo: Boolean = false,
 +    bottomActions: @Composable () -> Unit = {},
  ) {
-     val density = LocalDensity.current
-     var timelineHeight by remember { mutableStateOf(0.dp) }
-@@ -233,7 +234,7 @@ internal fun PlayerControlsShell(
+-    val density = LocalDensity.current
+-    var timelineHeight by remember { mutableStateOf(0.dp) }
+-    var titleDetailsHeight by remember { mutableStateOf(0.dp) }
+-    var sourceLineHeight by remember { mutableStateOf(0.dp) }
+     val glassActive = isAmbientLiquidGlassActive()
+     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+-        val centerControlHeight = metrics.playIconSize + maxOf(metrics.playButtonPadding, metrics.sideButtonPadding) * 2
+-        // The screenshot-style title block (6f4f779) made the bottom column
+-        // taller, and this lift formula grows with that height, so it pushed
+-        // the center controls up from their original position. Count the
+-        // title block at its original height instead, so the center controls
+-        // stay where they were before, whatever the new title size is.
+-        val originalTitleDetailsHeight = with(density) {
+-            metrics.titleSize.toDp() * 1.16f +
+-                (if (seasonNumber != null && episodeNumber != null) metrics.episodeInfoSize.toDp() * 1.3f else 0.dp) +
+-                (if (badges.isNotEmpty()) 25.dp else 0.dp) +
+-                (if (!releaseInfo.isNullOrBlank()) metrics.metadataSize.toDp() * 1.25f else 0.dp)
+-        }
+-        val effectiveTimelineHeight = if (titleDetailsHeight > 0.dp) {
+-            timelineHeight - titleDetailsHeight + originalTitleDetailsHeight
+-        } else {
+-            timelineHeight
+-        }
+-        val centerBottomPadding = if (useLegacyLayout) metrics.centerLift else maxOf(
+-            metrics.centerLift,
+-            (effectiveTimelineHeight - sourceLineHeight) * 2 + centerControlHeight + 16.dp - maxHeight,
+-        )
+         Box(
+             modifier = Modifier
+                 .fillMaxWidth()
+@@ -233,7 +209,7 @@ internal fun PlayerControlsShell(
                  .background(
                      Brush.verticalGradient(
                          colors = listOf(
@@ -556,13 +591,50 @@ index de7057e..70f2fbe 100644
                              Color.Transparent,
                          ),
                      ),
-@@ -386,13 +387,18 @@ internal fun PlayerControlsShell(
-                             onTogglePlayback()
+@@ -307,15 +283,30 @@ internal fun PlayerControlsShell(
+                 )
+             } else {
+                 if (showPlaybackControls) {
+-                    PlayerToolbar(
+-                        isLocked = isLocked,
+-                        onLockToggle = onLockToggle,
+-                        onBack = onBack,
+-                        modifier = Modifier
+-                            .align(Alignment.TopEnd)
++                    Row(
++                        modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                             .windowInsetsPadding(playerToolbarTopInsets(metrics))
+                             .padding(horizontal = metrics.horizontalPadding),
+-                    )
++                        horizontalArrangement = Arrangement.spacedBy(12.dp),
++                        verticalAlignment = Alignment.Top,
++                    ) {
++                        Column(Modifier.weight(1f)) {
++                            if (!hideDetails) {
++                                Box(Modifier.playerLiquidGlass(RoundedCornerShape(16.dp)).padding(8.dp)) {
++                                    PlayerTimelineDetails(
++                                        title = title, titleLogo = titleLogo, showTitleLogo = showTitleLogo,
++                                        seasonNumber = seasonNumber, episodeNumber = episodeNumber,
++                                        episodeTitle = episodeTitle, releaseInfo = releaseInfo,
++                                        metrics = metrics, badges = badges, qualityLabel = qualityLabel,
++                                    )
++                                }
++                            }
++                        }
++                        PlayerToolbar(
++                            isLocked = isLocked, onLockToggle = onLockToggle, onBack = onBack,
++                            modifier = Modifier.width(112.dp),
++                        )
++                    }
+                 }
+                 ParentalGuideOverlay(
+                     warnings = parentalWarnings,
+@@ -387,12 +378,18 @@ internal fun PlayerControlsShell(
                          },
                          modifier = Modifier
--                            .align(Alignment.Center)
+                             .align(Alignment.Center)
 -                            .padding(bottom = centerBottomPadding),
-+                            .align(Alignment.Center),
++                            .offset(y = if (useLegacyLayout) 0.dp else (-24).dp),
                      )
                  }
              }
@@ -577,7 +649,7 @@ index de7057e..70f2fbe 100644
                  ProgressControls(
                      playbackSnapshot = playbackSnapshot,
                      displayedPositionMs = displayedPositionMs,
-@@ -419,12 +425,10 @@ internal fun PlayerControlsShell(
+@@ -419,37 +416,20 @@ internal fun PlayerControlsShell(
                      seekPreview = seekPreview,
                      onTimelineTouchChange = onTimelineTouchChange,
                      onPictureInPictureClick = onPictureInPictureClick,
@@ -593,7 +665,8 @@ index de7057e..70f2fbe 100644
              }
              if (showPlaybackControls && !useLegacyLayout) {
                  Column(
-@@ -433,7 +437,8 @@ internal fun PlayerControlsShell(
+                     modifier = Modifier
+-                        .onSizeChanged { size -> timelineHeight = with(density) { size.height.toDp() } }
                          .align(Alignment.BottomCenter)
                          .fillMaxWidth()
                          .windowInsetsPadding(playerTimelineBottomInsets(metrics))
@@ -601,9 +674,25 @@ index de7057e..70f2fbe 100644
 +                        .padding(horizontal = metrics.horizontalPadding)
 +                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
                  ) {
-                     if (!hideDetails) {
-                         PlayerTimelineDetails(
-@@ -486,6 +491,7 @@ internal fun PlayerControlsShell(
+-                    if (!hideDetails) {
+-                        PlayerTimelineDetails(
+-                            title = title,
+-                            titleLogo = titleLogo,
+-                            showTitleLogo = showTitleLogo,
+-                            seasonNumber = seasonNumber,
+-                            episodeNumber = episodeNumber,
+-                            episodeTitle = episodeTitle,
+-                            releaseInfo = releaseInfo,
+-                            metrics = metrics,
+-                            badges = badges,
+-                            qualityLabel = qualityLabel,
+-                            onHeightChanged = { titleDetailsHeight = it },
+-                        )
+-                    }
+                     Row(
+                         modifier = Modifier.fillMaxWidth(),
+                         verticalAlignment = Alignment.Bottom,
+@@ -486,6 +466,7 @@ internal fun PlayerControlsShell(
                          },
                          onTouchChange = onTimelineTouchChange,
                      )
@@ -611,7 +700,7 @@ index de7057e..70f2fbe 100644
                      PlayerControlActions(
                          playbackSnapshot = playbackSnapshot,
                          displayedPositionMs = displayedPositionMs,
-@@ -601,7 +607,7 @@ private fun PlayerHeader(
+@@ -601,7 +582,7 @@ private fun PlayerHeader(
                              lineHeight = metrics.titleSize * 1.16f,
                              fontWeight = FontWeight.Bold,
                          ),
@@ -620,7 +709,7 @@ index de7057e..70f2fbe 100644
                          maxLines = 2,
                          maxLogoHeight = metrics.titleLogoMaxHeight,
                          maxLogoWidth = metrics.logoMaxWidth,
-@@ -619,7 +625,7 @@ private fun PlayerHeader(
+@@ -619,7 +600,7 @@ private fun PlayerHeader(
                                  fontSize = metrics.episodeInfoSize,
                                  lineHeight = metrics.episodeInfoSize * 1.3f,
                              ),
@@ -629,7 +718,7 @@ index de7057e..70f2fbe 100644
                              maxLines = 1,
                              overflow = TextOverflow.Ellipsis,
                          )
-@@ -634,7 +640,7 @@ private fun PlayerHeader(
+@@ -634,7 +615,7 @@ private fun PlayerHeader(
                                  fontSize = metrics.metadataSize,
                                  lineHeight = metrics.metadataSize * 1.25f,
                              ),
@@ -638,7 +727,7 @@ index de7057e..70f2fbe 100644
                              maxLines = 1,
                              overflow = TextOverflow.Ellipsis,
                          )
-@@ -645,7 +651,7 @@ private fun PlayerHeader(
+@@ -645,7 +626,7 @@ private fun PlayerHeader(
                                  lineHeight = metrics.metadataSize * 1.25f,
                                  fontStyle = FontStyle.Italic,
                              ),
@@ -647,7 +736,7 @@ index de7057e..70f2fbe 100644
                              maxLines = 1,
                              overflow = TextOverflow.Ellipsis,
                          )
-@@ -694,7 +700,7 @@ private fun PlayerHeader(
+@@ -694,7 +675,7 @@ private fun PlayerHeader(
                              buttonSize = metrics.headerIconSize + 16.dp,
                              iconSize = metrics.headerIconSize,
                              selected = randomNextEpisodeMode,
@@ -656,7 +745,7 @@ index de7057e..70f2fbe 100644
                              onClick = onRandomNextEpisodeModeToggle,
                          )
                      }
-@@ -714,7 +720,7 @@ private fun PlayerHeader(
+@@ -714,7 +695,7 @@ private fun PlayerHeader(
                              buttonSize = metrics.headerIconSize + 16.dp,
                              iconSize = metrics.headerIconSize,
                              onClick = onPartyClick,
@@ -665,7 +754,7 @@ index de7057e..70f2fbe 100644
                          )
                      }
                      if (onCastClick != null && !enhancedSettings.hidePlayerCast) {
-@@ -791,7 +797,7 @@ private fun PlayerHeader(
+@@ -791,7 +772,7 @@ private fun PlayerHeader(
                          modifier = Modifier.playerLiquidGlass(CircleShape, refractionHeight = 6.dp, refractionAmount = 8.dp),
                          shape = CircleShape,
                          containerColor = Color.Transparent,
@@ -674,7 +763,7 @@ index de7057e..70f2fbe 100644
                          buttonSize = metrics.headerIconSize + 16.dp,
                          iconSize = metrics.headerIconSize,
                          contentDescription = stringResource(Res.string.compose_player_close),
-@@ -811,7 +817,7 @@ internal fun PlayerHeaderIconButton(
+@@ -811,7 +792,7 @@ internal fun PlayerHeaderIconButton(
      iconSize: androidx.compose.ui.unit.Dp,
      selected: Boolean = false,
      onClick: () -> Unit,
@@ -683,7 +772,7 @@ index de7057e..70f2fbe 100644
  ) {
      Box(
          modifier = Modifier
-@@ -902,14 +908,14 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
+@@ -902,14 +883,14 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
          else -> null
      }
      if (numbered != null) {
@@ -700,7 +789,7 @@ index de7057e..70f2fbe 100644
              modifier = Modifier
                  .fillMaxSize()
                  .graphicsLayer { if (forward) scaleX = -1f },
-@@ -917,7 +923,7 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
+@@ -917,7 +898,7 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
          val density = LocalDensity.current
          Text(
              text = seconds.toString(),
@@ -709,7 +798,7 @@ index de7057e..70f2fbe 100644
              style = MaterialTheme.nuvioTypeScale.labelSm.copy(
                  fontSize = with(density) { (size * 0.26f).toSp() },
                  lineHeight = with(density) { (size * 0.26f).toSp() },
-@@ -962,7 +968,7 @@ internal fun PlayPauseControlButton(
+@@ -962,7 +943,7 @@ internal fun PlayPauseControlButton(
                  } else {
                      stringResource(Res.string.detail_btn_play)
                  },
@@ -718,7 +807,7 @@ index de7057e..70f2fbe 100644
                  modifier = Modifier.size(metrics.playIconSize),
              )
          }
-@@ -1345,9 +1351,9 @@ private fun PlayerProgressTrack(
+@@ -1345,9 +1326,9 @@ private fun PlayerProgressTrack(
          disabledInactiveTrackColor = PlayerBaseTrackColor,
      )
      val activeTrackColors = SliderDefaults.colors(
@@ -730,7 +819,7 @@ index de7057e..70f2fbe 100644
          disabledInactiveTrackColor = Color.Transparent,
      )
  
-@@ -1394,12 +1400,12 @@ internal fun LockedPlayerOverlay(
+@@ -1394,12 +1375,12 @@ internal fun LockedPlayerOverlay(
  ) {
      val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
      val sliderColors = SliderDefaults.colors(
@@ -749,7 +838,7 @@ index de7057e..70f2fbe 100644
      )
  
      Box(modifier = modifier.fillMaxSize()) {
-@@ -1440,7 +1446,7 @@ internal fun LockedPlayerOverlay(
+@@ -1440,7 +1421,7 @@ internal fun LockedPlayerOverlay(
                  Icon(
                      imageVector = Icons.Rounded.Lock,
                      contentDescription = stringResource(Res.string.compose_player_unlock_controls),
@@ -758,7 +847,7 @@ index de7057e..70f2fbe 100644
                      modifier = Modifier.size(34.dp),
                  )
              }
-@@ -1448,7 +1454,7 @@ internal fun LockedPlayerOverlay(
+@@ -1448,7 +1429,7 @@ internal fun LockedPlayerOverlay(
              Text(
                  text = stringResource(Res.string.compose_player_tap_to_unlock),
                  style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontWeight = FontWeight.SemiBold),
@@ -767,7 +856,7 @@ index de7057e..70f2fbe 100644
              )
          }
  
-@@ -1496,7 +1502,7 @@ internal fun LockedPlayerOverlay(
+@@ -1496,7 +1477,7 @@ internal fun LockedPlayerOverlay(
                                  sliderState = sliderState,
                                  enabled = false,
                                  colors = SliderDefaults.colors(
@@ -776,7 +865,7 @@ index de7057e..70f2fbe 100644
                                      disabledInactiveTrackColor = Color.Transparent,
                                  ),
                              )
-@@ -1525,7 +1531,7 @@ internal fun LockedPlayerOverlay(
+@@ -1525,7 +1506,7 @@ internal fun LockedPlayerOverlay(
                  Text(
                      text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
                      style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
@@ -785,7 +874,7 @@ index de7057e..70f2fbe 100644
                      modifier = Modifier.align(Alignment.End),
                  )
              }
-@@ -1559,7 +1565,7 @@ private fun TimePill(
+@@ -1559,7 +1540,7 @@ private fun TimePill(
                  lineHeight = fontSize * 1.25f,
                  fontWeight = FontWeight.Medium,
              ),
@@ -794,7 +883,7 @@ index de7057e..70f2fbe 100644
          )
      }
  }
-@@ -1570,7 +1576,7 @@ private fun PlayerActionPillButton(
+@@ -1570,7 +1551,7 @@ private fun PlayerActionPillButton(
      onClick: () -> Unit,
      icon: ImageVector? = null,
      painter: Painter? = null,
@@ -803,7 +892,7 @@ index de7057e..70f2fbe 100644
  ) {
      Row(
          modifier = Modifier
-@@ -1620,7 +1626,7 @@ private fun PlayerDeviceStatusOverlay(
+@@ -1620,7 +1601,7 @@ private fun PlayerDeviceStatusOverlay(
          modifier = modifier,
          shape = RoundedCornerShape(999.dp),
          color = Color.Black.copy(alpha = 0.42f),
@@ -812,7 +901,7 @@ index de7057e..70f2fbe 100644
          tonalElevation = 0.dp,
          shadowElevation = 0.dp,
      ) {
-@@ -1651,7 +1657,7 @@ private fun PlayerDeviceStatusOverlay(
+@@ -1651,7 +1632,7 @@ private fun PlayerDeviceStatusOverlay(
                      lineHeight = 12.sp,
                      fontWeight = FontWeight.SemiBold,
                  ),
@@ -821,7 +910,7 @@ index de7057e..70f2fbe 100644
                  maxLines = 1,
              )
              PlayerBatteryStatusItem(
-@@ -1721,7 +1727,7 @@ private fun PlayerDeviceStatusItem(
+@@ -1721,7 +1702,7 @@ private fun PlayerDeviceStatusItem(
          Icon(
              imageVector = icon,
              contentDescription = null,
@@ -830,7 +919,7 @@ index de7057e..70f2fbe 100644
              modifier = Modifier.size(11.dp),
          )
          Text(
-@@ -1731,7 +1737,7 @@ private fun PlayerDeviceStatusItem(
+@@ -1731,7 +1712,7 @@ private fun PlayerDeviceStatusItem(
                  lineHeight = 12.sp,
                  fontWeight = FontWeight.SemiBold,
              ),
@@ -839,7 +928,7 @@ index de7057e..70f2fbe 100644
              maxLines = 1,
          )
      }
-@@ -1760,7 +1766,7 @@ private fun PlayerBatteryStatusItem(
+@@ -1760,7 +1741,7 @@ private fun PlayerBatteryStatusItem(
                  lineHeight = 12.sp,
                  fontWeight = FontWeight.SemiBold,
              ),
@@ -848,7 +937,7 @@ index de7057e..70f2fbe 100644
              maxLines = 1,
          )
      }
-@@ -1777,9 +1783,9 @@ private fun PlayerBatteryGlyph(
+@@ -1777,9 +1758,9 @@ private fun PlayerBatteryGlyph(
      val activeColor = if (charging) {
          Color(0xFF8CFFB3)
      } else {
@@ -1233,6 +1322,67 @@ index 250da7b..200f13d 100644
          onDismissMovieRecommendations = {
              movieRecommendationDismissedStage = PlayerNextEpisodeRules.movieRecommendationStage(
                  positionMs = playbackSnapshot.positionMs,
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
+index deeda6f..db57536 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
+@@ -113,7 +113,7 @@ internal fun PlayerTimelineDetails(
+                 lineHeight = metrics.titleSize * 1.16f,
+                 fontWeight = FontWeight.ExtraBold,
+             ),
+-            textColor = Color.White,
++            textColor = playerControlForeground,
+             maxLines = 1,
+             maxLogoHeight = metrics.timelineLogoMaxHeight,
+             maxLogoWidth = metrics.logoMaxWidth,
+@@ -131,17 +131,17 @@ internal fun PlayerTimelineDetails(
+                         modifier = Modifier
+                             .border(
+                                 width = 1.dp,
+-                                color = Color.White.copy(alpha = 0.45f),
++                                color = playerControlForeground.copy(alpha = 0.45f),
+                                 shape = RoundedCornerShape(999.dp),
+                             )
+-                            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
++                            .playerLiquidGlass(RoundedCornerShape(999.dp))
+                             .padding(horizontal = 8.dp, vertical = 3.dp),
+                         contentAlignment = Alignment.Center,
+                     ) {
+                         Text(
+                             text = pill,
+                             style = typeScale.labelSm.copy(fontWeight = FontWeight.Bold),
+-                            color = Color.White,
++                            color = playerControlForeground,
+                             maxLines = 1,
+                         )
+                     }
+@@ -157,7 +157,7 @@ internal fun PlayerTimelineDetails(
+             Text(
+                 text = if (displayEpisodeTitle.isNullOrBlank()) episodeCode else "$episodeCode • $displayEpisodeTitle",
+                 style = typeScale.bodyMd.copy(fontSize = metrics.episodeInfoSize),
+-                color = Color.White.copy(alpha = 0.9f),
++                color = playerControlForeground.copy(alpha = 0.9f),
+                 maxLines = 1,
+                 overflow = TextOverflow.Ellipsis,
+             )
+@@ -166,7 +166,7 @@ internal fun PlayerTimelineDetails(
+             Text(
+                 text = releaseInfo,
+                 style = typeScale.bodyMd.copy(fontSize = metrics.metadataSize),
+-                color = Color.White.copy(alpha = 0.85f),
++                color = playerControlForeground.copy(alpha = 0.85f),
+                 maxLines = 1,
+                 overflow = TextOverflow.Ellipsis,
+             )
+@@ -312,7 +312,7 @@ internal fun PlayerChapterTitle(
+     Text(
+         text = title,
+         style = MaterialTheme.nuvioTypeScale.bodyMd,
+-        color = Color.White.copy(alpha = 0.9f),
++        color = playerControlForeground.copy(alpha = 0.9f),
+         maxLines = 1,
+         overflow = TextOverflow.Ellipsis,
+         modifier = modifier.padding(horizontal = PlayerTimelineContentInset),
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/VlcPlaybackPolicy.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/VlcPlaybackPolicy.kt
 new file mode 100644
 index 0000000..2498d9d
@@ -1383,9 +1533,25 @@ index 0000000..5516f2d
 +        assertTrue(PlaybackStartupPolicy.networkRebufferMs >= PlaybackStartupPolicy.startBufferMs)
 +    }
 +}
+diff --git a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt
+index 105f820..220eadb 100644
+--- a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotesV121Test.kt
+@@ -9,7 +9,10 @@ class BundledReleaseNotesV121Test {
+         assertEquals("1.21", offline.snapshot.releases.first { it.version == "1.21" }.version)
+         assertTrue(offline.snapshot.hasCompleteSinceVersion)
+         assertTrue(offline.snapshot.releases.first { it.version == "1.21" }.notes.size >= 17)
+-        assertEquals(2, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
++        val mergedAgain = BundledReleaseNotes.merge(offline, "1.21").snapshot.releases
++        assertEquals(offline.snapshot.releases.map { it.version }, mergedAgain.map { it.version })
++        assertEquals(mergedAgain.size, mergedAgain.map { it.version }.distinct().size)
++        assertTrue(mergedAgain.any { it.version == "1.23" })
+     }
+ 
+     @Test fun forkReleaseTagsAndTwoPartVersionsAreRecognized() {
 diff --git a/docs/releases/1.23.md b/docs/releases/1.23.md
 new file mode 100644
-index 0000000..89611ef
+index 0000000..382012b
 --- /dev/null
 +++ b/docs/releases/1.23.md
 @@ -0,0 +1,27 @@
@@ -1394,7 +1560,7 @@ index 0000000..89611ef
 +## Player stability rework
 +- Remove decoded-video PixelCopy capture from the player composition and live refraction/blur on control surfaces. No per-frame bitmap copies for player glass; use inexpensive tinted surfaces instead.
 +- Restore a 1.5-second default startup buffer and MPV initial cache pausing. Explicit custom buffers remain supported. This prioritizes a viable decoding queue over zero-wait startup; network/provider problems can still stall playback.
-+- Keep center transport fixed rather than moving it with measured title/control heights.
++- Move modern-layout title/metadata into a separate top header, freeing the bottom deck for seeking and actions. Keep center transport at a stable position rather than moving it with measured title/control heights.
 +
 +## Bottom controls and recommendations
 +- Night Mode and Recommendations are in the measured bottom controls in both modern and legacy layouts, not a side rail. Night Mode is disabled with an explanation on engines/configurations that cannot apply the effect.

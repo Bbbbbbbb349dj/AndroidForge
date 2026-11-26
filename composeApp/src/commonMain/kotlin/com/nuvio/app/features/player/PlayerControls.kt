@@ -199,33 +199,8 @@ internal fun PlayerControlsShell(
     showTitleLogo: Boolean = false,
     bottomActions: @Composable () -> Unit = {},
 ) {
-    val density = LocalDensity.current
-    var timelineHeight by remember { mutableStateOf(0.dp) }
-    var titleDetailsHeight by remember { mutableStateOf(0.dp) }
-    var sourceLineHeight by remember { mutableStateOf(0.dp) }
     val glassActive = isAmbientLiquidGlassActive()
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val centerControlHeight = metrics.playIconSize + maxOf(metrics.playButtonPadding, metrics.sideButtonPadding) * 2
-        // The screenshot-style title block (6f4f779) made the bottom column
-        // taller, and this lift formula grows with that height, so it pushed
-        // the center controls up from their original position. Count the
-        // title block at its original height instead, so the center controls
-        // stay where they were before, whatever the new title size is.
-        val originalTitleDetailsHeight = with(density) {
-            metrics.titleSize.toDp() * 1.16f +
-                (if (seasonNumber != null && episodeNumber != null) metrics.episodeInfoSize.toDp() * 1.3f else 0.dp) +
-                (if (badges.isNotEmpty()) 25.dp else 0.dp) +
-                (if (!releaseInfo.isNullOrBlank()) metrics.metadataSize.toDp() * 1.25f else 0.dp)
-        }
-        val effectiveTimelineHeight = if (titleDetailsHeight > 0.dp) {
-            timelineHeight - titleDetailsHeight + originalTitleDetailsHeight
-        } else {
-            timelineHeight
-        }
-        val centerBottomPadding = if (useLegacyLayout) metrics.centerLift else maxOf(
-            metrics.centerLift,
-            (effectiveTimelineHeight - sourceLineHeight) * 2 + centerControlHeight + 16.dp - maxHeight,
-        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -308,15 +283,30 @@ internal fun PlayerControlsShell(
                 )
             } else {
                 if (showPlaybackControls) {
-                    PlayerToolbar(
-                        isLocked = isLocked,
-                        onLockToggle = onLockToggle,
-                        onBack = onBack,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
+                    Row(
+                        modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
                             .windowInsetsPadding(playerToolbarTopInsets(metrics))
                             .padding(horizontal = metrics.horizontalPadding),
-                    )
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            if (!hideDetails) {
+                                Box(Modifier.playerLiquidGlass(RoundedCornerShape(16.dp)).padding(8.dp)) {
+                                    PlayerTimelineDetails(
+                                        title = title, titleLogo = titleLogo, showTitleLogo = showTitleLogo,
+                                        seasonNumber = seasonNumber, episodeNumber = episodeNumber,
+                                        episodeTitle = episodeTitle, releaseInfo = releaseInfo,
+                                        metrics = metrics, badges = badges, qualityLabel = qualityLabel,
+                                    )
+                                }
+                            }
+                        }
+                        PlayerToolbar(
+                            isLocked = isLocked, onLockToggle = onLockToggle, onBack = onBack,
+                            modifier = Modifier.width(112.dp),
+                        )
+                    }
                 }
                 ParentalGuideOverlay(
                     warnings = parentalWarnings,
@@ -387,7 +377,8 @@ internal fun PlayerControlsShell(
                             onTogglePlayback()
                         },
                         modifier = Modifier
-                            .align(Alignment.Center),
+                            .align(Alignment.Center)
+                            .offset(y = if (useLegacyLayout) 0.dp else (-24).dp),
                     )
                 }
             }
@@ -433,28 +424,12 @@ internal fun PlayerControlsShell(
             if (showPlaybackControls && !useLegacyLayout) {
                 Column(
                     modifier = Modifier
-                        .onSizeChanged { size -> timelineHeight = with(density) { size.height.toDp() } }
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
                         .padding(horizontal = metrics.horizontalPadding)
                         .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
                 ) {
-                    if (!hideDetails) {
-                        PlayerTimelineDetails(
-                            title = title,
-                            titleLogo = titleLogo,
-                            showTitleLogo = showTitleLogo,
-                            seasonNumber = seasonNumber,
-                            episodeNumber = episodeNumber,
-                            episodeTitle = episodeTitle,
-                            releaseInfo = releaseInfo,
-                            metrics = metrics,
-                            badges = badges,
-                            qualityLabel = qualityLabel,
-                            onHeightChanged = { titleDetailsHeight = it },
-                        )
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Bottom,

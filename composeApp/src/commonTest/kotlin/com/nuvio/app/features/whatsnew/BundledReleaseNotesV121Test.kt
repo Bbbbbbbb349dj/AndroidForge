@@ -9,7 +9,10 @@ class BundledReleaseNotesV121Test {
         assertEquals("1.21", offline.snapshot.releases.first { it.version == "1.21" }.version)
         assertTrue(offline.snapshot.hasCompleteSinceVersion)
         assertTrue(offline.snapshot.releases.first { it.version == "1.21" }.notes.size >= 17)
-        assertEquals(2, BundledReleaseNotes.merge(offline, "1.21").snapshot.releases.size)
+        val mergedAgain = BundledReleaseNotes.merge(offline, "1.21").snapshot.releases
+        assertEquals(offline.snapshot.releases.map { it.version }, mergedAgain.map { it.version })
+        assertEquals(mergedAgain.size, mergedAgain.map { it.version }.distinct().size)
+        assertTrue(mergedAgain.any { it.version == "1.23" })
     }
 
     @Test fun forkReleaseTagsAndTwoPartVersionsAreRecognized() {
