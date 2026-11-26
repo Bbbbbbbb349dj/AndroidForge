@@ -1688,7 +1688,7 @@
 +}
 --- /dev/null
 +++ b/docs/releases/1.21.md
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,33 @@
 +# Nuvio Enhanced 1.21 (210)
 +
 +## Changes and bug fixes
@@ -1718,6 +1718,10 @@
 +SDH/forced subtitles are supplied by installed subtitle add-ons; this release cannot synthesize missing translations, SDH descriptions or forced tracks. Initial subtitle retrieval requires a network connection and recognizable title/episode metadata. Unidentified files cannot be reliably matched by filename alone. Playback startup, sustained buffering and download throughput require device/provider testing; no universal speed claim is made.
 +
 +The build recipe starts with the same pinned base source and v1.20 patch pipeline as workflow run `45692499534` (helper commit `5b52a98917dbe51d8a995a10d5f3a778b0353ecb`), then applies the strict, reviewable v1.21 patch. The working tree also contains the materialized app source for direct review.
++
++## Upgrade safety
++
++The release workflow verifies that the new APK has exactly the same public signing-certificate fingerprints as the v1.20 APK before uploading or publishing it. The older private key is cached on another branch, and Actions caches are branch-scoped. If the original key is not available through the repository's existing `NUVIO_RELEASE_*` Actions secrets, publication stops rather than silently publishing an incompatible update. Private signing material must remain in secure Actions secrets/cache, never in source control or chat. Do not uninstall the existing app to work around a signature mismatch.
 --- a/gradle.properties
 +++ b/gradle.properties
 @@ -13,4 +13,4 @@
