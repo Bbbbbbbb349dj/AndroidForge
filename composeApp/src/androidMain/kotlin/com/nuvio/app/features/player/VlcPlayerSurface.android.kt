@@ -110,7 +110,9 @@ internal fun VlcPlayerSurface(
                 Lifecycle.Event.ON_STOP -> {
                     val activity = context.vlcActivity()
                     val pip = Build.VERSION.SDK_INT >= 24 && activity?.isInPictureInPictureMode == true
-                    if (!pip && session.player.isPlaying) { stoppedForLifecycle = true; session.player.pause() }
+                    // Buffering/opening must also be stopped, or a late Playing event can
+                    // start audio after the activity has already gone into the background.
+                    if (!pip) { stoppedForLifecycle = true; session.player.pause() }
                 }
                 Lifecycle.Event.ON_START -> if (stoppedForLifecycle) {
                     stoppedForLifecycle = false
