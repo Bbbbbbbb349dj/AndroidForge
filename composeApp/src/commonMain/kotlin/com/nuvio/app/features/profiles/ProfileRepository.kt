@@ -178,6 +178,7 @@ object ProfileRepository {
     fun selectProfile(profileIndex: Int) {
         activeProfileIndex = profileIndex
         CustomPosterUrlRepository.onProfileChanged()
+        com.nuvio.app.core.ui.background.AppBackgroundRepository.reload()
         val selectedProfile = _state.value.profiles.find { it.profileIndex == profileIndex }
         _state.value = _state.value.copy(
             activeProfile = selectedProfile,
@@ -251,6 +252,7 @@ object ProfileRepository {
         profileBackgroundId: String? = null,
         profileBackgroundUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
+        usesPrimaryPlugins: Boolean = false,
     ) {
         val existing = _state.value.profiles
         val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull() ?: return
@@ -272,6 +274,7 @@ object ProfileRepository {
             name = name,
             avatarColorHex = avatarColorHex,
             usesPrimaryAddons = usesPrimaryAddons,
+            usesPrimaryPlugins = usesPrimaryPlugins,
             avatarId = avatarId,
             avatarUrl = avatarUrl,
             profileBackgroundId = profileBackgroundId,
@@ -290,6 +293,7 @@ object ProfileRepository {
         profileBackgroundId: String? = null,
         profileBackgroundUrl: String? = null,
         usesPrimaryAddons: Boolean = false,
+        usesPrimaryPlugins: Boolean = false,
     ) {
         val allPayloads = _state.value.profiles.map { profile ->
             if (profile.profileIndex == profileIndex) {
@@ -298,6 +302,7 @@ object ProfileRepository {
                     name = name,
                     avatarColorHex = avatarColorHex,
                     usesPrimaryAddons = usesPrimaryAddons,
+                    usesPrimaryPlugins = usesPrimaryPlugins,
                     avatarId = avatarId,
                     avatarUrl = avatarUrl,
                     profileBackgroundId = profileBackgroundId,

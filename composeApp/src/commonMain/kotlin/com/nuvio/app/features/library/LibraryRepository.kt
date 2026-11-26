@@ -196,6 +196,7 @@ object LibraryRepository {
             deltaInitialized = storedPayload.deltaInitialized,
             pendingUpsertKeys = storedPayload.pendingUpsertKeys,
             pendingDeleteKeys = storedPayload.pendingDeleteKeys,
+            categoryOverridesByKey = storedPayload.localCategoryOverridesByKey,
         ) != null
     }
 
@@ -337,8 +338,13 @@ object LibraryRepository {
     }
 
     private fun toggleLocalSavedInternal(item: LibraryItem): TrackingMembershipApplyResult {
+        val defaultKeys = item.listKeys.takeIf { it.any(LocalLibraryCategory.allKeys::contains) }
+            ?: setOf(LocalLibraryCategory.PLAN_TO_WATCH.key)
         val result = localState.toggle(
-            item.copy(savedAtEpochMs = LibraryClock.nowEpochMs()),
+            item.copy(
+                listKeys = defaultKeys,
+                savedAtEpochMs = LibraryClock.nowEpochMs(),
+            ),
         )
         if (result.isSaved) {
             log.i {
@@ -411,20 +417,45 @@ object LibraryRepository {
         }
     }
 
-    fun savedItem(id: String): LibraryItem? {
+    fun savedItem(id: String, type: String? = null): LibraryItem? {
         ensureLoaded()
 
         activeLibraryProvider()?.let { provider -> return provider.find(id) }
 
-        return localState.findById(id)
+        return if (type != null) {
+            localState.find(id, type) ?: localState.findById(id)
+        } else {
+            localState.findById(id)
+        }
+    }
+
+    fun findSavedItem(id: String, type: String): LibraryItem? {
+        ensureLoaded()
+        return localState.find(id, type)
+    }
+
+    fun findOtherDuplicateCandidates(candidate: LibraryItem): List<LibraryItem> =
+        findDuplicateCandidates(candidate).filterNot { existing ->
+            existing.id.trim() == candidate.id.trim() &&
+                existing.type.trim().equals(candidate.type.trim(), ignoreCase = true)
+        }
+
+    fun findDuplicateCandidates(candidate: LibraryItem): List<LibraryItem> {
+        ensureLoaded()
+        return localState.snapshot().items.filter { existing ->
+            isPotentialDuplicateLibraryTitle(existing, candidate)
+        }
     }
 
     fun libraryListTabs(item: LibraryItem? = null): List<TrackingLibraryTab> =
-        libraryTabsWithLocal(
+        (localLibraryCategoryTabs() +
             TrackingProviderRegistry.connectedLibraryProviders()
-                .flatMap { provider -> provider.snapshot().tabs },
-        ).filter { tab ->
-            item == null || (tab.supportsContentType(item.type) && (!item.isServerItem || tab.key == LOCAL_LIBRARY_LIST_KEY))
+                .flatMap { provider -> provider.snapshot().tabs }
+            ).filter { tab ->
+            item == null || (
+                tab.supportsContentType(item.type) &&
+                    (!item.isServerItem || tab.providerId == null)
+                )
         }
 
     internal fun listManagementContext(): LibraryManagementContext? {
@@ -442,20 +473,26 @@ object LibraryRepository {
 
     suspend fun getMembershipSnapshot(item: LibraryItem): Map<String, Boolean> {
         ensureLoaded()
-        val inLocal = localState.contains(item.id, item.type)
+        val existingLocal = localState.find(item.id, item.type)
+        val activeLocalKeys = existingLocal?.effectiveLocalCategoryKeys().orEmpty()
         val memberships = linkedMapOf<String, Boolean>()
+        LocalLibraryCategory.entries.forEach { category ->
+            memberships[category.key] = category.key in activeLocalKeys
+        }
+        memberships[LOCAL_LIBRARY_LIST_KEY] = existingLocal != null
         if (!item.isServerItem) {
             TrackingProviderRegistry.connectedLibraryProviders().forEach { provider ->
                 memberships += provider.membership(item)
             }
         }
-        return libraryMembershipWithLocal(inLocal = inLocal, providerMembership = memberships)
+        return memberships
     }
 
     suspend fun applyMembershipChanges(
         item: LibraryItem,
         desiredMembership: Map<String, Boolean>,
         confirmedRemovalProviders: Set<TrackingProviderId> = emptySet(),
+        duplicateResolution: DuplicateLibraryResolution? = null,
     ): TrackingMembershipApplyResult = withAddonLibraryEvent(item.id, item.type) {
         applyMembershipChanges(
             item = item,
@@ -463,6 +500,7 @@ object LibraryRepository {
             confirmedRemovalProviders = confirmedRemovalProviders,
             targetProviderIds = null,
             updateLocal = true,
+            duplicateResolution = duplicateResolution,
         )
     }
 
@@ -487,9 +525,20 @@ object LibraryRepository {
         confirmedRemovalProviders: Set<TrackingProviderId>,
         targetProviderIds: Set<TrackingProviderId>?,
         updateLocal: Boolean,
+        duplicateResolution: DuplicateLibraryResolution? = null,
     ): TrackingMembershipApplyResult {
         ensureLoaded()
-        val localDesired = desiredMembership[LOCAL_LIBRARY_LIST_KEY] == true
+        val requestedCategoryKeys = LocalLibraryCategory.entries
+            .filter { desiredMembership[it.key] == true }
+            .mapTo(linkedSetOf()) { it.key }
+        val legacyLocalDesired = desiredMembership[LOCAL_LIBRARY_LIST_KEY] == true &&
+            desiredMembership.keys.none(LocalLibraryCategory.allKeys::contains)
+        val effectiveLocalKeys = when {
+            requestedCategoryKeys.isNotEmpty() -> requestedCategoryKeys
+            legacyLocalDesired -> setOf(LocalLibraryCategory.PLAN_TO_WATCH.key)
+            else -> emptySet()
+        }
+        val localDesired = effectiveLocalKeys.isNotEmpty()
         val currentlyInLocal = localState.contains(item.id, item.type)
         val profileId = localState.snapshot().token.profileId
         val requestedChanges = TrackingProviderRegistry.connectedLibraryProviders()
@@ -519,10 +568,64 @@ object LibraryRepository {
                 requiredRemovalConfirmations = requiredConfirmations,
             )
         }
-        if (updateLocal && localDesired != currentlyInLocal) {
+        if (updateLocal) {
             if (localDesired) {
-                save(item)
-            } else {
+                val existingSameItem = localState.find(item.id, item.type)
+                val otherDuplicates = findOtherDuplicateCandidates(item)
+                val normalizedRequestedKeys = normalizeLocalCategoryKeys(effectiveLocalKeys)
+                when (duplicateResolution) {
+                    DuplicateLibraryResolution.REPLACE -> {
+                        otherDuplicates.forEach { dup -> remove(dup.id, dup.type) }
+                        save(
+                            mergeLibraryItemPreservingLocalMetadata(
+                                existing = existingSameItem,
+                                incoming = item,
+                                explicitListKeys = normalizedRequestedKeys,
+                            ),
+                        )
+                    }
+                    DuplicateLibraryResolution.ADD -> {
+                        if (existingSameItem != null) {
+                            // Updating an existing item's category replaces its watch status cleanly
+                            // rather than unioning stale `local:plan_to_watch` back in.
+                            save(
+                                mergeLibraryItemPreservingLocalMetadata(
+                                    existing = existingSameItem,
+                                    incoming = item,
+                                    explicitListKeys = normalizedRequestedKeys,
+                                ),
+                            )
+                        } else {
+                            val allowDupFlag = if (otherDuplicates.isNotEmpty()) {
+                                setOf(LOCAL_ALLOW_DUPLICATE_MARKER)
+                            } else {
+                                emptySet()
+                            }
+                            save(
+                                mergeLibraryItemPreservingLocalMetadata(
+                                    existing = null,
+                                    incoming = item,
+                                    explicitListKeys = normalizedRequestedKeys + allowDupFlag,
+                                ),
+                            )
+                        }
+                    }
+                    null -> {
+                        if (existingSameItem == null) {
+                            otherDuplicates
+                                .filterNot { LOCAL_ALLOW_DUPLICATE_MARKER in it.listKeys }
+                                .forEach { dup -> remove(dup.id, dup.type) }
+                        }
+                        save(
+                            mergeLibraryItemPreservingLocalMetadata(
+                                existing = existingSameItem,
+                                incoming = item,
+                                explicitListKeys = normalizedRequestedKeys,
+                            ),
+                        )
+                    }
+                }
+            } else if (currentlyInLocal) {
                 remove(item.id, item.type)
             }
         }
@@ -563,10 +666,16 @@ object LibraryRepository {
         confirmedRemovalProviders: Set<TrackingProviderId>,
     ): TrackingMembershipApplyResult {
         ensureLoaded()
+        val isLocalKey = listKey == LOCAL_LIBRARY_LIST_KEY || listKey in LocalLibraryCategory.allKeys
         val targetProvider = TrackingProviderRegistry.connectedLibraryProviders()
             .firstOrNull { provider -> provider.snapshot().tabs.any { tab -> tab.key == listKey } }
-        val currentMembership = if (listKey == LOCAL_LIBRARY_LIST_KEY) {
-            mapOf(LOCAL_LIBRARY_LIST_KEY to localState.contains(item.id, item.type))
+        val currentMembership = if (isLocalKey) {
+            if (listKey == LOCAL_LIBRARY_LIST_KEY) {
+                LocalLibraryCategory.allKeys.associateWith { false }
+            } else {
+                val activeKeys = localState.find(item.id, item.type)?.effectiveLocalCategoryKeys().orEmpty()
+                LocalLibraryCategory.allKeys.associateWith { it in activeKeys }
+            }
         } else {
             targetProvider?.membership(item).orEmpty()
         }
@@ -579,7 +688,7 @@ object LibraryRepository {
             desiredMembership = desiredMembership,
             confirmedRemovalProviders = confirmedRemovalProviders,
             targetProviderIds = targetProvider?.let { provider -> setOf(provider.providerId) }.orEmpty(),
-            updateLocal = listKey == LOCAL_LIBRARY_LIST_KEY,
+            updateLocal = isLocalKey,
         )
     }
 
@@ -667,18 +776,38 @@ object LibraryRepository {
             return
         }
 
-        val items = localSnapshot.items
+        val sortedRawItems = localSnapshot.items
             .sortedByDescending { it.savedAtEpochMs }
-        val sections = items
-            .groupBy { it.type }
-            .map { (type, typeItems) ->
+        val seenTitleBuckets = HashSet<String>()
+        val items = buildList {
+            for (entry in sortedRawItems) {
+                if (LOCAL_ALLOW_DUPLICATE_MARKER in entry.listKeys) {
+                    add(entry)
+                    continue
+                }
+                val normTitle = normalizeLibraryTitleForDedup(entry.name)
+                val dedupBucket = if (normTitle.isNotBlank()) {
+                    "${entry.type.trim().lowercase().let { if (it == "movie" || it == "film") "movie" else "ep" }}::$normTitle"
+                } else {
+                    "id::${entry.type.lowercase()}::${entry.id}"
+                }
+                if (seenTitleBuckets.add(dedupBucket)) {
+                    add(entry)
+                }
+            }
+        }
+        val sections = LocalLibraryCategory.entries.mapNotNull { category ->
+            val categoryItems = items.filter { category.key in it.effectiveLocalCategoryKeys() }
+            if (categoryItems.isEmpty()) {
+                null
+            } else {
                 LibrarySection(
-                    type = type,
-                    displayTitle = type.toLibraryDisplayTitle(),
-                    items = typeItems.sortedByDescending { it.savedAtEpochMs },
+                    type = category.key,
+                    displayTitle = category.label,
+                    items = categoryItems,
                 )
             }
-            .sortedBy { it.displayTitle }
+        }
 
         val newUiState = LibraryUiState(
             sourceMode = LibrarySourceMode.LOCAL,

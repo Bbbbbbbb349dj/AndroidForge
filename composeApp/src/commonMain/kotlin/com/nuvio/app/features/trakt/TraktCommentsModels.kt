@@ -15,6 +15,8 @@ data class TraktCommentReview(
     val rating: Int? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    val sourceName: String = "Trakt",
+    val sourceUrl: String? = null,
 ) {
     val hasSpoilerContent: Boolean get() = spoiler || containsInlineSpoilers
 }

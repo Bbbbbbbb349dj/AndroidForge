@@ -41,6 +41,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.shuffle.EpisodeShuffleRepository
 import com.nuvio.app.core.ui.NuvioToastController
 import nuvio.composeapp.generated.resources.random_episode_title
+import nuvio.composeapp.generated.resources.layout_rating_map
+import nuvio.composeapp.generated.resources.layout_rating_map_sub
 import nuvio.composeapp.generated.resources.layout_random_episode_sub
 import nuvio.composeapp.generated.resources.shuffle_save_failed
 import androidx.compose.runtime.key
@@ -267,7 +269,9 @@ internal fun LazyListScope.metaScreenSettingsContent(
         ) {
             SettingsGroup(isTablet = isTablet) {
                 MetaSectionReorderableList(
-                    items = uiState.items,
+                    items = uiState.items.filter { item ->
+                        uiState.tabLayout || item.key != MetaScreenSectionKey.RATING_MAP
+                    },
                     isTablet = isTablet,
                     tabLayout = uiState.tabLayout,
                 )
@@ -287,7 +291,11 @@ private fun MetaSectionReorderableList(
     val reorderableLazyListState = rememberReorderableLazyListState(
         lazyListState = lazyListState,
     ) { from, to ->
-        MetaScreenSettingsRepository.moveByIndex(from.index, to.index)
+        val fromKey = items.getOrNull(from.index)?.key
+        val toKey = items.getOrNull(to.index)?.key
+        if (fromKey != null && toKey != null) {
+            MetaScreenSettingsRepository.moveByKey(fromKey, toKey)
+        }
         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
 
@@ -597,6 +605,7 @@ private val MetaScreenSectionKey.titleRes: StringResource
         MetaScreenSectionKey.COMMENTS -> Res.string.settings_meta_comments
         MetaScreenSectionKey.TRAILERS -> Res.string.settings_meta_trailers
         MetaScreenSectionKey.EPISODES -> Res.string.settings_meta_episodes
+        MetaScreenSectionKey.RATING_MAP -> Res.string.layout_rating_map
         MetaScreenSectionKey.DETAILS -> Res.string.settings_meta_details
         MetaScreenSectionKey.COLLECTION -> Res.string.settings_meta_collection
         MetaScreenSectionKey.MORE_LIKE_THIS -> Res.string.settings_meta_more_like_this
@@ -611,6 +620,7 @@ private val MetaScreenSectionKey.descriptionRes: StringResource
         MetaScreenSectionKey.COMMENTS -> Res.string.settings_meta_comments_description
         MetaScreenSectionKey.TRAILERS -> Res.string.settings_meta_trailers_description
         MetaScreenSectionKey.EPISODES -> Res.string.settings_meta_episodes_description
+        MetaScreenSectionKey.RATING_MAP -> Res.string.layout_rating_map_sub
         MetaScreenSectionKey.DETAILS -> Res.string.settings_meta_details_description
         MetaScreenSectionKey.COLLECTION -> Res.string.settings_meta_collection_description
         MetaScreenSectionKey.MORE_LIKE_THIS -> Res.string.settings_meta_more_like_this_description

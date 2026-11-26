@@ -5,6 +5,7 @@ import com.nuvio.app.core.ui.Chip
 import com.nuvio.app.features.details.EpisodeRatingsVisibility
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsUiState
+import com.nuvio.app.features.details.RatingMapPosition
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.layout_episode_ratings
 import nuvio.composeapp.generated.resources.layout_episode_ratings_sub
@@ -12,7 +13,11 @@ import nuvio.composeapp.generated.resources.layout_overall_ratings
 import nuvio.composeapp.generated.resources.layout_overall_ratings_sub_off
 import nuvio.composeapp.generated.resources.layout_overall_ratings_sub_on
 import nuvio.composeapp.generated.resources.layout_rating_map
+import nuvio.composeapp.generated.resources.layout_rating_map_position
+import nuvio.composeapp.generated.resources.layout_rating_map_position_sub
 import nuvio.composeapp.generated.resources.layout_rating_map_sub
+import nuvio.composeapp.generated.resources.settings_nav_bar_position_bottom
+import nuvio.composeapp.generated.resources.settings_nav_bar_position_top
 import nuvio.composeapp.generated.resources.layout_ratings_hide
 import nuvio.composeapp.generated.resources.layout_ratings_hide_unwatched
 import nuvio.composeapp.generated.resources.layout_ratings_show
@@ -61,4 +66,27 @@ internal fun RatingsSettings(
         isTablet = isTablet,
         onCheckedChange = MetaScreenSettingsRepository::setShowRatingMap,
     )
+    if (!uiState.tabLayout) {
+        // Non-tab layouts position the map explicitly; tab layouts use the
+        // RATING_MAP section row (reorder + Grouped/None) instead.
+        SettingsGroupDivider(isTablet = isTablet)
+        SettingsChipRow(
+            title = stringResource(Res.string.layout_rating_map_position),
+            description = stringResource(Res.string.layout_rating_map_position_sub),
+            isTablet = isTablet,
+        ) {
+            RatingMapPosition.entries.forEach { position ->
+                Chip(
+                    label = stringResource(
+                        when (position) {
+                            RatingMapPosition.TOP -> Res.string.settings_nav_bar_position_top
+                            RatingMapPosition.BOTTOM -> Res.string.settings_nav_bar_position_bottom
+                        },
+                    ),
+                    selected = uiState.ratingMapPosition == position,
+                    onClick = { MetaScreenSettingsRepository.setRatingMapPosition(position) },
+                )
+            }
+        }
+    }
 }

@@ -936,16 +936,45 @@ private fun HeroContentBlock(
         }
 
         if (synopsis != null && showHeroOverview) {
+            var heroSynopsisExpanded by remember(item.type, item.id, synopsis) { mutableStateOf(false) }
+            var heroSynopsisOverflow by remember(item.type, item.id, synopsis) { mutableStateOf(false) }
             Spacer(modifier = Modifier.height(if (compactHeroMetadata) 6.dp else 10.dp))
-            Text(
-                text = synopsis,
-                modifier = Modifier.fillMaxWidth(),
-                style = if (compactHeroMetadata) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-                textAlign = if (layout.isTablet) TextAlign.Start else TextAlign.Center,
-                maxLines = maxOverviewLines,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = heroSynopsisOverflow || heroSynopsisExpanded) {
+                        heroSynopsisExpanded = !heroSynopsisExpanded
+                    },
+                horizontalAlignment = if (layout.isTablet) Alignment.Start else Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = synopsis,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = if (compactHeroMetadata) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f),
+                    textAlign = if (layout.isTablet) TextAlign.Start else TextAlign.Center,
+                    maxLines = if (heroSynopsisExpanded) Int.MAX_VALUE else maxOverviewLines,
+                    overflow = if (heroSynopsisExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    onTextLayout = { result ->
+                        if (!heroSynopsisExpanded && result.hasVisualOverflow) {
+                            heroSynopsisOverflow = true
+                        }
+                    },
+                )
+                if (heroSynopsisOverflow || heroSynopsisExpanded) {
+                    Text(
+                        text = if (heroSynopsisExpanded) "Show less" else "⋯ Show more",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable { heroSynopsisExpanded = !heroSynopsisExpanded }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+            }
         }
 
         if (showHeroDetailsButton && onItemClick != null) {

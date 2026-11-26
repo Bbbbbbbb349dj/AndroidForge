@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -215,9 +218,11 @@ fun StreamsScreen(
             type = type,
             videoId = videoId,
             parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
             season = seasonNumber,
             episode = episodeNumber,
             manualSelection = manualSelection,
+            searchTitle = title,
         )
     }
 
@@ -248,9 +253,11 @@ fun StreamsScreen(
             type = type,
             videoId = videoId,
             parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
             season = seasonNumber,
             episode = episodeNumber,
             manualSelection = manualSelection,
+            searchTitle = title,
         )
     }
 
@@ -1519,16 +1526,78 @@ internal fun rememberStreamSearchResult(
 }
 
 private fun StreamItem.matchesSearchTerms(terms: List<String>): Boolean {
-    val haystack = buildString {
+    val raw = buildString {
         name?.let { append(it).append(' ') }
         title?.let { append(it).append(' ') }
         description?.let { append(it).append(' ') }
         sourceName?.let { append(it).append(' ') }
+        append(streamLabel).append(' ')
         append(addonName).append(' ')
+        if (addonId.startsWith("cloudstream:", ignoreCase = true)) append("cloudstream cs3 ")
         behaviorHints.filename?.let { append(it).append(' ') }
         badges.forEach { badge -> append(badge.name).append(' ') }
     }.lowercase()
+    val haystack = buildString {
+        append(raw)
+        if (raw.contains("2160p") || raw.contains("uhd") || raw.contains("4k")) append(" 4k 2160p uhd")
+        if (raw.contains("hevc") || raw.contains("x265") || raw.contains("h265")) append(" hevc x265 h265")
+    }
     return terms.all { haystack.contains(it) }
+}
+
+@Composable
+private fun StreamQuickFilterChipsRow(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val activeTokens = remember(query) {
+        query.trim().lowercase().split(' ').filter { it.isNotEmpty() }.toSet()
+    }
+    val presets = remember {
+        listOf(
+            "4K" to "4k",
+            "1080p" to "1080p",
+            "720p" to "720p",
+            "HDR" to "hdr",
+            "HEVC" to "hevc",
+            "CloudStream" to "cloudstream",
+        )
+    }
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(presets) { (label, token) ->
+            val selected = token in activeTokens
+            Surface(
+                shape = RoundedCornerShape(NuvioTokens.Radius.full),
+                color = if (selected) tokens.colors.accent.copy(alpha = 0.22f) else tokens.colors.surfaceCard.copy(alpha = 0.78f),
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (selected) tokens.colors.accent else tokens.colors.borderSubtle,
+                ),
+                modifier = Modifier.clickable {
+                    val words = query.trim().split(' ').filter { it.isNotEmpty() }
+                    val updated = if (words.any { it.equals(token, ignoreCase = true) }) {
+                        words.filterNot { it.equals(token, ignoreCase = true) }.joinToString(" ")
+                    } else {
+                        (words + token).joinToString(" ")
+                    }
+                    onQueryChange(updated)
+                },
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selected) tokens.colors.accent else tokens.colors.textSecondary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1549,19 +1618,31 @@ internal fun StreamSearchField(
         }
     }
     if (!isAmbientLiquidGlassActive()) {
-        NuvioInputField(
-            value = query,
-            onValueChange = onQueryChange,
-            placeholder = stringResource(Res.string.streams_search_placeholder),
-            modifier = modifier,
-            trailingContent = trailingContent,
-        )
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            NuvioInputField(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = stringResource(Res.string.streams_search_placeholder),
+                trailingContent = trailingContent,
+            )
+            StreamQuickFilterChipsRow(
+                query = query,
+                onQueryChange = onQueryChange,
+            )
+        }
         return
     }
     val tokens = MaterialTheme.nuvio
     val fieldShape = RoundedCornerShape(NuvioTokens.Radius.lg)
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
     Box(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .clip(fieldShape)
             .ambientLiquidGlass(
@@ -1596,6 +1677,11 @@ internal fun StreamSearchField(
                 cursorColor = tokens.colors.accent,
             ),
         )
+    }
+    StreamQuickFilterChipsRow(
+        query = query,
+        onQueryChange = onQueryChange,
+    )
     }
 }
 

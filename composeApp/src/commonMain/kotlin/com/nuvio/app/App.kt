@@ -126,6 +126,7 @@ internal fun AppEnvironment(
         customFirst = customThemeFirstColor,
         customSecond = customThemeSecondColor,
         amoled = amoledEnabled,
+        catppuccinAccent = enhancedSettings.catppuccinAccent,
     ) {
         if (drawAppBackground) {
             AppBackgroundHost {

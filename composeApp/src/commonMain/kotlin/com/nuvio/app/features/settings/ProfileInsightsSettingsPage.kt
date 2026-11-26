@@ -372,10 +372,9 @@ private fun ProfileInsightsBody(
     }
     val onCollectionClick: (ProfileInsightCollectionKind) -> Unit = { kind ->
         selectedInsightCollection = insightCollections[kind]
-            ?.takeIf { collection -> collection.items.isNotEmpty() }
     }
     Column(modifier = Modifier.fillMaxWidth()) {
-        ProfileInsightsHero(
+        ProfileActivityDashboard(
             profile = activeProfile,
             avatarItem = avatarItem,
             profileName = profileName,
@@ -402,7 +401,7 @@ private fun ProfileInsightsBody(
             )
             ProfileWatchTimeRow(stats = stats)
             SettingsSection(
-                title = stringResource(Res.string.profile_insights_section_taste),
+                title = stringResource(Res.string.v121_profile_taste),
                 isTablet = isTablet,
             ) {
                 ProfileTasteCard(stats = stats, factsProgress = factsProgress)
@@ -419,6 +418,88 @@ private fun ProfileInsightsBody(
         )
     }
 
+}
+
+@Composable
+private fun ProfileActivityDashboard(
+    profile: NuvioProfile?,
+    avatarItem: AvatarCatalogItem?,
+    profileName: String,
+    isTablet: Boolean,
+    stats: ProfileInsightsStats,
+    isCollectionAvailable: (ProfileInsightCollectionKind) -> Boolean,
+    onCollectionClick: (ProfileInsightCollectionKind) -> Unit,
+    onEditProfile: (() -> Unit)?,
+    onSwitchProfile: (() -> Unit)?,
+    onBack: (() -> Unit)?,
+) {
+    val colors = MaterialTheme.nuvio.colors
+    val accent = profile?.avatarColorHex?.let(::parseHexColor) ?: colors.accent
+    val avatarUrl = remember(profile, avatarItem) { profile?.let { profileAvatarImageUrl(it, avatarItem) } }
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (onBack != null) {
+                ProfileHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
+            }
+            Text(stringResource(Res.string.v121_profile_eyebrow), style = MaterialTheme.typography.labelLarge,
+                color = accent, modifier = Modifier.weight(1f))
+            if (onEditProfile != null) ProfileHeaderIconButton(Icons.Rounded.Edit,
+                stringResource(Res.string.profile_insights_edit_profile), onEditProfile)
+            if (onSwitchProfile != null) ProfileHeaderIconButton(Icons.Rounded.People,
+                stringResource(Res.string.profile_insights_switch_profile), onSwitchProfile)
+        }
+        Surface(shape = RoundedCornerShape(28.dp), color = colors.surface) {
+            Column(
+                Modifier.background(Brush.linearGradient(listOf(accent.copy(alpha = 0.14f), Color.Transparent)))
+                    .padding(if (isTablet) 28.dp else 20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                ProfileHeroAvatar(profileName, avatarUrl, accent, avatarItem?.bgColor?.let(::parseHexColor) ?: accent, isTablet)
+                Text(stringResource(Res.string.v121_profile_greeting, profileName),
+                    style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+                Text(stringResource(Res.string.v121_profile_subtitle),
+                    style = MaterialTheme.typography.bodyLarge, color = colors.textSecondary)
+                if (stats.libraryCount == 0 && stats.recentActivityCount == 0 && stats.continueCount == 0) {
+                    Text(stringResource(Res.string.v121_profile_empty), style = MaterialTheme.typography.bodyMedium, color = accent)
+                }
+            }
+        }
+        Text(stringResource(Res.string.v121_profile_activity), style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold, color = colors.textPrimary)
+        val cards = listOf(
+            Triple(ProfileInsightCollectionKind.Continue, stats.continueCount, Res.string.v121_profile_continue_hint),
+            Triple(ProfileInsightCollectionKind.Library, stats.libraryCount, Res.string.v121_profile_library_hint),
+            Triple(ProfileInsightCollectionKind.Completed, stats.completedCount, Res.string.v121_profile_completed_hint),
+            Triple(ProfileInsightCollectionKind.Upcoming, stats.upcomingCount, Res.string.v121_profile_upcoming_hint),
+            Triple(ProfileInsightCollectionKind.Watched, stats.watchedMovieCount, Res.string.profile_insights_stat_watched),
+            Triple(ProfileInsightCollectionKind.Ongoing, stats.ongoingSeriesCount, Res.string.profile_insights_stat_ongoing),
+        )
+        cards.chunked(if (isTablet) 3 else 2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { (kind, count, label) ->
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable { onCollectionClick(kind) },
+                        shape = RoundedCornerShape(20.dp), color = colors.surface,
+                        border = BorderStroke(1.dp, accent.copy(alpha = if (isCollectionAvailable(kind)) 0.28f else 0.08f)),
+                    ) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(count.toString(), style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold, color = accent)
+                            Text(stringResource(label), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+                        }
+                    }
+                }
+            }
+        }
+        Surface(shape = RoundedCornerShape(20.dp), color = accent.copy(alpha = 0.09f)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stats.recentActivityCount.toString(), style = MaterialTheme.typography.headlineMedium, color = accent)
+                Text(stringResource(Res.string.v121_profile_recent), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(Res.string.v121_profile_activity_hint), style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary)
+            }
+        }
+    }
 }
 
 @Composable
@@ -1043,6 +1124,9 @@ private fun ProfileInsightCollectionSheet(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (collection.items.isEmpty()) {
+                Text(stringResource(Res.string.v121_profile_collection_empty), style = MaterialTheme.typography.bodyLarge)
             }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(if (isTablet) 132.dp else 104.dp),

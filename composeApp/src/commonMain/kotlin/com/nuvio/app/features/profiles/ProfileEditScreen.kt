@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import com.nuvio.app.core.ui.NuvioToastController
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -89,6 +90,7 @@ fun ProfileEditScreen(
     var selectedBackgroundUrl by rememberSaveable { mutableStateOf(currentProfile?.profileBackgroundUrl) }
     var customBackgroundUrlInput by rememberSaveable { mutableStateOf(currentProfile?.profileBackgroundUrl.orEmpty()) }
     var usesPrimaryAddons by rememberSaveable { mutableStateOf(currentProfile?.usesPrimaryAddons ?: false) }
+    var usesPrimaryPlugins by rememberSaveable { mutableStateOf(currentProfile?.usesPrimaryPlugins ?: false) }
     var isSaving by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showPinSetup by remember { mutableStateOf(false) }
@@ -126,7 +128,8 @@ fun ProfileEditScreen(
     val backgroundCatalog by ProfileBackgroundRepository.catalog.collectAsStateWithLifecycle()
     val canChooseBackground = true
 
-    val avatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
+    val remoteAvatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
+    val avatars = remember(remoteAvatars) { builtInAvatarCatalog() + remoteAvatars }
     LaunchedEffect(Unit) {
         AvatarRepository.refreshAvatars()
     }
@@ -168,6 +171,7 @@ fun ProfileEditScreen(
                         profileBackgroundId = selectedBackgroundId,
                         profileBackgroundUrl = selectedBackgroundUrl,
                         usesPrimaryAddons = usesPrimaryAddons,
+                        usesPrimaryPlugins = usesPrimaryPlugins,
                     )
                 } else {
                     ProfileRepository.updateProfile(
@@ -179,6 +183,7 @@ fun ProfileEditScreen(
                         profileBackgroundId = selectedBackgroundId,
                         profileBackgroundUrl = selectedBackgroundUrl,
                         usesPrimaryAddons = usesPrimaryAddons,
+                        usesPrimaryPlugins = usesPrimaryPlugins,
                     )
                 }
                 onSaved()
@@ -187,6 +192,22 @@ fun ProfileEditScreen(
             }
         }
     }
+
+    val pickAvatarImage = rememberProfileImagePicker(
+        onPicked = { uri ->
+            avatarUrl = uri
+            selectedAvatarId = null
+        },
+        onError = { message -> NuvioToastController.show(message) },
+    )
+    val pickBackgroundImage = rememberProfileImagePicker(
+        onPicked = { uri ->
+            selectedBackgroundId = null
+            selectedBackgroundUrl = uri
+            customBackgroundUrlInput = uri
+        },
+        onError = { message -> NuvioToastController.show(message) },
+    )
 
     Box(modifier = modifier.fillMaxSize()) {
     NuvioScreen {
@@ -209,6 +230,8 @@ fun ProfileEditScreen(
                 usesPrimaryAddons = usesPrimaryAddons,
                 onNameChange = { name = it },
                 onUsesPrimaryAddonsChange = { usesPrimaryAddons = it },
+                usesPrimaryPlugins = usesPrimaryPlugins,
+                onUsesPrimaryPluginsChange = { usesPrimaryPlugins = it },
                 selectedAvatar = visibleAvatarItem,
                 customAvatarUrl = customAvatarUrl,
                 selectedBackgroundId = selectedBackgroundId,
@@ -248,6 +271,9 @@ fun ProfileEditScreen(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    Button(onClick = pickAvatarImage) {
+                        Text(text = stringResource(Res.string.profile_choose_from_gallery))
+                    }
                 }
             }
         }
@@ -276,27 +302,6 @@ fun ProfileEditScreen(
                                     customBackgroundUrlInput = ""
                                 }
                             },
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = stringResource(Res.string.profile_background_custom),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        NuvioInputField(
-                            value = customBackgroundUrlInput,
-                            onValueChange = { value ->
-                                customBackgroundUrlInput = value
-                                if (value.isNotBlank()) {
-                                    selectedBackgroundId = null
-                                    selectedBackgroundUrl = value
-                                } else {
-                                    if (selectedBackgroundUrl != null && selectedBackgroundId == null) {
-                                        selectedBackgroundUrl = null
-                                    }
-                                }
-                            },
-                            placeholder = "https://example.com/background.jpg",
                         )
                     }
                 }
@@ -338,6 +343,9 @@ fun ProfileEditScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
+                        }
+                        Button(onClick = pickBackgroundImage) {
+                            Text(text = stringResource(Res.string.profile_choose_from_gallery))
                         }
                     }
                 }
@@ -388,7 +396,7 @@ fun ProfileEditScreen(
                     } catch (_: Exception) {
                         false
                     }
-                    currentProfile?.profileIndex == 1 && (platformAvailable || biometricConfigured)
+                    platformAvailable || biometricConfigured
                 }
 
                 NuvioSurfaceCard {
@@ -673,8 +681,10 @@ private fun ProfileIdentityCard(
     isNew: Boolean,
     profileIndex: Int?,
     usesPrimaryAddons: Boolean,
+    usesPrimaryPlugins: Boolean,
     onNameChange: (String) -> Unit,
     onUsesPrimaryAddonsChange: (Boolean) -> Unit,
+    onUsesPrimaryPluginsChange: (Boolean) -> Unit,
     selectedAvatar: AvatarCatalogItem?,
     customAvatarUrl: String?,
     selectedBackgroundId: String? = null,
@@ -858,6 +868,12 @@ private fun ProfileIdentityCard(
                 description = stringResource(Res.string.profile_use_primary_addons_description),
                 checked = usesPrimaryAddons,
                 onCheckedChange = onUsesPrimaryAddonsChange,
+            )
+            ProfileOptionRow(
+                title = stringResource(Res.string.profile_use_primary_plugins),
+                description = stringResource(Res.string.profile_use_primary_plugins_description),
+                checked = usesPrimaryPlugins,
+                onCheckedChange = onUsesPrimaryPluginsChange,
             )
         }
     }

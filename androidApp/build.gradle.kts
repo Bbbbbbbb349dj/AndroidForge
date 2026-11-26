@@ -29,14 +29,24 @@ fun envOrLocalProperty(key: String): String? =
     providers.environmentVariable(key).orNull?.trim()?.takeIf { it.isNotBlank() }
         ?: localProps.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
 
+val keystoreProps = Properties().apply {
+    val ksFile = rootProject.file("keystore.properties")
+    if (ksFile.exists()) ksFile.inputStream().use { load(it) }
+}
+fun signingProperty(envKey: String, propKey: String): String? =
+    envOrLocalProperty(envKey)
+        ?: keystoreProps.getProperty(propKey)?.trim()?.takeIf { it.isNotBlank() }
+
 val defaultKeystore = rootProject.file("keystore/nuvio-enhanced.jks")
 val hasDefaultKeystore = defaultKeystore.exists()
 
-val releaseStoreFile = envOrLocalProperty("NUVIO_RELEASE_STORE_FILE")
-val releaseStorePassword = envOrLocalProperty("NUVIO_RELEASE_STORE_PASSWORD")
-val releaseKeyAlias = envOrLocalProperty("NUVIO_RELEASE_KEY_ALIAS")
-val releaseKeyPassword = envOrLocalProperty("NUVIO_RELEASE_KEY_PASSWORD")
-val releaseKeystore = releaseStoreFile?.let(rootProject::file)
+val releaseStoreFile = signingProperty("NUVIO_RELEASE_STORE_FILE", "storeFile")
+val releaseStorePassword = signingProperty("NUVIO_RELEASE_STORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingProperty("NUVIO_RELEASE_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingProperty("NUVIO_RELEASE_KEY_PASSWORD", "keyPassword") ?: releaseStorePassword
+val releaseKeystore = releaseStoreFile
+    ?.let { path -> File(path).let { if (it.isAbsolute) it else rootProject.file(path) } }
+    ?.takeIf { it.isFile }
     ?: if (hasDefaultKeystore) defaultKeystore else null
 
 val sentryAuthToken = envOrLocalProperty("SENTRY_AUTH_TOKEN")
@@ -67,6 +77,9 @@ android {
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -263,6 +276,7 @@ sentry {
 dependencies {
     implementation(project(":composeApp"))
     implementation(libs.androidx.appcompat)
+    implementation("com.google.android.material:material:1.12.0")
     implementation(libs.compose.runtime)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     debugImplementation(libs.compose.uiTooling)

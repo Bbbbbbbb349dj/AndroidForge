@@ -36,6 +36,17 @@ data class ThemeColorPalette(
     val background: Color = Color(0xFF0D0D0D),
     val backgroundElevated: Color = Color(0xFF1A1A1A),
     val backgroundCard: Color = Color(0xFF242424),
+    val isLight: Boolean = false,
+    val textPrimary: Color = Color(0xFFF5F7F8),
+    val textSecondary: Color = Color(0xFFB8BEC5),
+    val textMuted: Color = Color(0xFF969CA3),
+    val borderDefault: Color = Color(0xFF252A2A),
+    val borderStrong: Color = Color(0xFF3A4040),
+    val errorColor: Color = Color(0xFFE36A8A),
+    val onErrorColor: Color = Color(0xFFFCE5EC),
+    val warningColor: Color = Color(0xFFFFC857),
+    val successColor: Color = Color(0xFF66BB6A),
+    val infoColor: Color = Color(0xFF42A5F5),
 )
 
 fun ThemeColorPalette.accentBrush(): Brush = when {
@@ -276,6 +287,7 @@ object ThemeColors {
         theme: AppTheme,
         customFirst: Color = ThemeAccentColor.PINK.color,
         customSecond: Color = ThemeAccentColor.CYAN.color,
+        catppuccinAccent: CatppuccinAccent = CatppuccinPalettes.activeAccent,
     ): ThemeColorPalette {
         val accessibleFirst = customFirst.toAccessibleAccent()
         val accessibleSecond = customSecond.toAccessibleAccent()
@@ -305,6 +317,10 @@ object ThemeColors {
             AppTheme.ROSE_GOLD -> RoseGold
             AppTheme.ARCTIC_BLUE -> ArcticBlue
             AppTheme.GRAPHITE -> Graphite
+            AppTheme.CATPPUCCIN_LATTE -> CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.LATTE, catppuccinAccent)
+            AppTheme.CATPPUCCIN_FRAPPE -> CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.FRAPPE, catppuccinAccent)
+            AppTheme.CATPPUCCIN_MACCHIATO -> CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.MACCHIATO, catppuccinAccent)
+            AppTheme.CATPPUCCIN_MOCHA -> CatppuccinPalettes.buildThemeColorPalette(CatppuccinFlavor.MOCHA, catppuccinAccent)
         }
     }
 

@@ -436,6 +436,7 @@ internal fun PlayerScreenRuntime.flushWatchProgress(
         session = playbackSession,
         snapshot = playbackSnapshot,
     )
+    autoCategorizeFromPlayback(playbackSession, playbackSnapshot)
 }
 
 internal fun PlayerScreenRuntime.scheduleProgressSyncAfterSeek() {
@@ -539,11 +540,28 @@ internal fun PlayerScreenRuntime.switchPlaybackEngine() {
  */
 internal fun PlayerScreenRuntime.maybeFailoverPlaybackEngine(
     resolvedAutoEngine: AndroidPlaybackEngine?,
+    message: String? = null,
 ): Boolean {
     if (!playerSettingsUiState.autoSwitchPlaybackEngineOnError) return false
     if (engineFailoverDisarmed) return false
     val sourceIdentity = activePlaybackIdentity
     if (engineFailoverSourceIdentity == sourceIdentity) return false
+    // v1.20 Player Core v2: only codec/decoder-class failures may switch engines — and that
+    // INCLUDES local files (a local MKV failing in libgav1 is fixed by Libmpv/ffmpeg, so a
+    // blanket file:// block would strand the user on an unplayable local file). Link/HTTP
+    // errors never reload the engine: refresh/fallback handle those first, and local files
+    // have nothing to refresh. Callers passing no message keep legacy behaviour (host tests).
+    if (message != null) {
+        val looksLikeCodecFailure =
+            Regex(
+                "decod|codec|renderer|MediaCodec|OMX|c2\\.|libgav1|unsupported (video|audio|mime)|video format|format not supported",
+                RegexOption.IGNORE_CASE,
+            ).containsMatchIn(message)
+        if (!looksLikeCodecFailure) return false
+    } else {
+        val failoverSourceUrl = activeSourceUrl
+        if (failoverSourceUrl.startsWith("file:") || failoverSourceUrl.startsWith("content:")) return false
+    }
 
     val current = playerController?.playbackEngine
         ?: playbackEngineOverride

@@ -5,9 +5,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 
+// Nuvio Enhanced: one process-wide tracker so speeds survive recomposition and
+// screen changes instead of restarting from scratch in every fresh `remember`.
+private val sharedDownloadSpeedTracker = DownloadSpeedTracker()
+
 @Composable
 internal fun rememberDownloadSpeeds(items: List<DownloadItem>): Map<String, Long> {
-    val tracker = remember { DownloadSpeedTracker() }
+    val tracker = sharedDownloadSpeedTracker
     LaunchedEffect(items) {
         tracker.update(items)
     }

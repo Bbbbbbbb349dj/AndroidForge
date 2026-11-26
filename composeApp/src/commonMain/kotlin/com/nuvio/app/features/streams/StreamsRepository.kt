@@ -19,6 +19,7 @@ import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.pluginContentId
 import com.nuvio.app.features.plugins.PluginsUiState
+import com.nuvio.app.features.cloudstream.CloudStreamLiveLinkHub
 import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.cloudstream.parseCloudStreamRouteId
 import com.nuvio.app.features.servers.ServerStreams
@@ -47,8 +48,8 @@ object StreamsRepository {
     private val _uiState = MutableStateFlow(StreamsUiState())
     val uiState: StateFlow<StreamsUiState> = _uiState.asStateFlow()
 
-    private val cloudStreamSemaphore = Semaphore(4)
-    private const val STREAM_PROVIDER_TIMEOUT_MS = 35_000L
+    private val cloudStreamSemaphore = Semaphore(8)
+    private const val STREAM_PROVIDER_TIMEOUT_MS = 90_000L
 
     private var activeJob: Job? = null
     private var activeRequestKey: String? = null
@@ -263,22 +264,43 @@ object StreamsRepository {
                 showDirectAutoPlayOverlay = isDirectAutoPlayFlow,
             )
             activeJob = scope.launch {
-                val result = runCatching {
-                    withTimeoutOrNull(STREAM_PROVIDER_TIMEOUT_MS) {
-                        CloudStreamRepository.loadLinks(cloudStreamRoute.providerId, cloudStreamRoute.data)
-                    } ?: error("$providerName timed out")
-                }.fold(
-                    onSuccess = { it },
-                    onFailure = { Result.failure(it) },
+                val result = loadCloudStreamRouteProgressive(
+                    providerId = cloudStreamRoute.providerId,
+                    providerName = providerName,
+                    linkData = cloudStreamRoute.data,
+                    timeoutMs = STREAM_PROVIDER_TIMEOUT_MS,
+                    forceRefresh = forceRefresh,
+                    onProgress = { partialStreams ->
+                        if (activeRequestKey != requestKey || partialStreams.isEmpty()) return@loadCloudStreamRouteProgressive
+                        val orderedPartial = partialStreams.sortedForGroupedDisplay()
+                        val presentedPartial = StreamBadgePresentation.apply(
+                            groups = listOf(
+                                AddonStreamGroup(
+                                    addonName = providerName,
+                                    addonId = providerAddonId,
+                                    streams = orderedPartial,
+                                    isLoading = true,
+                                ),
+                            ),
+                            rules = streamBadgeRules,
+                        )
+                        _uiState.update { current ->
+                            if (current.requestToken != requestToken) return@update current
+                            val existing = current.groups.firstOrNull { it.addonId == providerAddonId }
+                            if (existing != null && !existing.isLoading) return@update current
+                            current.copy(
+                                groups = presentedPartial,
+                                activeAddonIds = setOf(providerAddonId),
+                                isAnyLoading = true,
+                                emptyStateReason = null,
+                            )
+                        }
+                    },
                 )
                 if (activeRequestKey != requestKey) return@launch
                 result.fold(
-                    onSuccess = { sources ->
-                        val streams = cloudStreamSourcesToStreamItems(
-                            providerId = cloudStreamRoute.providerId,
-                            providerName = providerName,
-                            sources = sources,
-                        )
+                    onSuccess = { rawStreams ->
+                        val streams = rawStreams.sortedForGroupedDisplay()
                         val presentedGroup = StreamBadgePresentation.apply(
                             groups = listOf(
                                 AddonStreamGroup(
@@ -601,6 +623,33 @@ object StreamsRepository {
                 ).firstOrNull() ?: badgeGroup
             }
 
+            fun publishPartialCloudStreamGroup(partialGroup: AddonStreamGroup) {
+                if (partialGroup.streams.isEmpty()) return
+                val presented = presentStreamGroup(partialGroup)
+                _uiState.update { current ->
+                    val target = current.groups.firstOrNull { it.addonId == presented.addonId }
+                    if (target != null && !target.isLoading) return@update current
+                    val updated = StreamAutoPlaySelector.orderAddonStreams(
+                        groups = current.groups.map { g ->
+                            if (g.addonId == presented.addonId) {
+                                presented.copy(isLoading = true, error = null)
+                            } else {
+                                g
+                            }
+                        },
+                        installedOrder = installedAddonOrder,
+                        preferredGroupIds = preferredGroupIds,
+                    )
+                    val anyLoading = updated.any { it.isLoading }
+                    current.copy(
+                        groups = updated,
+                        isAnyLoading = anyLoading,
+                        emptyStateReason = updated.toEmptyStateReason(anyLoading),
+                    )
+                }
+                updateAutoPlayAfterStreamsChanged()
+            }
+
             fun publishAddonGroup(group: AddonStreamGroup) {
                 _uiState.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -817,6 +866,17 @@ object StreamsRepository {
                             resolveCloudStreamProviderStreams(
                                 providerGroup = providerGroup,
                                 request = cloudStreamSearchRequest,
+                                forceRefresh = forceRefresh,
+                                onProgress = { partialStreams ->
+                                    publishPartialCloudStreamGroup(
+                                        AddonStreamGroup(
+                                            addonName = providerGroup.addonName,
+                                            addonId = providerGroup.addonId,
+                                            streams = partialStreams.sortedForGroupedDisplay(),
+                                            isLoading = true,
+                                        ),
+                                    )
+                                },
                             )
                         }
                     } ?: AddonStreamGroup(
@@ -965,6 +1025,7 @@ object StreamsRepository {
         PluginRepository.setLocalPluginSearchPaused(true)
         activeJob?.cancel()
         activeJob = null
+        CloudStreamLiveLinkHub.notifyPlaybackStarted()
         _uiState.update { current ->
             if (!current.isAnyLoading && current.groups.none { it.isLoading }) {
                 current
@@ -989,6 +1050,7 @@ object StreamsRepository {
         PluginRepository.setLocalPluginSearchPaused(true)
         activeJob?.cancel()
         activeJob = null
+        CloudStreamLiveLinkHub.notifyPlaybackStarted()
         activeRequestKey = null
         _uiState.value = StreamsUiState()
     }

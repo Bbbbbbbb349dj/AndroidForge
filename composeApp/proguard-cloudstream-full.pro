@@ -56,3 +56,30 @@
 -dontwarn javax.script.**
 -dontwarn jdk.dynalink.**
 
+
+# Keep AndroidX & Material UI classes used dynamically by CloudStream .cs3 settings dialogs/fragments
+-keep class androidx.appcompat.app.** { *; }
+-keep class androidx.appcompat.widget.** { *; }
+-keep class androidx.fragment.app.** { *; }
+-keep class androidx.recyclerview.widget.** { *; }
+-keep class androidx.constraintlayout.widget.** { *; }
+-keep class androidx.cardview.widget.** { *; }
+-keep class androidx.coordinatorlayout.widget.** { *; }
+-keep class androidx.preference.** { *; }
+-keep class com.google.android.material.** { *; }
+-dontwarn com.google.android.material.**
+
+# Keep Ksoup, Gson, and Jetpack Compose runtime/UI/Material3 APIs referenced by closed-source .cs3 plugins (e.g. StreamPlay)
+-keep class com.fleeksoft.ksoup.** { *; }
+-dontwarn com.fleeksoft.ksoup.**
+-keep class com.google.gson.** { *; }
+-dontwarn com.google.gson.**
+-keep class androidx.compose.** { *; }
+-dontwarn androidx.compose.**
+-keep class androidx.activity.compose.** { *; }
+-keep class androidx.lifecycle.** { *; }
+-keep class androidx.savedstate.** { *; }
+-keep class androidx.core.view.** { *; }
+-keep class androidx.core.graphics.Insets { *; }
+-keep class androidx.annotation.** { *; }
+-keep class org.jetbrains.annotations.** { *; }

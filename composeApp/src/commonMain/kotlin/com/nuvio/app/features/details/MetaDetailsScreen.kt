@@ -142,7 +142,10 @@ import com.nuvio.app.features.details.components.TabletDetailHeroActions
 import com.nuvio.app.features.details.components.TrailerPlayerPopup
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
+import com.nuvio.app.features.library.DuplicateLibraryResolution
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.LocalLibraryCategory
+import com.nuvio.app.features.library.localCategorySummaryLabel
 import com.nuvio.app.features.library.PendingTrackingMembershipRemoval
 import com.nuvio.app.features.library.TrackingMembershipRemovalConfirmationHost
 import com.nuvio.app.features.library.executeTrackingMembershipOperation
@@ -370,9 +373,10 @@ fun MetaDetailsScreen(
     }
 
     val shouldShowComments = commentsEnabled &&
-        traktAuthUiState.mode == TraktConnectionMode.CONNECTED &&
         displayedMeta != null &&
-        displayedMeta.type.lowercase().let { it == "movie" || it == "series" || it == "show" || it == "tv" }
+        displayedMeta.type.lowercase().let {
+            it == "movie" || it == "series" || it == "show" || it == "tv" || it == "anime"
+        }
 
     LaunchedEffect(displayedMeta?.id) {
         deferredMetaWorkAllowed = false
@@ -522,6 +526,15 @@ fun MetaDetailsScreen(
                 ) {
                     LibraryRepository.isSaved(meta.id, meta.type)
                 }
+                val savedCategoryLabel = remember(
+                    libraryUiState.items,
+                    libraryUiState.sections,
+                    libraryUiState.sourceMode,
+                    meta.id,
+                    meta.type,
+                ) {
+                    LibraryRepository.savedItem(meta.id, meta.type)?.localCategorySummaryLabel()
+                }
                 val isWatched = remember(watchedUiState.watchedKeys, fullyWatchedSeriesKeys, metaPreview) {
                     WatchingState.isPosterWatched(
                         watchedKeys = watchedUiState.watchedKeys,
@@ -532,8 +545,12 @@ fun MetaDetailsScreen(
                 val openLibraryListPicker = remember(meta) {
                     {
                         val libraryItem = meta.toLibraryItem(savedAtEpochMs = 0L)
-                        pickerTabs = LibraryRepository.libraryListTabs(libraryItem)
-                        pickerMembership = pickerTabs.associate { it.key to false }
+                        val initialTabs = LibraryRepository.libraryListTabs(libraryItem)
+                        pickerTabs = initialTabs
+                        val alreadyInLocal = LibraryRepository.isSaved(meta.id, meta.type)
+                        pickerMembership = initialTabs.associate { tab ->
+                            tab.key to (!alreadyInLocal && tab.key == LocalLibraryCategory.PLAN_TO_WATCH.key)
+                        }
                         pickerPending = true
                         pickerError = null
                         showLibraryListPicker = true
@@ -541,9 +558,15 @@ fun MetaDetailsScreen(
                             runCatching {
                                 val snapshot = LibraryRepository.getMembershipSnapshot(libraryItem)
                                 val tabs = LibraryRepository.libraryListTabs(libraryItem)
+                                val hasAnyExisting = tabs.any { snapshot[it.key] == true }
                                 pickerTabs = tabs
                                 pickerMembership = tabs.associate { tab ->
-                                    tab.key to (snapshot[tab.key] == true)
+                                    val checked = if (hasAnyExisting) {
+                                        snapshot[tab.key] == true
+                                    } else {
+                                        tab.key == LocalLibraryCategory.PLAN_TO_WATCH.key
+                                    }
+                                    tab.key to checked
                                 }
                             }.onFailure { error ->
                                 pickerError = error.message ?: getString(Res.string.trakt_lists_load_failed)
@@ -1278,6 +1301,7 @@ fun MetaDetailsScreen(
                                                             playLabel = playButtonLabel,
                                                             playEnabled = isPrimaryPlayEnabled,
                                                             isSaved = isSaved,
+                                                            savedCategoryLabel = savedCategoryLabel,
                                                             isWatched = isWatched,
                                                             shuffleEnabled = shuffleSettings.enabled,
                                                             landscape = isTabletLandscape,
@@ -1285,7 +1309,7 @@ fun MetaDetailsScreen(
                                                             onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,
                                                             onShuffleClick = onShuffleClick,
                                                             onWatchedClick = toggleWatched,
-                                                            onSaveClick = toggleSaved,
+                                                            onSaveClick = openLibraryListPicker,
                                                             onSaveLongClick = openLibraryListPicker,
                                                             onDownloadClick = onDownloadClick,
                                                             onPlayFromStartClick = onPlayFromStartClick,
@@ -1346,8 +1370,9 @@ fun MetaDetailsScreen(
                                         onShuffleClick = onShuffleClick,
                                         shuffleEnabled = shuffleSettings.enabled,
                                         onPrimaryPlayLongClick = onPrimaryPlayLongClick,
-                                        onSaveClick = toggleSaved,
+                                        onSaveClick = openLibraryListPicker,
                                         onSaveLongClick = openLibraryListPicker,
+                                        savedCategoryLabel = savedCategoryLabel,
                                         onWatchedClick = toggleWatched,
                                         userRating = titleUserRating,
                                         onRateClick = openTitleRating,
@@ -1404,11 +1429,8 @@ fun MetaDetailsScreen(
                                         fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
                                         blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
                                         onEpisodeClick = onEpisodePlayClick,
-                                        onEpisodeLongPress = { video ->
-                                            selectedEpisodeZoomAnchor = PosterZoomAnchorHolder.consume()
-                                            selectedEpisodeForActions = video
-                                        },
-                                        onSeasonLongPress = { season -> selectedSeasonForActions = season },
+                                        onEpisodeLongPress = { _ -> },
+                                        onSeasonLongPress = { _ -> },
                                         onOpenMeta = onOpenMeta,
                                         onOpenMoreLikeThis = onOpenMoreLikeThis,
                                         onCastClick = onCastClick,
@@ -1423,43 +1445,6 @@ fun MetaDetailsScreen(
                                         leadingItemCount = 1,
                                         stickyBackground = heroGradientColor ?: colorScheme.background,
                                     )
-
-                                    if (
-                                        !enhancedSettingsUiState.nuvioReadEnabled &&
-                                        metaScreenSettingsUiState.showRatingMap &&
-                                        metaScreenSettingsUiState.episodeRatingsVisibility.showRatings &&
-                                        hasEpisodes &&
-                                        meta.hasEpisodeRatingMap()
-                                    ) {
-                                        item(key = "detail-rating-map") {
-                                            val ratingMapWatchedKeys = watchedUiState.watchedKeys
-                                            val isRatingMapEpisodeWatched = remember(meta, ratingMapWatchedKeys, progressByVideoId) {
-                                                { episode: MetaVideo ->
-                                                    isEpisodeWatchedForActions(
-                                                        meta = meta,
-                                                        episode = episode,
-                                                        watchedKeys = ratingMapWatchedKeys,
-                                                        progressByVideoId = progressByVideoId,
-                                                    )
-                                                }
-                                            }
-                                            DetailSectionContainer(
-                                                horizontalPadding = contentHorizontalPadding,
-                                                contentMaxWidth = if (isTablet && !useTabletLayout) contentMaxWidth else Dp.Unspecified,
-                                            ) {
-                                                DetailEpisodeRatingMap(
-                                                    meta = meta,
-                                                    episodeRatingsVisibility = metaScreenSettingsUiState.episodeRatingsVisibility,
-                                                    isEpisodeWatched = isRatingMapEpisodeWatched,
-                                                    onEpisodeClick = onEpisodePlayClick,
-                                                    onEpisodeLongPress = { video ->
-                                                        selectedEpisodeZoomAnchor = null
-                                                        selectedEpisodeForActions = video
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
 
                                     item(key = "detail-bottom-spacer") {
                                         Spacer(modifier = Modifier.height(nuvioSafeBottomPadding(32.dp)))
@@ -1500,7 +1485,7 @@ fun MetaDetailsScreen(
                             isHeroCollapsed = isHeroCollapsed,
                             backgroundColor = dominantBackdropColor.takeIf { dominantColorEnabled },
                             onBack = onBackFromDetails,
-                            onToggleSaved = toggleSaved,
+                            onToggleSaved = openLibraryListPicker,
                             glassBackdrop = cinematicContentBackdrop.takeIf { cinematicGlassEnabled && it.isReady },
                         )
 
@@ -1713,6 +1698,59 @@ fun MetaDetailsScreen(
                             )
                         }
 
+                        val pickerTargetItem = remember(meta) { meta.toLibraryItem(savedAtEpochMs = 0L) }
+                        val submitDetailsMembership: (DuplicateLibraryResolution?) -> Unit = { resolution ->
+                            detailsScope.launch {
+                                pickerPending = true
+                                pickerError = null
+                                val item = meta.toLibraryItem(savedAtEpochMs = 0L)
+                                val desiredMembership = pickerMembership.toMap()
+                                val applyMembership: suspend (Set<TrackingProviderId>) ->
+                                    TrackingMembershipApplyResult = { confirmedProviders ->
+                                    LibraryRepository.applyMembershipChanges(
+                                        item = item,
+                                        desiredMembership = desiredMembership,
+                                        confirmedRemovalProviders = confirmedProviders,
+                                        duplicateResolution = resolution,
+                                    )
+                                }
+                                val completeMembershipUpdate: suspend (TrackingMembershipApplyResult) -> Unit = { result ->
+                                    showTrackingMembershipRewriteFeedback(result)
+                                    val chosen = LocalLibraryCategory.entries
+                                        .filter { desiredMembership[it.key] == true }
+                                        .joinToString(", ") { it.label }
+                                    if (chosen.isNotBlank()) {
+                                        NuvioToastController.show("Saved to $chosen")
+                                    } else {
+                                        NuvioToastController.show("Removed from Library")
+                                    }
+                                    showLibraryListPicker = false
+                                }
+                                executeTrackingMembershipOperation(
+                                    operation = { applyMembership(emptySet()) },
+                                    onSuccess = { result ->
+                                        if (result.requiresRemovalConfirmation) {
+                                            pendingTrackingRemoval = PendingTrackingMembershipRemoval(
+                                                itemTitle = item.name,
+                                                confirmations = result.requiredRemovalConfirmations,
+                                                retry = applyMembership,
+                                                onApplied = completeMembershipUpdate,
+                                                onFailure = { error ->
+                                                    pickerError = error.message
+                                                        ?: trackingListsUpdateFailedMessage
+                                                },
+                                            )
+                                        } else {
+                                            completeMembershipUpdate(result)
+                                        }
+                                    },
+                                    onFailure = { error ->
+                                        pickerError = error.message ?: trackingListsUpdateFailedMessage
+                                    },
+                                )
+                                pickerPending = false
+                            }
+                        }
                         TrackingListPickerDialog(
                             visible = showLibraryListPicker,
                             title = meta.name,
@@ -1720,6 +1758,7 @@ fun MetaDetailsScreen(
                             membership = pickerMembership,
                             isPending = pickerPending,
                             errorMessage = pickerError,
+                            targetItem = pickerTargetItem,
                             onToggle = { listKey ->
                                 pickerMembership = toggleTrackingLibraryMembership(
                                     tabs = pickerTabs,
@@ -1732,48 +1771,11 @@ fun MetaDetailsScreen(
                                     showLibraryListPicker = false
                                 }
                             },
-                            onSave = {
-                                detailsScope.launch {
-                                    pickerPending = true
-                                    pickerError = null
-                                    val item = meta.toLibraryItem(savedAtEpochMs = 0L)
-                                    val desiredMembership = pickerMembership.toMap()
-                                    val applyMembership: suspend (Set<TrackingProviderId>) ->
-                                        TrackingMembershipApplyResult = { confirmedProviders ->
-                                        LibraryRepository.applyMembershipChanges(
-                                            item = item,
-                                            desiredMembership = desiredMembership,
-                                            confirmedRemovalProviders = confirmedProviders,
-                                        )
-                                    }
-                                    val completeMembershipUpdate: suspend (TrackingMembershipApplyResult) -> Unit = { result ->
-                                        showTrackingMembershipRewriteFeedback(result)
-                                        showLibraryListPicker = false
-                                    }
-                                    executeTrackingMembershipOperation(
-                                        operation = { applyMembership(emptySet()) },
-                                        onSuccess = { result ->
-                                            if (result.requiresRemovalConfirmation) {
-                                                pendingTrackingRemoval = PendingTrackingMembershipRemoval(
-                                                    itemTitle = item.name,
-                                                    confirmations = result.requiredRemovalConfirmations,
-                                                    retry = applyMembership,
-                                                    onApplied = completeMembershipUpdate,
-                                                    onFailure = { error ->
-                                                        pickerError = error.message
-                                                            ?: trackingListsUpdateFailedMessage
-                                                    },
-                                                )
-                                            } else {
-                                                completeMembershipUpdate(result)
-                                            }
-                                        },
-                                        onFailure = { error ->
-                                            pickerError = error.message ?: trackingListsUpdateFailedMessage
-                                        },
-                                    )
-                                    pickerPending = false
-                                }
+                            onSave = { submitDetailsMembership(null) },
+                            onSaveWithResolution = submitDetailsMembership,
+                            onRemoveFromLibrary = {
+                                pickerMembership = pickerMembership.mapValues { false }
+                                submitDetailsMembership(null)
                             },
                         )
 
@@ -2151,6 +2153,7 @@ private fun LazyListScope.configuredMetaSectionItems(
     onPrimaryPlayLongClick: (() -> Unit)?,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
+    savedCategoryLabel: String? = null,
     onWatchedClick: () -> Unit,
     userRating: Int? = null,
     onRateClick: (() -> Unit)? = null,
@@ -2246,6 +2249,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     onPrimaryPlayLongClick = onPrimaryPlayLongClick,
                     onSaveClick = onSaveClick,
                     onSaveLongClick = onSaveLongClick,
+                    savedCategoryLabel = savedCategoryLabel,
                     onWatchedClick = onWatchedClick,
                     userRating = userRating,
                     onRateClick = onRateClick,
@@ -2316,9 +2320,44 @@ private fun LazyListScope.configuredMetaSectionItems(
         return emitted > 0
     }
 
+    fun ratingMapAvailable(): Boolean =
+        settings.showRatingMap &&
+            settings.episodeRatingsVisibility.showRatings &&
+            hasEpisodes &&
+            meta.hasEpisodeRatingMap()
+
+    fun addRatingMapItem() {
+        item(key = "detail-rating-map") {
+            val ratingMapWatchedKeys = watchedKeys
+            val isRatingMapEpisodeWatched = remember(meta, ratingMapWatchedKeys, progressByVideoId) {
+                { episode: MetaVideo ->
+                    isEpisodeWatchedForActions(
+                        meta = meta,
+                        episode = episode,
+                        watchedKeys = ratingMapWatchedKeys,
+                        progressByVideoId = progressByVideoId,
+                    )
+                }
+            }
+            DetailSectionContainer(
+                horizontalPadding = contentHorizontalPadding,
+                contentMaxWidth = contentMaxWidth,
+            ) {
+                DetailEpisodeRatingMap(
+                    meta = meta,
+                    episodeRatingsVisibility = settings.episodeRatingsVisibility,
+                    isEpisodeWatched = isRatingMapEpisodeWatched,
+                    onEpisodeClick = onEpisodeClick,
+                    onEpisodeLongPress = onEpisodeLongPress,
+                )
+            }
+        }
+    }
+
     if (!settings.tabLayout) {
+        var ratingMapTopEmitted = false
         enabledItems
-            .filter { sectionHasContent(it.key) }
+            .filter { it.key != MetaScreenSectionKey.RATING_MAP && sectionHasContent(it.key) }
             .forEach { section ->
                 if (section.key == MetaScreenSectionKey.EPISODES && addLazyEpisodeItems()) return@forEach
                 addSectionItem(
@@ -2326,7 +2365,19 @@ private fun LazyListScope.configuredMetaSectionItems(
                     sectionItems = listOf(section),
                     forceTabLayout = false,
                 )
+                if (
+                    section.key == MetaScreenSectionKey.OVERVIEW &&
+                    settings.ratingMapPosition == RatingMapPosition.TOP &&
+                    ratingMapAvailable()
+                ) {
+                    ratingMapTopEmitted = true
+                    addRatingMapItem()
+                }
             }
+        when (settings.ratingMapPosition) {
+            RatingMapPosition.TOP -> if (!ratingMapTopEmitted && ratingMapAvailable()) addRatingMapItem()
+            RatingMapPosition.BOTTOM -> if (ratingMapAvailable()) addRatingMapItem()
+        }
         return
     }
 
@@ -2410,6 +2461,7 @@ private fun metaSectionHasContent(
         MetaScreenSectionKey.COMMENTS -> shouldShowComments && (isCommentsLoading || comments.isNotEmpty() || !commentsError.isNullOrBlank())
         MetaScreenSectionKey.TRAILERS -> hasTrailersSection
         MetaScreenSectionKey.EPISODES -> hasEpisodes
+        MetaScreenSectionKey.RATING_MAP -> hasEpisodes && meta.hasEpisodeRatingMap()
         MetaScreenSectionKey.DETAILS -> hasAdditionalInfoSection
         MetaScreenSectionKey.COLLECTION -> !hasEpisodes && hasCollectionSection
         MetaScreenSectionKey.MORE_LIKE_THIS -> hasMoreLikeThisSection
@@ -2436,6 +2488,7 @@ private fun ConfiguredMetaSections(
     onPrimaryPlayLongClick: (() -> Unit)?,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
+    savedCategoryLabel: String? = null,
     onWatchedClick: () -> Unit,
     userRating: Int? = null,
     onRateClick: (() -> Unit)? = null,
@@ -2487,6 +2540,10 @@ private fun ConfiguredMetaSections(
             MetaScreenSectionKey.COMMENTS -> shouldShowComments && (isCommentsLoading || comments.isNotEmpty() || !commentsError.isNullOrBlank())
             MetaScreenSectionKey.TRAILERS -> hasTrailersSection
             MetaScreenSectionKey.EPISODES -> hasEpisodes
+            MetaScreenSectionKey.RATING_MAP -> settings.showRatingMap &&
+                settings.episodeRatingsVisibility.showRatings &&
+                hasEpisodes &&
+                meta.hasEpisodeRatingMap()
             MetaScreenSectionKey.DETAILS -> hasAdditionalInfoSection
             MetaScreenSectionKey.COLLECTION -> !hasEpisodes && hasCollectionSection
             MetaScreenSectionKey.MORE_LIKE_THIS -> hasMoreLikeThisSection
@@ -2516,6 +2573,7 @@ private fun ConfiguredMetaSections(
                     iconActionRow = settings.iconActionRow,
                     userRating = userRating,
                     onRateClick = onRateClick,
+                    savedCategoryLabel = savedCategoryLabel,
                 )
             }
             MetaScreenSectionKey.OVERVIEW -> {
@@ -2523,19 +2581,7 @@ private fun ConfiguredMetaSections(
                     meta = meta,
                     showOverallRatings = settings.showOverallRatings,
                     isMdbListActive = isMdbListActive,
-                    showRatingMap = settings.showRatingMap,
                     horizontalScrollPadding = horizontalScrollPadding,
-                    episodeRatingsVisibility = settings.episodeRatingsVisibility,
-                    isEpisodeWatched = { episode ->
-                        isEpisodeWatchedForActions(
-                            meta = meta,
-                            episode = episode,
-                            watchedKeys = watchedKeys,
-                            progressByVideoId = progressByVideoId,
-                        )
-                    },
-                    onEpisodeClick = onEpisodeClick,
-                    onEpisodeLongPress = onEpisodeLongPress,
                 )
             }
             MetaScreenSectionKey.PRODUCTION -> {
@@ -2576,6 +2622,30 @@ private fun ConfiguredMetaSections(
                         onTrailerClick = onTrailerClick,
                         showHeader = showHeader,
                         horizontalScrollPadding = horizontalScrollPadding,
+                    )
+                }
+            }
+            MetaScreenSectionKey.RATING_MAP -> {
+                if (
+                    settings.showRatingMap &&
+                    settings.episodeRatingsVisibility.showRatings &&
+                    hasEpisodes &&
+                    meta.hasEpisodeRatingMap()
+                ) {
+                    val ratingMapWatchedKeys = watchedKeys
+                    DetailEpisodeRatingMap(
+                        meta = meta,
+                        episodeRatingsVisibility = settings.episodeRatingsVisibility,
+                        isEpisodeWatched = { episode ->
+                            isEpisodeWatchedForActions(
+                                meta = meta,
+                                episode = episode,
+                                watchedKeys = ratingMapWatchedKeys,
+                                progressByVideoId = progressByVideoId,
+                            )
+                        },
+                        onEpisodeClick = onEpisodeClick,
+                        onEpisodeLongPress = onEpisodeLongPress,
                     )
                 }
             }

@@ -21,6 +21,7 @@ object CloudStreamRepositoryParser {
             .filter(String::isNotBlank)
             .map { resolveCloudStreamUrl(manifestUrl, it) }
             .distinct()
+            .take(10)
             .toList()
         require(pluginLists.isNotEmpty()) { "CloudStream repository does not contain pluginLists" }
 

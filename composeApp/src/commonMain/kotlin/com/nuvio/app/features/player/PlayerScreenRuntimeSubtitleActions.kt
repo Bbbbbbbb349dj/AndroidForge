@@ -8,10 +8,6 @@ import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import kotlinx.coroutines.launch
 
 internal fun PlayerScreenRuntime.fetchAddonSubtitlesForActiveItem() {
-    if (activeSourceUrl.startsWith("file:") && externalSubtitles.isNotEmpty()) {
-        SubtitleRepository.clear()
-        return
-    }
     // Without a network the addon lookup can only hang; keep the local state untouched.
     if (isNetworkOffline()) return
     val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return

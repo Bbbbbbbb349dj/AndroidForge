@@ -13,6 +13,7 @@ import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.LocalEpisodePlaylistRegistry
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.streams.StreamAutoPlayMode
@@ -77,6 +78,7 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     parentMetaId: String,
     parentMetaType: String,
     contentType: String?,
+    searchTitle: String? = null,
     settings: PlayerSettingsUiState,
     currentStreamBingeGroup: String?,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
@@ -170,8 +172,11 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         PlayerStreamsRepository.loadEpisodeStreams(
             type = type,
             videoId = nextVideo.id,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
             season = nextVideo.season,
             episode = nextVideo.episode,
+            searchTitle = searchTitle,
         )
 
         val smartSettings = SmartStreamSettingsRepository.state.value
@@ -371,8 +376,11 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             PlayerStreamsRepository.loadEpisodeStreams(
                 type = type,
                 videoId = nextVideo.id,
+                parentMetaId = parentMetaId,
+                parentMetaType = parentMetaType,
                 season = nextVideo.season,
                 episode = nextVideo.episode,
+                searchTitle = searchTitle,
                 forceRefresh = true,
             )
         }
@@ -406,11 +414,27 @@ internal fun PlayerScreenRuntime.preloadNextEpisodeSources() {
     nextEpisodePreloadTriggered = true
     nextEpisodePreloadJob?.cancel()
     nextEpisodePreloadJob = scope.launch {
+        if (
+            parentMetaId.startsWith("local_series:") ||
+            parentMetaId.startsWith("local:") ||
+            LocalEpisodePlaylistRegistry.findEpisode(
+                parentMetaId = parentMetaId,
+                activeSourceUrl = activeSourceUrl,
+                videoId = nextEp.videoId,
+                season = nextEp.season,
+                episode = nextEp.episode,
+            ) != null
+        ) {
+            return@launch
+        }
         PlayerStreamsRepository.loadEpisodeStreams(
             type = type,
             videoId = nextEp.videoId,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
             season = nextEp.season,
-            episode = nextEp.episode
+            episode = nextEp.episode,
+            searchTitle = playerMeta?.name ?: title,
         )
     }
 }

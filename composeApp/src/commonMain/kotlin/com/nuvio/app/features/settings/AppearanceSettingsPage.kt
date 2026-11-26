@@ -69,7 +69,16 @@ import com.nuvio.app.core.ui.nuvioKeyboardFocusIndicator
 import com.nuvio.app.core.ui.rememberAnimatedAccentBrush
 import com.nuvio.app.core.ui.toThemeHex
 import com.nuvio.app.isIos
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.core.ui.CatppuccinAccent
+import com.nuvio.app.core.ui.CatppuccinFlavor
+import com.nuvio.app.core.ui.CatppuccinPalettes
+import com.nuvio.app.core.ui.catppuccinFlavorOrNull
+import com.nuvio.app.core.ui.isCatppuccin
+import com.nuvio.app.features.library.LibraryCategoryNavPosition
+import com.nuvio.app.features.library.LibraryDisplaySettingsRepository
 import com.nuvio.app.core.ui.NuvioBottomSheetActionRow
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioStatusModal
@@ -245,6 +254,32 @@ internal fun LazyListScope.appearanceSettingsContent(
                             onColorSelected = ThemeSettingsRepository::setCustomThemeSecondColor,
                         )
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.72f))
+
+                    val enhancedUiState by NuvioEnhancedSettingsRepository.uiState.collectAsStateWithLifecycle()
+                    ThemeSectionLabel("Catppuccin Official")
+                    CatppuccinFlavorShowcase(
+                        selectedTheme = selectedTheme,
+                        selectedAccent = enhancedUiState.catppuccinAccent,
+                        onThemeSelected = onThemeSelected,
+                    )
+
+                    AnimatedVisibility(visible = selectedTheme.isCatppuccin) {
+                        val activeFlavor = selectedTheme.catppuccinFlavorOrNull ?: CatppuccinFlavor.MOCHA
+                        Column(
+                            modifier = Modifier.padding(top = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.72f))
+                            ThemeSectionLabel("Catppuccin Accent (${enhancedUiState.catppuccinAccent.displayName})")
+                            CatppuccinAccentPicker(
+                                flavor = activeFlavor,
+                                selectedAccent = enhancedUiState.catppuccinAccent,
+                                onAccentSelected = NuvioEnhancedSettingsRepository::setCatppuccinAccent,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -294,6 +329,28 @@ internal fun LazyListScope.appearanceSettingsContent(
                     checked = showCatalogAccentEnabled,
                     isTablet = isTablet,
                     onCheckedChange = onShowCatalogAccentToggle,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                val libraryControlsState by remember {
+                    LibraryDisplaySettingsRepository.ensureLoaded()
+                    LibraryDisplaySettingsRepository.uiState
+                }.collectAsStateWithLifecycle()
+                SettingsNavigationRow(
+                    title = "Library Category Bar Position",
+                    description = if (libraryControlsState.categoryNavPosition == LibraryCategoryNavPosition.BOTTOM) {
+                        "Bottom (thumb-friendly above navigation bar)"
+                    } else {
+                        "Top (classic header tabs)"
+                    },
+                    isTablet = isTablet,
+                    onClick = {
+                        val next = if (libraryControlsState.categoryNavPosition == LibraryCategoryNavPosition.TOP) {
+                            LibraryCategoryNavPosition.BOTTOM
+                        } else {
+                            LibraryCategoryNavPosition.TOP
+                        }
+                        LibraryDisplaySettingsRepository.setCategoryNavPosition(next)
+                    },
                 )
                 if (isLiquidGlassAvailable()) {
                     SettingsGroupDivider(isTablet = isTablet)
@@ -1107,4 +1164,155 @@ private fun String.toColorOrNull(): Color? {
         green = hex.substring(2, 4).toInt(16) / 255f,
         blue = hex.substring(4, 6).toInt(16) / 255f,
     )
+}
+
+
+@Composable
+private fun CatppuccinFlavorShowcase(
+    selectedTheme: AppTheme,
+    selectedAccent: CatppuccinAccent,
+    onThemeSelected: (AppTheme) -> Unit,
+) {
+    val entries = listOf(
+        AppTheme.CATPPUCCIN_LATTE to CatppuccinPalettes.Latte,
+        AppTheme.CATPPUCCIN_FRAPPE to CatppuccinPalettes.Frappe,
+        AppTheme.CATPPUCCIN_MACCHIATO to CatppuccinPalettes.Macchiato,
+        AppTheme.CATPPUCCIN_MOCHA to CatppuccinPalettes.Mocha,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        entries.chunked(2).forEach { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                pair.forEach { (theme, flavorTokens) ->
+                    val isSelected = selectedTheme == theme
+                    val accentColor = flavorTokens.colorForAccent(selectedAccent)
+                    val cardShape = RoundedCornerShape(16.dp)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(cardShape)
+                            .background(flavorTokens.base)
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) accentColor else flavorTokens.surface1,
+                                shape = cardShape,
+                            )
+                            .clickable { onThemeSelected(theme) }
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = flavorTokens.flavor.displayName.removePrefix("Catppuccin "),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = flavorTokens.text,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    text = flavorTokens.flavor.subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = flavorTokens.subtext0,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (isSelected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clip(CircleShape)
+                                        .background(accentColor),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = if (accentColor.luminance() > 0.44f) flavorTokens.crust else Color(0xFFEFF1F5),
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            listOf(
+                                flavorTokens.rosewater,
+                                flavorTokens.pink,
+                                flavorTokens.mauve,
+                                flavorTokens.peach,
+                                flavorTokens.green,
+                                flavorTokens.sapphire,
+                            ).forEach { swatch ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clip(CircleShape)
+                                        .background(swatch),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CatppuccinAccentPicker(
+    flavor: CatppuccinFlavor,
+    selectedAccent: CatppuccinAccent,
+    onAccentSelected: (CatppuccinAccent) -> Unit,
+) {
+    val tokens = CatppuccinPalettes.tokensFor(flavor)
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CatppuccinAccent.entries.forEach { accent ->
+            val swatch = tokens.colorForAccent(accent)
+            val isSelected = accent == selectedAccent
+            val pillShape = RoundedCornerShape(999.dp)
+            Row(
+                modifier = Modifier
+                    .clip(pillShape)
+                    .background(
+                        if (isSelected) swatch.copy(alpha = 0.20f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    )
+                    .border(
+                        width = if (isSelected) 1.5.dp else 1.dp,
+                        color = if (isSelected) swatch else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                        shape = pillShape,
+                    )
+                    .clickable { onAccentSelected(accent) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(swatch),
+                )
+                Text(
+                    text = accent.displayName,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }

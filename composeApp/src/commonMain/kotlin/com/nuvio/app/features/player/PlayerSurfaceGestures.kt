@@ -10,6 +10,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntSize
 import com.nuvio.app.core.logging.InAppLogger
+import com.nuvio.app.features.settings.NuvioEnhancedSettingsRepository
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -130,6 +131,8 @@ internal fun Modifier.playerSurfaceDragGestures(
             var verticalGestureActivationDy = 0f
             val horizontalSeekBaselineMs = currentPositionMsState.value
             var horizontalSeekPreviewMs = horizontalSeekBaselineMs
+            var lastMoveUptimeMillis = down.uptimeMillis
+            var smoothedVelocityDpPerSec = 0f
             var lastVolumeTarget: Float? = null
             var interruptedByPinch = false
 
@@ -200,20 +203,40 @@ internal fun Modifier.playerSurfaceDragGestures(
 
                 when (gestureMode) {
                     PlayerGestureMode.HorizontalSeek -> {
-                        val sensitivitySeconds = when {
-                            currentDurationMsState.value >= 3_600_000L -> 120f
-                            currentDurationMsState.value >= 1_800_000L -> 90f
-                            else -> 60f
+                        val pxPerDp = density.coerceAtLeast(1f)
+                        val dtMs = (change.uptimeMillis - lastMoveUptimeMillis).coerceAtLeast(1L)
+                        lastMoveUptimeMillis = change.uptimeMillis
+                        val instantVelDpPerSec = ((delta.x / pxPerDp) / dtMs.toFloat()) * 1000f
+                        smoothedVelocityDpPerSec = if (smoothedVelocityDpPerSec == 0f) {
+                            instantVelDpPerSec
+                        } else {
+                            smoothedVelocityDpPerSec * 0.62f + instantVelDpPerSec * 0.38f
                         }
-                        val previewOffsetMs =
-                            ((totalDx / width) * sensitivitySeconds * 1000f).roundToLong()
-                        val unclampedPreviewMs = horizontalSeekBaselineMs + previewOffsetMs
-                        horizontalSeekPreviewMs = currentDurationMsState.value
-                            .takeIf { it > 0L }
-                            ?.let { durationMs ->
-                                unclampedPreviewMs.coerceIn(0L, durationMs)
-                            }
-                            ?: unclampedPreviewMs.coerceAtLeast(0L)
+
+                        val safeDurationMs = currentDurationMsState.value
+                        val totalDragDp = totalDx / pxPerDp
+                        val surfaceWidthDp = (width / pxPerDp).coerceAtLeast(240f)
+                        val sensitivity = NuvioEnhancedSettingsRepository.uiState.value.swipeSeekSensitivity
+                        val previewOffsetMs = if (safeDurationMs > 0L) {
+                            DynamicSwipeSeekCalculator.calculateDeltaMs(
+                                totalDragDp = totalDragDp,
+                                velocityDpPerSec = smoothedVelocityDpPerSec,
+                                surfaceWidthDp = surfaceWidthDp,
+                                durationMs = safeDurationMs,
+                                sensitivity = sensitivity,
+                            )
+                        } else {
+                            ((totalDx / width) * 60_000f * sensitivity).roundToLong()
+                        }
+                        horizontalSeekPreviewMs = if (safeDurationMs > 0L) {
+                            DynamicSwipeSeekCalculator.clampTargetPositionMs(
+                                startPositionMs = horizontalSeekBaselineMs,
+                                deltaMs = previewOffsetMs,
+                                durationMs = safeDurationMs,
+                            )
+                        } else {
+                            (horizontalSeekBaselineMs + previewOffsetMs).coerceAtLeast(0L)
+                        }
                         showHorizontalSeekPreviewState.value(
                             horizontalSeekPreviewMs,
                             horizontalSeekBaselineMs,

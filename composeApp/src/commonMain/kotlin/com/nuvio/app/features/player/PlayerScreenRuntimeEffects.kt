@@ -17,6 +17,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.nuvio.app.features.addons.AddonPlayerAction
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.downloads.LocalEpisodePlaylistRegistry
+import com.nuvio.app.features.downloads.LocalFolderVideosPlatform
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
 import com.nuvio.app.features.p2p.P2pStreamingEngine
@@ -55,22 +58,53 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         }
     }
 
-    LaunchedEffect(parentMetaType, parentMetaId) {
-        playerMeta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
-        playerMetaVideos = playerMeta?.videos.orEmpty()
-        if (playerMetaVideos.isEmpty()) {
+    val localFolderState by LocalFolderVideosPlatform.state.collectAsStateWithLifecycle()
+    val localPlaylistsState by LocalEpisodePlaylistRegistry.playlistsByKey.collectAsStateWithLifecycle()
+
+    fun mergeLocalPlaylistVideos(remoteVideos: List<MetaVideo>): List<MetaVideo> {
+        val localEps = LocalEpisodePlaylistRegistry.episodesForPlayback(parentMetaId, activeSourceUrl)
+        if (localEps.isEmpty()) return remoteVideos
+        return localEps.map { localEp ->
+            val remoteMatch = remoteVideos.firstOrNull {
+                it.season == localEp.seasonNumber && it.episode == localEp.episodeNumber
+            }
+            MetaVideo(
+                id = localEp.videoId,
+                title = localEp.episodeTitle?.takeIf { it.isNotBlank() }
+                    ?: remoteMatch?.title?.takeIf { it.isNotBlank() }
+                    ?: "Episode ${localEp.episodeNumber}",
+                released = remoteMatch?.released?.takeIf { PlayerNextEpisodeRules.hasEpisodeAired(it) }
+                    ?: "2000-01-01T00:00:00.000Z",
+                thumbnail = localEp.thumbnailUrl ?: remoteMatch?.thumbnail,
+                season = localEp.seasonNumber,
+                episode = localEp.episodeNumber,
+                overview = remoteMatch?.overview,
+            )
+        }
+    }
+
+    LaunchedEffect(parentMetaType, parentMetaId, activeSourceUrl, localFolderState.videos, localPlaylistsState) {
+        val peeked = if (parentMetaId.startsWith("local_series:") || parentMetaId.startsWith("local:")) {
+            null
+        } else {
+            MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+        }
+        if (peeked != null) playerMeta = peeked
+        val initialMerged = mergeLocalPlaylistVideos(playerMeta?.videos.orEmpty())
+        playerMetaVideos = initialMerged
+        if (playerMeta == null && !parentMetaId.startsWith("local_series:") && !parentMetaId.startsWith("local:")) {
             MetaDetailsRepository.fetch(parentMetaType, parentMetaId)?.let { meta ->
                 playerMeta = meta
-                playerMetaVideos = meta.videos
+                playerMetaVideos = mergeLocalPlaylistVideos(meta.videos)
             }
         }
     }
 
-    LaunchedEffect(metaUiState.meta, parentMetaType, parentMetaId) {
+    LaunchedEffect(metaUiState.meta, parentMetaType, parentMetaId, activeSourceUrl) {
         val currentMeta = metaUiState.meta ?: return@LaunchedEffect
         if (currentMeta.type == parentMetaType && currentMeta.id == parentMetaId) {
             playerMeta = currentMeta
-            playerMetaVideos = currentMeta.videos
+            playerMetaVideos = mergeLocalPlaylistVideos(currentMeta.videos)
         }
     }
 
@@ -118,6 +152,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         selectedSubtitleIndex = -1
         selectedAddonSubtitleId = null
         useCustomSubtitles = false
+        showManualRecommendations = false
         showSourcesPanel = false
         showEpisodesPanel = false
         showChaptersPanel = false
@@ -430,6 +465,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         playbackSnapshot.isLoading,
         showParentalGuide,
         showSpeedPanel,
+        showManualRecommendations,
         errorMessage,
     ) {
         if (
@@ -440,6 +476,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
             playbackSnapshot.isLoading ||
             showParentalGuide ||
             showSpeedPanel ||
+            showManualRecommendations ||
             errorMessage != null
         ) {
             return@LaunchedEffect
@@ -784,7 +821,15 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 meta = meta,
                 fallbackItemId = parentMetaId,
                 fallbackItemType = parentMetaType,
-            ).moreLikeThis
+            ).moreLikeThis.ifEmpty {
+                com.nuvio.app.features.tmdb.TmdbMetadataService.fetchMoreLikeThisPage(
+                    itemId = meta.imdbId ?: parentMetaId,
+                    itemType = parentMetaType,
+                    page = 1,
+                    settings = com.nuvio.app.features.tmdb.TmdbSettingsRepository.snapshot()
+                        .copy(enabled = true, useMoreLikeThis = true),
+                ).items
+            }
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()
     }
@@ -911,8 +956,11 @@ internal fun PlayerScreenRuntime.tryRefreshExpiredLinkAfterError(message: String
             PlayerStreamsRepository.loadSources(
                 type = type,
                 videoId = currentVideoId,
+                parentMetaId = parentMetaId,
+                parentMetaType = parentMetaType,
                 season = season,
                 episode = episode,
+                searchTitle = playerMeta?.name ?: title,
                 forceRefresh = true,
             )
 
@@ -943,8 +991,7 @@ internal fun PlayerScreenRuntime.tryRefreshExpiredLinkAfterError(message: String
 
             val candidate = refreshedStream
             if (candidate == null) {
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
+                showErrorUnlessSourceFallback(message)
                 return@launch
             }
             // Debrid links are always requested anew; a prepared or in-memory one may be the expired link.
@@ -959,16 +1006,14 @@ internal fun PlayerScreenRuntime.tryRefreshExpiredLinkAfterError(message: String
             ) {
                 is DirectDebridPlayableResult.Success -> resolved.stream
                 else -> {
-                    errorMessage = message
-                    controlsVisible = !playerControlsLocked
+                    showErrorUnlessSourceFallback(message)
                     return@launch
                 }
             }
 
             val refreshedUrl = stream.playableDirectUrl
             if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
+                showErrorUnlessSourceFallback(message)
                 return@launch
             }
 
@@ -994,6 +1039,11 @@ internal fun PlayerScreenRuntime.tryRefreshExpiredLinkAfterError(message: String
             activeInitialProgressFraction = null
             showSourcesPanel = false
             controlsVisible = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            // Never fail silently: surface through the same fallback gate as other failures.
+            showErrorUnlessSourceFallback(message)
         } finally {
             PlayerStreamsRepository.stopSourcesLoading()
         }
@@ -1011,8 +1061,7 @@ private fun PlayerScreenRuntime.retryServerSourceAfterError(message: String?): B
     credentialRefreshJob = scope.launch {
         val playback = ServerPlayback.fallback(failedUrl)
         if (playback == null) {
-            errorMessage = message
-            controlsVisible = !playerControlsLocked
+            showErrorUnlessSourceFallback(message)
             return@launch
         }
         externalSubtitles = playback.subtitles

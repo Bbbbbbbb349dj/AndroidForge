@@ -21,15 +21,30 @@ internal fun reconcileLibrarySnapshot(
     localItemsByKey: Map<String, LibraryItem>,
     pendingUpsertKeysByKey: Map<String, LibrarySyncKey>,
     pendingDeleteKeysByKey: Map<String, LibrarySyncKey>,
+    localCategoryOverridesByKey: Map<String, List<String>> = emptyMap(),
 ): LibrarySnapshotReconciliation {
-    val serverItemsByKey = serverItems.associateByTo(mutableMapOf()) {
-        libraryItemKey(it.id, it.type)
+    val serverItemsByKey = LinkedHashMap<String, LibraryItem>()
+    serverItems.forEach { serverItem ->
+        val key = libraryItemKey(serverItem.id, serverItem.type)
+        val localExisting = localItemsByKey[key]
+        serverItemsByKey[key] = mergeLibraryItemPreservingLocalMetadata(
+            existing = localExisting,
+            incoming = serverItem,
+            fallbackCategoryKeys = localCategoryOverridesByKey[key],
+        )
     }
     val pendingUpserts = pendingUpsertKeysByKey.toMutableMap()
     val pendingDeletes = pendingDeleteKeysByKey.toMutableMap()
     pendingDeletes.keys.forEach(serverItemsByKey::remove)
     pendingUpserts.keys.forEach { key ->
-        localItemsByKey[key]?.let { item -> serverItemsByKey[key] = item }
+        localItemsByKey[key]?.let { item ->
+            serverItemsByKey[key] = mergeLibraryItemPreservingLocalMetadata(
+                existing = serverItemsByKey[key],
+                incoming = item,
+                explicitListKeys = item.listKeys,
+                fallbackCategoryKeys = localCategoryOverridesByKey[key],
+            )
+        }
     }
 
     return LibrarySnapshotReconciliation(
@@ -46,6 +61,7 @@ internal fun reconcileLibraryDelta(
     pendingUpsertKeysByKey: Map<String, LibrarySyncKey>,
     pendingDeleteKeysByKey: Map<String, LibrarySyncKey>,
     currentCursorEventId: Long,
+    localCategoryOverridesByKey: Map<String, List<String>> = emptyMap(),
 ): LibraryDeltaReconciliation {
     val items = currentItemsByKey.toMutableMap()
 
@@ -54,7 +70,11 @@ internal fun reconcileLibraryDelta(
         if (key in pendingUpsertKeysByKey || key in pendingDeleteKeysByKey) return@forEach
 
         when (event.operation.trim().lowercase()) {
-            "upsert" -> items[key] = event.item
+            "upsert" -> items[key] = mergeLibraryItemPreservingLocalMetadata(
+                existing = items[key],
+                incoming = event.item,
+                fallbackCategoryKeys = localCategoryOverridesByKey[key],
+            )
             "delete" -> items.remove(key)
         }
     }

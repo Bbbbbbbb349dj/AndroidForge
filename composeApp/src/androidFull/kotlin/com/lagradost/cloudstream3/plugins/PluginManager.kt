@@ -42,6 +42,21 @@ object PluginManager {
         onlinePluginData.remove(filePath)
     }
 
+    fun unloadPlugin(absolutePath: String) {
+        val existing = synchronized(this) {
+            loadedPlugins[absolutePath]
+                ?: loadedPlugins.entries.firstOrNull { File(it.key).name == File(absolutePath).name }?.value
+        }
+        runCatching { existing?.beforeUnload() }
+        com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.unloadByFilePath(absolutePath)
+        unregister(absolutePath)
+    }
+
+    suspend fun loadSinglePlugin(context: android.content.Context, pluginPath: String): Boolean {
+        com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.unloadByFilePath(pluginPath)
+        return true
+    }
+
     /** Nuvio owns installed packages; plugins may request deletion but cannot mutate host state. */
     suspend fun deletePlugin(file: File): Boolean = false
 

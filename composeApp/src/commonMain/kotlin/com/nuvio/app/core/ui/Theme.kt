@@ -9,7 +9,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
@@ -41,23 +43,46 @@ val MaterialTheme.appTheme: AppTheme
 private fun contentColorFor(background: Color): Color =
     if (background.luminance() > 0.5f) Color(0xFF111111) else Color(0xFFF5F7F8)
 
-private fun buildColorScheme(palette: ThemeColorPalette, amoled: Boolean = false) = darkColorScheme(
-    primary = palette.secondary,
-    onPrimary = palette.onSecondary,
-    primaryContainer = palette.focusBackground,
-    onPrimaryContainer = contentColorFor(palette.focusBackground),
-    secondary = palette.secondaryVariant,
-    onSecondary = palette.onSecondaryVariant,
-    background = if (amoled) Color.Black else palette.background,
-    onBackground = Color(0xFFF5F7F8),
-    surface = palette.backgroundElevated,
-    onSurface = Color(0xFFF5F7F8),
-    surfaceVariant = palette.backgroundCard,
-    onSurfaceVariant = Color(0xFF969CA3),
-    outline = Color(0xFF252A2A),
-    error = Color(0xFFE36A8A),
-    onError = Color(0xFFFCE5EC),
-)
+internal fun buildColorScheme(palette: ThemeColorPalette, amoled: Boolean = false) =
+    if (palette.isLight) {
+        lightColorScheme(
+            primary = palette.secondary,
+            onPrimary = palette.onSecondary,
+            primaryContainer = palette.focusBackground,
+            onPrimaryContainer = palette.textPrimary,
+            secondary = palette.secondaryVariant,
+            onSecondary = palette.onSecondaryVariant,
+            background = palette.background,
+            onBackground = palette.textPrimary,
+            surface = palette.backgroundElevated,
+            onSurface = palette.textPrimary,
+            surfaceVariant = palette.backgroundCard,
+            onSurfaceVariant = palette.textSecondary,
+            outline = palette.borderDefault,
+            outlineVariant = palette.borderDefault.copy(alpha = 0.6f),
+            error = palette.errorColor,
+            onError = palette.onErrorColor,
+        )
+    } else {
+        darkColorScheme(
+            primary = palette.secondary,
+            onPrimary = palette.onSecondary,
+            primaryContainer = palette.focusBackground,
+            onPrimaryContainer = contentColorFor(palette.focusBackground),
+            secondary = palette.secondaryVariant,
+            onSecondary = palette.onSecondaryVariant,
+            background = if (amoled) Color.Black else palette.background,
+            onBackground = palette.textPrimary,
+            surface = palette.backgroundElevated,
+            onSurface = palette.textPrimary,
+            surfaceVariant = palette.backgroundCard,
+            onSurfaceVariant = palette.textMuted,
+            outline = palette.borderDefault,
+            outlineVariant = palette.borderDefault.copy(alpha = 0.6f),
+            error = palette.errorColor,
+            onError = palette.onErrorColor,
+        )
+    }
 
 private val JetBrainsSans: FontFamily
     @Composable
@@ -200,14 +225,27 @@ fun NuvioTheme(
     customSecond: Color = ThemeAccentColor.CYAN.color,
     amoled: Boolean = false,
     customThemeColors: CustomThemeColors = CustomThemeColors.Default,
+    catppuccinAccent: CatppuccinAccent = CatppuccinPalettes.activeAccent,
     content: @Composable () -> Unit,
 ) {
-    val palette = remember(appTheme, customFirst, customSecond) {
-        ThemeColors.getColorPalette(appTheme, customFirst, customSecond)
+    val palette = remember(appTheme, customFirst, customSecond, catppuccinAccent) {
+        ThemeColors.getColorPalette(
+            theme = appTheme,
+            customFirst = customFirst,
+            customSecond = customSecond,
+            catppuccinAccent = catppuccinAccent,
+        )
     }
     val animatedVisuals = rememberAnimatedThemeVisuals(appTheme, customFirst, customSecond)
     val colorScheme = buildColorScheme(palette, amoled = amoled)
     val tokens = defaultNuvioThemeTokens(palette, amoled = amoled, colorScheme = colorScheme)
+    val rippleConfig = remember(palette.isLight, palette.textPrimary) {
+        RippleConfiguration(color = if (palette.isLight) palette.textPrimary else Color.Black)
+    }
+
+    SideEffect {
+        AppSystemUiController.setLightSystemBars(palette.isLight)
+    }
 
     val density = LocalDensity.current
     CompositionLocalProvider(
@@ -217,7 +255,7 @@ fun NuvioTheme(
         ),
         LocalNuvioThemeTokens provides tokens,
         LocalNuvioTypeScale provides NuvioTypeTokens,
-        LocalRippleConfiguration provides NuvioRippleConfiguration,
+        LocalRippleConfiguration provides rippleConfig,
         LocalAppTheme provides appTheme,
         LocalThemePalette provides palette,
         LocalAnimatedThemeVisuals provides animatedVisuals,

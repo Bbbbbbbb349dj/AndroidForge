@@ -9,6 +9,10 @@ class DownloadsNotificationActionReceiver : BroadcastReceiver() {
         val action = intent?.action ?: return
         val downloadId = intent.getStringExtra(extraDownloadId)?.trim().orEmpty()
         if (downloadId.isBlank()) return
+        if (action == actionCancel) {
+            DownloadsRepository.cancelDownload(downloadId)
+            return
+        }
 
         val scheduler = DownloadsPlatformDownloader.scheduler(context)
         DownloadsLiveStatusPlatform.initialize(context.applicationContext)
@@ -39,6 +43,7 @@ class DownloadsNotificationActionReceiver : BroadcastReceiver() {
     companion object {
         const val actionPause = "com.nuvio.app.downloads.action.PAUSE"
         const val actionResume = "com.nuvio.app.downloads.action.RESUME"
+        const val actionCancel = "com.nuvio.app.downloads.action.CANCEL"
         const val extraDownloadId = "download_id"
     }
 }

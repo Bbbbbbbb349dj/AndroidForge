@@ -21,6 +21,7 @@ enum class MetaScreenSectionKey {
     COMMENTS,
     TRAILERS,
     EPISODES,
+    RATING_MAP,
     DETAILS,
     COLLECTION,
     MORE_LIKE_THIS,
@@ -29,6 +30,25 @@ enum class MetaScreenSectionKey {
     
     val canBeTabbed: Boolean
         get() = this != ACTIONS && this != OVERVIEW
+}
+
+enum class RatingMapPosition {
+    TOP,
+    BOTTOM,
+    ;
+
+    companion object {
+        fun parse(raw: String?): RatingMapPosition? = when (raw?.lowercase()) {
+            "top" -> TOP
+            "bottom" -> BOTTOM
+            else -> null
+        }
+
+        fun persist(position: RatingMapPosition): String = when (position) {
+            TOP -> "top"
+            BOTTOM -> "bottom"
+        }
+    }
 }
 
 data class MetaScreenSectionItem(
@@ -55,6 +75,7 @@ data class MetaScreenSettingsUiState(
     val showOverallRatings: Boolean = true,
     val episodeRatingsVisibility: EpisodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL,
     val showRatingMap: Boolean = true,
+    val ratingMapPosition: RatingMapPosition = RatingMapPosition.BOTTOM,
     val showDownloadAction: Boolean = false,
 )
 
@@ -148,6 +169,8 @@ private data class StoredMetaScreenSettingsPayload(
     val episodeRatingsVisibility: String = EpisodeRatingsVisibility.SHOW_ALL.name,
     @SerialName("show_rating_map")
     val showRatingMap: Boolean = true,
+    @SerialName("rating_map_position")
+    val ratingMapPosition: String? = null,
     @SerialName("show_download_action")
     val showDownloadAction: Boolean = false,
 )
@@ -206,6 +229,11 @@ object MetaScreenSettingsRepository {
             descriptionRes = Res.string.meta_section_episodes_description,
         ),
         MetaScreenSectionDefinition(
+            key = MetaScreenSectionKey.RATING_MAP,
+            titleRes = Res.string.layout_rating_map,
+            descriptionRes = Res.string.layout_rating_map_sub,
+        ),
+        MetaScreenSectionDefinition(
             key = MetaScreenSectionKey.DETAILS,
             titleRes = Res.string.meta_section_details_title,
             descriptionRes = Res.string.meta_section_details_description,
@@ -238,6 +266,7 @@ object MetaScreenSettingsRepository {
     private var showOverallRatings: Boolean = true
     private var episodeRatingsVisibility: EpisodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL
     private var showRatingMap: Boolean = true
+    private var ratingMapPosition: RatingMapPosition = RatingMapPosition.BOTTOM
     private var posterTransitionEnabled: Boolean = false
     private var showDownloadAction: Boolean = false
     private fun localizedString(resource: StringResource): String = runBlocking { getString(resource) }
@@ -269,6 +298,8 @@ object MetaScreenSettingsRepository {
                 showOverallRatings = parsed.showOverallRatings
                 episodeRatingsVisibility = EpisodeRatingsVisibility.parse(parsed.episodeRatingsVisibility)
                 showRatingMap = parsed.showRatingMap
+                ratingMapPosition = RatingMapPosition.parse(parsed.ratingMapPosition)
+                    ?: RatingMapPosition.BOTTOM
                 showDownloadAction = parsed.showDownloadAction
                 preferences = parsed.items.mapNotNull { item ->
                     val key = runCatching { MetaScreenSectionKey.valueOf(item.key) }.getOrNull() ?: return@mapNotNull null
@@ -297,6 +328,7 @@ object MetaScreenSettingsRepository {
         showOverallRatings = true
         episodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL
         showRatingMap = true
+        ratingMapPosition = RatingMapPosition.BOTTOM
         showDownloadAction = false
         _uiState.value = MetaScreenSettingsUiState()
         ensureLoaded()
@@ -405,6 +437,14 @@ object MetaScreenSettingsRepository {
         persist()
     }
 
+    fun setRatingMapPosition(position: RatingMapPosition) {
+        ensureLoaded()
+        if (ratingMapPosition == position) return
+        ratingMapPosition = position
+        publish()
+        persist()
+    }
+
     fun setPosterTransitionEnabled(enabled: Boolean) {
         ensureLoaded()
         posterTransitionEnabled = enabled
@@ -440,6 +480,7 @@ object MetaScreenSettingsRepository {
         showOverallRatings = true
         episodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL
         showRatingMap = true
+        ratingMapPosition = RatingMapPosition.BOTTOM
         showDownloadAction = false
         _uiState.value = MetaScreenSettingsUiState()
     }
@@ -512,6 +553,7 @@ object MetaScreenSettingsRepository {
         showOverallRatings = true
         episodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL
         showRatingMap = true
+        ratingMapPosition = RatingMapPosition.BOTTOM
         showDownloadAction = false
         normalizePreferences()
         publish()
@@ -526,6 +568,26 @@ object MetaScreenSettingsRepository {
             .toMutableList()
         if (fromIndex !in orderedKeys.indices || toIndex !in orderedKeys.indices) return
         if (fromIndex == toIndex) return
+        orderedKeys.add(toIndex, orderedKeys.removeAt(fromIndex))
+        orderedKeys.forEachIndexed { newIndex, sectionKey ->
+            val current = preferences[sectionKey] ?: return@forEachIndexed
+            preferences[sectionKey] = current.copy(order = newIndex)
+        }
+        publish()
+        persist()
+    }
+
+    /** Reorder by section key so filtered editor lists map back to definition order. */
+    fun moveByKey(fromKey: MetaScreenSectionKey, toKey: MetaScreenSectionKey) {
+        ensureLoaded()
+        if (fromKey == toKey) return
+        val orderedKeys = definitions
+            .sortedBy { definition -> preferences[definition.key]?.order ?: Int.MAX_VALUE }
+            .map { it.key }
+            .toMutableList()
+        val fromIndex = orderedKeys.indexOf(fromKey)
+        val toIndex = orderedKeys.indexOf(toKey)
+        if (fromIndex < 0 || toIndex < 0) return
         orderedKeys.add(toIndex, orderedKeys.removeAt(fromIndex))
         orderedKeys.forEachIndexed { newIndex, sectionKey ->
             val current = preferences[sectionKey] ?: return@forEachIndexed
@@ -589,6 +651,7 @@ object MetaScreenSettingsRepository {
             showOverallRatings = showOverallRatings,
             episodeRatingsVisibility = episodeRatingsVisibility,
             showRatingMap = showRatingMap,
+            ratingMapPosition = ratingMapPosition,
             showDownloadAction = showDownloadAction,
         )
     }
@@ -611,6 +674,7 @@ object MetaScreenSettingsRepository {
                     showOverallRatings = showOverallRatings,
                     episodeRatingsVisibility = episodeRatingsVisibility.name,
                     showRatingMap = showRatingMap,
+                    ratingMapPosition = RatingMapPosition.persist(ratingMapPosition),
                     showDownloadAction = showDownloadAction,
                 ),
             ),

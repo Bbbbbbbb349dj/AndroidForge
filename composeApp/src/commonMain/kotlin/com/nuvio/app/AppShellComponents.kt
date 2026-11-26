@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -76,6 +77,7 @@ import com.nuvio.app.features.library.LibraryScreen
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.DownloadsScreen
 import com.nuvio.app.features.livetv.LiveTvChannel
 import com.nuvio.app.features.livetv.LiveTvScreen
 import com.nuvio.app.features.livetv.LiveTvVodPlayback
@@ -100,6 +102,7 @@ import nuvio.composeapp.generated.resources.app_brand_name
 import nuvio.composeapp.generated.resources.compose_nav_home
 import nuvio.composeapp.generated.resources.compose_nav_library
 import nuvio.composeapp.generated.resources.compose_nav_live_tv
+import nuvio.composeapp.generated.resources.compose_settings_root_downloads_title
 import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
@@ -147,6 +150,7 @@ internal data class AppTabRequests(
 )
 
 internal data class AppTabActions(
+    val onHomeSearchClick: (() -> Unit)? = null,
     val onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     val onPosterClick: ((MetaPreview) -> Unit)? = null,
     val onPosterLongClick: ((MetaPreview) -> Unit)? = null,
@@ -158,6 +162,9 @@ internal data class AppTabActions(
     val onConnectCloudClick: (() -> Unit)? = null,
     val onDownloadsClick: () -> Unit = {},
     val onOpenDownload: ((DownloadItem) -> Unit)? = null,
+    val onDownloadDetailsClick: ((DownloadItem) -> Unit)? = null,
+    val onDownloadShowClick: ((String, String) -> Unit)? = null,
+    val onDownloadSettingsClick: (() -> Unit)? = null,
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     val onLiveTvChannelClick: (LiveTvChannel) -> Unit = {},
@@ -205,6 +212,7 @@ internal fun AppTabHost(
                             modifier = Modifier.fillMaxSize(),
                             animateCollectionGifs = state.animateHomeCollectionGifs,
                             scrollToTopRequests = requests.homeScrollToTopRequests,
+                            onSearchClick = actions.onHomeSearchClick,
                             onCatalogClick = actions.onCatalogClick,
                             onPosterClick = actions.onPosterClick,
                             onPosterLongClick = actions.onPosterLongClick,
@@ -249,11 +257,12 @@ internal fun AppTabHost(
             }
 
             AppScreenTab.LiveTv -> {
-                LiveTvScreen(
-                    modifier = Modifier.fillMaxSize(),
-                    scrollToTopRequests = requests.liveTvScrollToTopRequests,
-                    onChannelClick = actions.onLiveTvChannelClick,
-                    onVodClick = actions.onLiveTvVodClick,
+                DownloadsScreen(
+                    onBack = null,
+                    onOpenDownload = { item -> actions.onOpenDownload?.invoke(item) },
+                    onOpenDetails = { item -> actions.onDownloadDetailsClick?.invoke(item) },
+                    onNavigateToShow = actions.onDownloadShowClick,
+                    onOpenSettings = actions.onDownloadSettingsClick,
                 )
             }
 
@@ -370,18 +379,18 @@ internal fun TabletFloatingTopBar(
                 )
                 if (showLiveTv) {
                     TabletTopPillItem(
-                        label = stringResource(Res.string.compose_nav_live_tv),
+                        label = stringResource(Res.string.compose_settings_root_downloads_title),
                         selected = selectedTab == AppScreenTab.LiveTv,
                         onClick = { onTabSelected(AppScreenTab.LiveTv) },
                         icon = {
                             Icon(
-                                imageVector = Icons.Filled.Tv,
-                                contentDescription = stringResource(Res.string.compose_nav_live_tv),
+                                imageVector = Icons.Rounded.Download,
+                                contentDescription = stringResource(Res.string.compose_settings_root_downloads_title),
                                 modifier = Modifier.size(18.dp),
                                 tint = if (selectedTab == AppScreenTab.LiveTv) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                    tokens.colors.textPrimary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                    tokens.colors.textMuted
                                 },
                             )
                         },

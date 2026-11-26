@@ -1,5 +1,8 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.core.ui.CatppuccinAccent
+import com.nuvio.app.core.ui.CatppuccinPalettes
+
 import com.nuvio.app.features.home.HomeReleaseRadarCategory
 import com.nuvio.app.features.home.HomeReleaseRadarItem
 import com.nuvio.app.features.livetv.LiveTvRepository
@@ -43,11 +46,14 @@ internal data class NuvioEnhancedSettingsUiState(
     val seekPreviewEnabled: Boolean = false,
     val subtitleSelectorStyle: NuvioSubtitleSelectorStyle = NuvioSubtitleSelectorStyle.Enhanced,
     val audioSelectorStyle: NuvioAudioSelectorStyle = NuvioAudioSelectorStyle.Enhanced,
-    val subtitleSyncMenuEnabled: Boolean = false,
+    val subtitleSyncMenuEnabled: Boolean = true,
     val playerClockEndTimeEnabled: Boolean = false,
     val randomNextEpisodeEnabled: Boolean = false,
     val androidMemorySafeBufferEnabled: Boolean = false,
-    val nextEpisodeButtonEnabled: Boolean = false,
+    val nextEpisodeButtonEnabled: Boolean = true,
+    val swipeSeekSensitivity: Float = 1.0f,
+    val cloudStreamHomeLayout: CloudStreamHomeLayout = CloudStreamHomeLayout.ROWS,
+    val catppuccinAccent: CatppuccinAccent = CatppuccinAccent.MAUVE,
     val volumeBoostEnabled: Boolean = true,
     val maxVolumeBoostPercent: Int = 200,
     val showContinueWatchingReadyBadge: Boolean = true,
@@ -106,6 +112,12 @@ internal enum class NuvioSubtitleSelectorStyle {
 internal enum class NuvioAudioSelectorStyle {
     Enhanced,
     Nuvio,
+}
+
+@Serializable
+enum class CloudStreamHomeLayout {
+    ROWS,
+    COLUMNS,
 }
 
 internal enum class NuvioEnhancedFeature(
@@ -194,11 +206,14 @@ private data class StoredNuvioEnhancedSettings(
     val seekPreviewEnabled: Boolean = false,
     val subtitleSelectorStyle: NuvioSubtitleSelectorStyle = NuvioSubtitleSelectorStyle.Enhanced,
     val audioSelectorStyle: NuvioAudioSelectorStyle = NuvioAudioSelectorStyle.Enhanced,
-    val subtitleSyncMenuEnabled: Boolean = false,
+    val subtitleSyncMenuEnabled: Boolean = true,
     val playerClockEndTimeEnabled: Boolean = false,
     val randomNextEpisodeEnabled: Boolean = false,
     val androidMemorySafeBufferEnabled: Boolean = false,
-    val nextEpisodeButtonEnabled: Boolean = false,
+    val nextEpisodeButtonEnabled: Boolean = true,
+    val swipeSeekSensitivity: Float = 1.0f,
+    val cloudStreamHomeLayout: CloudStreamHomeLayout = CloudStreamHomeLayout.ROWS,
+    val catppuccinAccent: CatppuccinAccent = CatppuccinAccent.MAUVE,
     val volumeBoostEnabled: Boolean = true,
     val maxVolumeBoostPercent: Int = 200,
     val showContinueWatchingReadyBadge: Boolean = true,
@@ -506,6 +521,20 @@ internal object NuvioEnhancedSettingsRepository {
         persist()
     }
 
+    fun setSwipeSeekSensitivity(sensitivity: Float) = update {
+        copy(swipeSeekSensitivity = sensitivity.coerceIn(0.4f, 2.5f))
+    }
+
+    fun setCloudStreamHomeLayout(layout: CloudStreamHomeLayout) = update {
+        copy(cloudStreamHomeLayout = layout)
+    }
+
+    fun setCatppuccinAccent(accent: CatppuccinAccent) {
+        CatppuccinPalettes.activeAccent = accent
+        update { copy(catppuccinAccent = accent) }
+        ThemeSettingsRepository.refreshActiveThemePalette()
+    }
+
     fun markAllFeaturesSeen() {
         ensureLoaded()
         stored = stored.copy(seenFeatureIds = NuvioEnhancedFeature.entries.mapTo(mutableSetOf()) { it.id })
@@ -523,6 +552,7 @@ internal object NuvioEnhancedSettingsRepository {
     }
 
     private fun publish() {
+        CatppuccinPalettes.activeAccent = stored.catppuccinAccent
         _uiState.value = NuvioEnhancedSettingsUiState(
             enhancedHomeFeaturesEnabled = stored.enhancedHomeFeaturesEnabled,
             nuvioConciergeEnabled = stored.nuvioConciergeEnabled,
@@ -560,6 +590,9 @@ internal object NuvioEnhancedSettingsRepository {
             randomNextEpisodeEnabled = stored.randomNextEpisodeEnabled,
             androidMemorySafeBufferEnabled = stored.androidMemorySafeBufferEnabled,
             nextEpisodeButtonEnabled = stored.nextEpisodeButtonEnabled,
+            swipeSeekSensitivity = stored.swipeSeekSensitivity.coerceIn(0.4f, 2.5f),
+            cloudStreamHomeLayout = stored.cloudStreamHomeLayout,
+            catppuccinAccent = stored.catppuccinAccent,
             volumeBoostEnabled = stored.volumeBoostEnabled,
             maxVolumeBoostPercent = stored.maxVolumeBoostPercent,
             showContinueWatchingReadyBadge = stored.showContinueWatchingReadyBadge,

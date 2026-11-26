@@ -28,8 +28,16 @@ internal object ReleaseSelector {
         .map(ReleaseCandidate::release)
         .toList()
 
+    internal fun versionName(release: GitHubReleaseDto): String? {
+        release.tagName?.takeIf { VersionUtils.parse(it) != null }?.let { return it }
+        val tagVersion = release.tagName?.let {
+            Regex("^nuvio-enhanced-v([0-9]+[.][0-9]+(?:[.][0-9]+)?)-apk$").matchEntire(it)?.groupValues?.get(1)
+        }
+        return tagVersion ?: release.name?.takeIf { VersionUtils.parse(it) != null }
+    }
+
     private fun releaseVersion(release: GitHubReleaseDto): SemanticVersion? =
-        VersionUtils.parse(release.tagName) ?: VersionUtils.parse(release.name)
+        VersionUtils.parse(versionName(release))
 
     private data class ReleaseCandidate(
         val release: GitHubReleaseDto,

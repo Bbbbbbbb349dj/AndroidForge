@@ -8,6 +8,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 internal actual object AppSystemUiController {
     private var activity: Activity? = null
     private var statusBarVisible: Boolean = true
+    private var lightSystemBars: Boolean = false
 
     fun bind(activity: Activity) {
         this.activity = activity
@@ -25,9 +26,16 @@ internal actual object AppSystemUiController {
         apply()
     }
 
+    actual fun setLightSystemBars(isLight: Boolean) {
+        lightSystemBars = isLight
+        apply()
+    }
+
     private fun apply() {
         val window = activity?.window ?: return
         val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = lightSystemBars
+        controller.isAppearanceLightNavigationBars = lightSystemBars
         if (statusBarVisible) {
             controller.show(WindowInsetsCompat.Type.statusBars())
         } else {

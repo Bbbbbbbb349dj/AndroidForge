@@ -209,9 +209,11 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         }
         runtime.BindMiniPlayerEffects(miniPresentation)
         runtime.BindPlayerRuntimeEffects()
+        runtime.BindSourceFallbackStallWatchdog()
         CompositionLocalProvider(
-            LocalLiquidGlassBackdrop provides rememberVideoFrameBackdrop(enabled = !runtime.isMiniPresentation && isLiquidGlassSupported()),
+            LocalLiquidGlassBackdrop provides rememberVideoFrameBackdrop(enabled = !runtime.isMiniPresentation && playerSettingsUiState.playerControlGlassEnabled && isLiquidGlassSupported()),
             LocalPlayerControlGlassEnabled provides playerSettingsUiState.playerControlGlassEnabled,
+            LocalPlayerThemeGlassTint provides androidx.compose.material3.MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
         ) {
             runtime.RenderPlayerRuntimeUi(
                 partyPanelWidth = partyPanelWidth,

@@ -25,6 +25,7 @@ import com.lagradost.cloudstream3.TorrentLoadResponse
 import com.lagradost.cloudstream3.TvSeriesLoadResponse
 import com.lagradost.cloudstream3.TvSeriesSearchResponse
 import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.actions.VideoClickActionHolder
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.Plugin
@@ -132,18 +133,31 @@ internal actual object CloudStreamPlatformRuntime {
     }
 
     actual suspend fun openSettings(plugin: CloudStreamPluginItem): Result<Unit> = runCatching {
-        // Loading through the same path as provider execution ensures Plugin.load() has
-        // populated the extension's openSettings callback and its resources/context.
+        val activity = activityReference?.get()?.takeUnless { it.isFinishing || it.isDestroyed }
+            ?: CommonActivity.activity?.takeUnless { it.isFinishing || it.isDestroyed }
+            ?: error("The app activity is not available. Reopen Nuvio and try again.")
+        CommonActivity.setActivityInstance(activity)
         provider(plugin)
-        val loadedPlugin = synchronized(loadedLock) { loaded[plugin.metadata.id.value] }
+        var loadedPlugin = synchronized(loadedLock) { loaded[plugin.metadata.id.value] }
             ?: error("CloudStream extension could not be loaded")
+        // Many CloudStream plugins (e.g. StreamPlay) capture `context as AppCompatActivity`
+        // inside `load(context)` and later call `activity.supportFragmentManager` inside
+        // `openSettings`. If the plugin loaded before the current Activity existed or after
+        // an Activity recreation, reload it once bound to the live Activity.
+        if (loadedPlugin.boundActivity?.get() !== activity) {
+            loadedPlugin = withContext(Dispatchers.IO) {
+                loadMutex.withLock {
+                    synchronized(loadedLock) {
+                        loaded.remove(plugin.metadata.id.value)?.unload()
+                        loadPlugin(plugin).also { loaded[plugin.metadata.id.value] = it }
+                    }
+                }
+            }
+        }
         val configurablePlugin = loadedPlugin.instance as? Plugin
             ?: error("This extension does not expose a settings screen")
         val openSettings = configurablePlugin.openSettings
             ?: error("This extension does not provide configurable settings")
-        val activity = activityReference?.get()?.takeUnless { it.isFinishing || it.isDestroyed }
-            ?: CommonActivity.activity?.takeUnless { it.isFinishing || it.isDestroyed }
-            ?: error("The app activity is not available. Reopen Nuvio and try again.")
         withContext(Dispatchers.Main.immediate) {
             CommonActivity.setActivityInstance(activity)
             openSettings.invoke(activity)
@@ -235,6 +249,40 @@ internal actual object CloudStreamPlatformRuntime {
         synchronized(loadedLock) { loaded.remove(pluginId) }?.unload()
     }
 
+    internal data class PluginInspectionData(
+        val hasNativeSettings: Boolean,
+        val instance: BasePlugin,
+        val providers: List<MainAPI>,
+        val extractors: List<com.lagradost.cloudstream3.utils.ExtractorApi>,
+    )
+
+    internal fun currentAppContext(): Context? = getContext()
+
+    internal fun unloadByFilePath(filePath: String) {
+        val targetName = File(filePath).name
+        val matchedIds = synchronized(loadedLock) {
+            loaded.entries
+                .filter { (_, lp) -> lp.path == filePath || File(lp.path).name == targetName }
+                .map { it.key }
+        }
+        matchedIds.forEach { unload(it) }
+    }
+
+    internal suspend fun inspectPluginDetails(
+        plugin: CloudStreamPluginItem,
+    ): PluginInspectionData {
+        provider(plugin)
+        val loadedPlugin = synchronized(loadedLock) { loaded[plugin.metadata.id.value] }
+            ?: error("CloudStream extension could not be loaded")
+        val hasNative = (loadedPlugin.instance as? Plugin)?.openSettings != null
+        return PluginInspectionData(
+            hasNativeSettings = hasNative,
+            instance = loadedPlugin.instance,
+            providers = loadedPlugin.providers,
+            extractors = loadedPlugin.extractors,
+        )
+    }
+
     actual fun clear() {
         val plugins = synchronized(loadedLock) {
             loaded.values.toList().also {
@@ -270,7 +318,9 @@ internal actual object CloudStreamPlatformRuntime {
         }
         require(file.setReadOnly() || !file.canWrite()) { "CloudStream package could not be made read-only" }
 
+        var hasBundledResources = false
         val manifest = ZipFile(file).use { archive ->
+            hasBundledResources = archive.getEntry("resources.arsc") != null
             val entry = archive.getEntry("manifest.json")
                 ?: error("CloudStream package has no manifest.json")
             archive.getInputStream(entry).bufferedReader().use { reader ->
@@ -291,10 +341,16 @@ internal actual object CloudStreamPlatformRuntime {
         instance.filename = file.absolutePath
         PluginManager.currentlyLoading = item.metadata.internalName
         val identityContext = CloudStreamIdentityContext(context)
-        CloudStreamApp.context = identityContext
-        setContext(WeakReference(identityContext))
+        val liveActivity = activityReference?.get()?.takeUnless { it.isFinishing || it.isDestroyed }
+            ?: CommonActivity.activity?.takeUnless { it.isFinishing || it.isDestroyed }
+        val pluginHostContext: Context = liveActivity ?: identityContext
+        CloudStreamApp.context = pluginHostContext
+        setContext(WeakReference(pluginHostContext))
         applyHostCompatibilityDefaults(pluginClassName)
-        if (manifest.requiresResources) instance.attachResources(identityContext, file)
+        if (manifest.requiresResources || hasBundledResources) {
+            runCatching { instance.attachResources(pluginHostContext, file) }
+                .onFailure { err -> log.w(err) { "Failed attaching plugin resources for ${item.metadata.internalName}" } }
+        }
 
         val providersBefore = APIHolder.allProviders.toSet()
         val extractorsBefore = extractorApis.toSet()
@@ -311,7 +367,21 @@ internal actual object CloudStreamPlatformRuntime {
         try {
             log.i { "[CS-DYN] plugin-load-start id=" + item.metadata.id.value }
             RuntimeDiagnostics.recordLog("CloudStream plugin-load-start id=" + item.metadata.id.value)
-            if (instance is Plugin) instance.load(identityContext) else instance.load()
+            if (instance is Plugin) {
+                try {
+                    instance.load(pluginHostContext)
+                } catch (castOrUiError: Throwable) {
+                    if (pluginHostContext !== identityContext) {
+                        APIHolder.allProviders.removeAll { it !in providersBefore }
+                        extractorApis.removeAll { it !in extractorsBefore }
+                        instance.load(identityContext)
+                    } else {
+                        throw castOrUiError
+                    }
+                }
+            } else {
+                instance.load()
+            }
             val providers = APIHolder.allProviders
                 .filter { it !in providersBefore || it.sourcePlugin == file.absolutePath }
                 .distinct()
@@ -336,7 +406,8 @@ internal actual object CloudStreamPlatformRuntime {
             return LoadedPlugin(
                 id = item.metadata.id.value,
                 path = file.absolutePath,
-                context = identityContext,
+                context = pluginHostContext,
+                boundActivity = liveActivity?.let(::WeakReference),
                 instance = instance,
                 providers = providers,
                 extractors = registeredExtractors,
@@ -460,13 +531,41 @@ internal actual object CloudStreamPlatformRuntime {
      * load exactly as configured by the extension.
      */
     private fun applyHostCompatibilityDefaults(pluginClassName: String) {
-        if (pluginClassName != CINESTREAM_PLUGIN_CLASS) return
-        val preferences = getContext()?.getSharedPreferences(
-            com.lagradost.cloudstream3.utils.PREFERENCES_NAME,
-            Context.MODE_PRIVATE,
-        ) ?: return
-        if (preferences.getString(CINESTREAM_SIMKL_PROVIDER_KEY, null) != "false") {
-            CloudStreamApp.setKey(CINESTREAM_SIMKL_PROVIDER_KEY, false)
+        val ctx = getContext() ?: return
+        if (pluginClassName == CINESTREAM_PLUGIN_CLASS) {
+            val preferences = ctx.getSharedPreferences(
+                com.lagradost.cloudstream3.utils.PREFERENCES_NAME,
+                Context.MODE_PRIVATE,
+            )
+            if (preferences.getString(CINESTREAM_SIMKL_PROVIDER_KEY, null) != "false") {
+                CloudStreamApp.setKey(CINESTREAM_SIMKL_PROVIDER_KEY, false)
+            }
+        }
+        // Seed smart high-throughput scraper concurrency (24) for multi-scraper extensions
+        // such as StreamPlay when the user has not explicitly customized provider_concurrency.
+        // All scrapers still execute (zero link reduction), finishing in ~2-3x fewer waves.
+        val loadingName = PluginManager.currentlyLoading
+        val candidateNames = listOfNotNull(
+            loadingName?.removeSuffix("Plugin"),
+            loadingName,
+            pluginClassName.substringAfterLast('.').removeSuffix("Plugin"),
+        ).map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (candidateNames.any { name ->
+                name.contains("StreamPlay", ignoreCase = true) ||
+                    name.contains("SuperStream", ignoreCase = true) ||
+                    name.contains("Sora", ignoreCase = true) ||
+                    name.contains("Ultima", ignoreCase = true) ||
+                    name.contains("CineStream", ignoreCase = true) ||
+                    name.contains("Codex", ignoreCase = true)
+            }
+        ) {
+            candidateNames.forEach { prefName ->
+                val sp = ctx.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+                if (!sp.contains("provider_concurrency")) {
+                    sp.edit().putInt("provider_concurrency", 24).apply()
+                    CloudStreamApp.setKey(prefName, "provider_concurrency", 24)
+                }
+            }
         }
     }
 
@@ -483,7 +582,7 @@ internal actual object CloudStreamPlatformRuntime {
         )
     }
 
-    private const val DEFAULT_HTTP_TIMEOUT_SECONDS = 120L
+    private const val DEFAULT_HTTP_TIMEOUT_SECONDS = 12L
     private const val NATIVE_REPOSITORY_SYNC_ATTEMPTS = 16
     private const val NATIVE_REPOSITORY_SYNC_DELAY_MS = 500L
 
@@ -497,6 +596,7 @@ internal actual object CloudStreamPlatformRuntime {
         val id: String,
         val path: String,
         @Suppress("unused") val context: Context,
+        val boundActivity: WeakReference<Activity>? = null,
         val instance: BasePlugin,
         val providers: List<MainAPI>,
         val extractors: List<com.lagradost.cloudstream3.utils.ExtractorApi>,
@@ -533,25 +633,48 @@ private class AndroidDexCloudStreamProvider(
     override suspend fun getMainPage(
         page: Int,
     ): List<Pair<String, List<CloudStreamSearchItem>>> = withContext(Dispatchers.IO) {
-        val sections = Collections.synchronizedList(
-            mutableListOf<Pair<String, List<CloudStreamSearchItem>>>(),
-        )
-        val apiGate = Semaphore(CLOUDSTREAM_API_CONCURRENCY)
+        val activeList = CloudStreamExtensionConfigStore.activeProviders(id, providers)
+        if (activeList.isEmpty()) return@withContext emptyList()
+        val eligibleProviders = activeList
+            .filter { api ->
+                api.hasMainPage || api.mainPage.any { it.name.isNotBlank() || it.data.isNotBlank() }
+            }
+            .ifEmpty { activeList }
+        // Multi-API packages like StreamPlay register sibling variants (StreamPlayLite,
+        // StreamPlayTorrent) with identical mainPage definitions. Deduplicate identical
+        // (name, data) catalogue endpoints across sibling APIs and bound per-API initial
+        // home rows so Home loads quickly without timing out.
+        val seenEndpoints = HashSet<String>()
+        val apiPlans = eligibleProviders.mapNotNull { api ->
+            val rawRequests = api.mainPage
+                .filter { it.name.isNotBlank() || it.data.isNotBlank() }
+                .ifEmpty {
+                    if (api.hasMainPage) {
+                        listOf(com.lagradost.cloudstream3.MainPageData(api.name, api.mainUrl, false))
+                    } else {
+                        emptyList()
+                    }
+                }
+            val deduped = rawRequests.filter { req ->
+                val key = "${req.name.trim().lowercase()}::${req.data.trim()}"
+                req.data.isBlank() || seenEndpoints.add(key)
+            }.take(if (eligibleProviders.size > 1 && page <= 1) 12 else 24)
+            if (deduped.isEmpty()) null else (api to deduped)
+        }
+        val requestGate = Semaphore(6)
         var lastError: Throwable? = null
+        val orderedBuckets = arrayOfNulls<List<Pair<String, List<CloudStreamSearchItem>>>>(apiPlans.size)
 
         coroutineScope {
-            val eligibleProviders = providers.filter { it.hasMainPage || it.mainPage.isNotEmpty() }
-                .ifEmpty { providers }
-            eligibleProviders.map { api ->
+            apiPlans.mapIndexed { planIndex, (api, requests) ->
                 async {
-                    apiGate.withPermit {
-                        val requests = api.mainPage.ifEmpty {
-                            listOf(com.lagradost.cloudstream3.MainPageData(api.name, api.mainUrl, false))
-                        }
-
-                        suspend fun loadRequest(data: com.lagradost.cloudstream3.MainPageData) =
+                    val apiSections = Collections.synchronizedList(
+                        mutableListOf<Pair<String, List<CloudStreamSearchItem>>>(),
+                    )
+                    suspend fun loadRequest(data: com.lagradost.cloudstream3.MainPageData) {
+                        requestGate.withPermit {
                             runCatching {
-                                withTimeout(stageTimeout(api.getMainPageTimeoutMs, DEFAULT_DISCOVERY_TIMEOUT_MS)) {
+                                withTimeout(stageTimeout(api.getMainPageTimeoutMs, DEFAULT_MAIN_PAGE_SECTION_TIMEOUT_MS)) {
                                     api.getMainPage(
                                         page.coerceAtLeast(1),
                                         MainPageRequest(data.name, data.data, data.horizontalImages),
@@ -559,55 +682,67 @@ private class AndroidDexCloudStreamProvider(
                                 }
                             }.onSuccess { response ->
                                 response?.items.orEmpty().forEach { section ->
-                                    val title = if (providers.size > 1) "${api.name} · ${section.name}" else section.name
+                                    val title = if (apiPlans.size > 1) "${api.name} · ${section.name}" else section.name
                                     val items = section.list.map { it.toNuvioSearchItem(api) }
-                                    if (items.isNotEmpty()) sections += title to items
+                                    if (items.isNotEmpty()) {
+                                        CloudStreamSearchRouteIndex.remember(id, section.name, items)
+                                        apiSections += title to items
+                                    }
                                 }
                             }.onFailure { error ->
-                                synchronized(sections) { lastError = error }
-                                log.w(error) { "CloudStream main page failed api=${api.name}" }
+                                synchronized(orderedBuckets) { lastError = error }
+                                log.w(error) { "CloudStream main page failed api=${api.name} section=${data.name}" }
                             }
-
-                        if (api.sequentialMainPage) {
-                            requests.forEachIndexed { index, data ->
-                                if (index > 0 && api.sequentialMainPageDelay > 0) {
-                                    delay(api.sequentialMainPageDelay)
-                                }
-                                loadRequest(data)
-                            }
-                        } else {
-                            requests.map { data -> async { loadRequest(data) } }.awaitAll()
                         }
                     }
+
+                    if (api.sequentialMainPage) {
+                        requests.forEachIndexed { index, data ->
+                            if (index > 0 && api.sequentialMainPageDelay > 0) {
+                                delay(api.sequentialMainPageDelay)
+                            }
+                            loadRequest(data)
+                        }
+                    } else {
+                        requests.map { data -> async { loadRequest(data) } }.awaitAll()
+                    }
+                    orderedBuckets[planIndex] = synchronized(apiSections) { apiSections.toList() }
                 }
             }.awaitAll()
         }
 
-        if (sections.isEmpty()) throw lastError ?: return@withContext emptyList()
-        synchronized(sections) { sections.toList() }
+        val merged = orderedBuckets.filterNotNull().flatten()
+        if (merged.isEmpty()) throw lastError ?: return@withContext emptyList()
+        merged
     }
 
     override suspend fun search(query: String): List<CloudStreamSearchItem> = withContext(Dispatchers.IO) {
-        val results = Collections.synchronizedList(mutableListOf<CloudStreamSearchItem>())
+        val activeList = CloudStreamExtensionConfigStore.activeProviders(id, providers)
+        if (activeList.isEmpty()) return@withContext emptyList()
         val apiGate = Semaphore(CLOUDSTREAM_API_CONCURRENCY)
         var lastError: Throwable? = null
+        val sanitizedQuery = query.replace('&', ' ').replace('#', ' ').replace(Regex("\\s+"), " ").trim()
+        val orderedResults = arrayOfNulls<List<CloudStreamSearchItem>>(activeList.size)
 
         coroutineScope {
-            providers.map { api ->
+            activeList.mapIndexed { index, api ->
                 async {
                     apiGate.withPermit {
+                        val effectiveQuery = sanitizedQuery.ifBlank { query }
                         runCatching {
                             withTimeout(stageTimeout(api.searchTimeoutMs, DEFAULT_DISCOVERY_TIMEOUT_MS)) {
-                                api.search(query, 1)?.items.orEmpty()
+                                api.search(effectiveQuery, 1)?.items.orEmpty()
                             }
                         }.onSuccess { items ->
                             log.d {
-                                "CloudStream search api=${api.name} query=$query returned=${items.size} " +
+                                "CloudStream search api=${api.name} query=$effectiveQuery returned=${items.size} " +
                                     "sample=${items.take(3).joinToString { it.name }}"
                             }
-                            results += items.map { it.toNuvioSearchItem(api) }
+                            val mappedItems = items.map { it.toNuvioSearchItem(api) }
+                            CloudStreamSearchRouteIndex.remember(id, effectiveQuery, mappedItems)
+                            orderedResults[index] = mappedItems
                         }.onFailure { error ->
-                            synchronized(results) { lastError = error }
+                            synchronized(orderedResults) { lastError = error }
                             log.w(error) { "CloudStream search failed api=${api.name}" }
                         }
                     }
@@ -615,8 +750,9 @@ private class AndroidDexCloudStreamProvider(
             }.awaitAll()
         }
 
-        if (results.isEmpty()) throw lastError ?: return@withContext emptyList()
-        synchronized(results) { results.toList().distinctBy { it.data } }
+        val merged = orderedResults.filterNotNull().flatten().distinctBy { it.data }
+        if (merged.isEmpty()) throw lastError ?: return@withContext emptyList()
+        merged
     }
     override suspend fun loadByExternalId(externalId: String): CloudStreamLoadItem? = withContext(Dispatchers.IO) {
         val syncName = when {
@@ -645,8 +781,22 @@ private class AndroidDexCloudStreamProvider(
         RuntimeDiagnostics.recordLog(
             "cs-load-timeout-config provider=${api.name} hintMs=${api.loadTimeoutMs} effectiveMs=$effectiveTimeoutMs",
         )
+        val trimmedRouteData = route.data.trimStart()
+        val fixedRouteData = if (trimmedRouteData.startsWith("{") || trimmedRouteData.startsWith("[")) {
+            route.data
+        } else {
+            api.fixUrl(route.data)
+        }
         val response = withTimeout(effectiveTimeoutMs) {
-            api.load(route.data)
+            val primary = try {
+                api.load(fixedRouteData)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (err: Throwable) {
+                if (fixedRouteData == route.data) throw err
+                null
+            }
+            primary ?: if (fixedRouteData != route.data) api.load(route.data) else null
         } ?: error("CloudStream provider returned no details")
         response.toNuvioLoadItem(api)
     }
@@ -656,9 +806,33 @@ private class AndroidDexCloudStreamProvider(
         val api = findProvider(route.providerClassName)
         val subtitles = Collections.synchronizedList(mutableListOf<CloudStreamSubtitle>())
         val links = Collections.synchronizedList(mutableListOf<ExtractorLink>())
-        // Match the real CloudStream/Nuvio execution contract: loadLinks() is allowed
-        // to return false and/or finish after producing callbacks. The callback collection
-        // is the authoritative result. A timeout must not discard links already emitted.
+
+        fun snapshotSources(): List<CloudStreamPlaybackSource> {
+            val subSnap = synchronized(subtitles) { subtitles.toList() }
+            val linkSnap = synchronized(links) { links.toList() }
+            if (linkSnap.isEmpty()) return emptyList()
+            return linkSnap.distinctBy { link ->
+                listOf(
+                    link.url,
+                    link.referer,
+                    link.quality.toString(),
+                    link.type.name,
+                    link.headers.toString(),
+                )
+            }.map { link ->
+                CloudStreamPlaybackSource(
+                    name = link.name.ifBlank { link.source },
+                    url = link.url,
+                    quality = link.quality.takeIf { it > 0 },
+                    referer = link.referer.takeIf(String::isNotBlank),
+                    headers = link.headers,
+                    subtitles = subSnap,
+                    isHls = link.type == ExtractorLinkType.M3U8,
+                    isDash = link.type == ExtractorLinkType.DASH,
+                )
+            }
+        }
+
         val completed = withTimeoutOrNull(
             stageTimeout(api.loadLinksTimeoutMs, DEFAULT_LINK_TIMEOUT_MS),
         ) {
@@ -673,8 +847,30 @@ private class AndroidDexCloudStreamProvider(
                             name = subtitle.lang,
                             headers = subtitle.headers.orEmpty(),
                         )
+                        if (links.isNotEmpty()) {
+                            val partial = snapshotSources()
+                            if (partial.isNotEmpty()) {
+                                CloudStreamLiveLinkHub.publish(
+                                    providerId = id,
+                                    routeData = data,
+                                    sources = partial,
+                                    isComplete = false,
+                                )
+                            }
+                        }
                     },
-                    callback = links::add,
+                    callback = { link ->
+                        links.add(link)
+                        val partial = snapshotSources()
+                        if (partial.isNotEmpty()) {
+                            CloudStreamLiveLinkHub.publish(
+                                providerId = id,
+                                routeData = data,
+                                sources = partial,
+                                isComplete = false,
+                            )
+                        }
+                    },
                 )
             }.onFailure { error ->
                 log.w(error) {
@@ -684,45 +880,33 @@ private class AndroidDexCloudStreamProvider(
             }.getOrDefault(false)
         }
 
-        val subtitleSnapshot = synchronized(subtitles) { subtitles.toList() }
-        val linkSnapshot = synchronized(links) { links.toList() }
+        val finalSources = snapshotSources()
+        if (finalSources.isNotEmpty()) {
+            CloudStreamLiveLinkHub.publish(
+                providerId = id,
+                routeData = data,
+                sources = finalSources,
+                isComplete = true,
+            )
+        }
 
         RuntimeDiagnostics.recordLog(
             "cs-load-links-result provider=${api.name} completed=${completed != null} " +
-                "returned=${completed ?: "timeout"} links=${linkSnapshot.size} subtitles=${subtitleSnapshot.size}",
+                "returned=${completed ?: "timeout"} links=${finalSources.size} subtitles=${subtitles.size}",
         )
 
         if (completed == null) {
             log.w {
                 "CloudStream loadLinks timed out provider=${api.name} " +
-                    "links=${linkSnapshot.size}; returning partial callbacks"
+                    "links=${finalSources.size}; returning partial callbacks"
             }
-        } else if (completed == false && linkSnapshot.isEmpty()) {
+        } else if (completed == false && finalSources.isEmpty()) {
             log.w {
                 "CloudStream loadLinks returned false with no links provider=${api.name}"
             }
         }
 
-        linkSnapshot.distinctBy { link ->
-            listOf(
-                link.url,
-                link.referer,
-                link.quality.toString(),
-                link.type.name,
-                link.headers.toString(),
-            )
-        }.map { link ->
-            CloudStreamPlaybackSource(
-                name = link.name.ifBlank { link.source },
-                url = link.url,
-                quality = link.quality.takeIf { it > 0 },
-                referer = link.referer.takeIf(String::isNotBlank),
-                headers = link.headers,
-                subtitles = subtitleSnapshot,
-                isHls = link.type == ExtractorLinkType.M3U8,
-                isDash = link.type == ExtractorLinkType.DASH,
-            )
-        }.also {
+        finalSources.also {
             if (it.isEmpty()) {
                 error(
                     "CloudStream provider returned no playable links " +
@@ -734,6 +918,7 @@ private class AndroidDexCloudStreamProvider(
 
     private fun findProvider(className: String): MainAPI =
         providers.firstOrNull { it.javaClass.name == className }
+            ?.also { api -> CloudStreamExtensionConfigStore.applyOverrideToApi(id, api) }
             ?: error("CloudStream provider is no longer registered")
 
     private fun SearchResponse.toNuvioSearchItem(api: MainAPI): CloudStreamSearchItem =
@@ -825,10 +1010,11 @@ private class AndroidDexCloudStreamProvider(
             )
         }
 
-        private const val CLOUDSTREAM_API_CONCURRENCY = 4
-        private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 30_000L
-        private const val DEFAULT_LOAD_TIMEOUT_MS = 120_000L
-        private const val DEFAULT_LINK_TIMEOUT_MS = 120_000L
+        private const val CLOUDSTREAM_API_CONCURRENCY = 8
+        private const val DEFAULT_MAIN_PAGE_SECTION_TIMEOUT_MS = 15_000L
+        private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 14_000L
+        private const val DEFAULT_LOAD_TIMEOUT_MS = 45_000L
+        private const val DEFAULT_LINK_TIMEOUT_MS = 85_000L
         private const val LEGACY_RUNTIME_DEFAULT_LOAD_TIMEOUT_MS = 5_000L
         private const val MIN_PROVIDER_TIMEOUT_MS = 5_000L
         private const val MAX_LOAD_TIMEOUT_MS = 480_000L

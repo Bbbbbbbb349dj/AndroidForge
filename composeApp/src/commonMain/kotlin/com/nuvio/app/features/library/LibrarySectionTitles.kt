@@ -16,6 +16,11 @@ private val librarySectionTitleResources: Map<String, StringResource> = mapOf(
     "simkl:status:hold" to Res.string.library_status_on_hold,
     "simkl:status:completed" to Res.string.library_status_completed,
     "simkl:status:dropped" to Res.string.library_status_dropped,
+    "local:watching" to Res.string.library_status_watching,
+    "local:plan_to_watch" to Res.string.library_status_plan_to_watch,
+    "local:on_hold" to Res.string.library_status_on_hold,
+    "local:completed" to Res.string.library_status_completed,
+    "local:dropped" to Res.string.library_status_dropped,
 )
 
 @Composable

@@ -255,6 +255,7 @@ internal class PlayerScreenRuntime(
     var nextEpisodeInfo by mutableStateOf<NextEpisodeInfo?>(null)
     var showNextEpisodeCard by mutableStateOf(false)
     var nextEpisodeCardDismissed by mutableStateOf(false)
+    var showManualRecommendations by mutableStateOf(false)
     var showMovieRecommendationCard by mutableStateOf(false)
     var movieRecommendationDismissedStage by mutableStateOf(0)
     var movieRecommendationStage by mutableStateOf(0)
@@ -276,6 +277,8 @@ internal class PlayerScreenRuntime(
     var sourceFallbackAttempts = 0
     val sourceFallbackTriedKeys = mutableSetOf<String>()
     var sourceFallbackJob: Job? = null
+    /** Nuvio Enhanced: transient non-blocking status shown while a backup stream is tried. */
+    var sourceFallbackStatus: String? = null
 
     var showAudioModal by mutableStateOf(false)
     var showSubtitleModal by mutableStateOf(false)
@@ -334,7 +337,7 @@ internal class PlayerScreenRuntime(
     var autoSubtitleMuteActivationJob by mutableStateOf<Job?>(null)
 
     val isAnyOverlayVisible: Boolean
-        get() = showAudioModal ||
+        get() = showManualRecommendations || showAudioModal ||
             showSubtitleModal ||
             showVideoSettingsModal ||
             showDiscTitlesPanel ||

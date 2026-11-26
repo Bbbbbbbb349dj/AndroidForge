@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -49,6 +50,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_nav_home
 import nuvio.composeapp.generated.resources.compose_nav_library
 import nuvio.composeapp.generated.resources.compose_nav_live_tv
+import nuvio.composeapp.generated.resources.compose_settings_root_downloads_title
 import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
@@ -283,8 +285,8 @@ internal fun mainFloatingNavigationItems(
             FloatingNavigationItem(
                 selected = highlightedTab == AppScreenTab.LiveTv,
                 onClick = { onTabSelected(AppScreenTab.LiveTv) },
-                icon = Icons.Filled.Tv,
-                label = stringResource(Res.string.compose_nav_live_tv),
+                icon = Icons.Rounded.Download,
+                label = stringResource(Res.string.compose_settings_root_downloads_title),
             ),
         )
     }
@@ -340,8 +342,8 @@ internal fun MainClassicNavigationBar(
             NavItem(
                 selected = highlightedTab == AppScreenTab.LiveTv,
                 onClick = { onTabSelected(AppScreenTab.LiveTv) },
-                icon = Icons.Filled.Tv,
-                contentDescription = stringResource(Res.string.compose_nav_live_tv),
+                icon = Icons.Rounded.Download,
+                contentDescription = stringResource(Res.string.compose_settings_root_downloads_title),
             )
         }
         NavItem(

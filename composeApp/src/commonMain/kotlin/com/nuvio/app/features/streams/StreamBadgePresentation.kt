@@ -35,6 +35,31 @@ object StreamBadgePresentation {
         }
     }
 
+    /**
+     * Detects the audio-variant label ("SUB", "DUB" or "DUAL") for a stream from its badge
+     * names, title, description and filename. Nuvio Enhanced: drives the stream/batch variant
+     * pills and keeps SUB/DUB downloads from overwriting each other.
+     */
+    fun audioVariantOf(stream: StreamItem): String? {
+        val texts = buildList {
+            stream.badges.forEach { badge -> add(badge.name) }
+            stream.name?.let { add(it) }
+            stream.description?.let { add(it) }
+            stream.behaviorHints.filename?.let { add(it) }
+        }.filter { it.isNotBlank() }
+        fun mentions(word: String): Boolean = texts.any { text ->
+            Regex("\\b$word\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        }
+        val hasSub = mentions("sub")
+        val hasDub = mentions("dub")
+        return when {
+            mentions("dual") || (hasSub && hasDub) -> "DUAL"
+            hasDub -> "DUB"
+            hasSub -> "SUB"
+            else -> null
+        }
+    }
+
     // Each addon group is presented on its own with the same rules, so their regexes are
     // compiled once and reused until the rules change.
     private fun compiledFilters(rules: StreamBadgeRules): List<CompiledStreamBadgeFilter> =

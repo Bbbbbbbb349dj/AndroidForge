@@ -46,7 +46,6 @@ import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -298,11 +297,6 @@ internal fun LazyListScope.settingsRootContent(
         }
     }
     item {
-        BuyMeACoffeeSupportCard(
-            modifier = Modifier.padding(horizontal = 20.dp),
-        )
-    }
-    item {
         androidx.compose.foundation.layout.Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -320,15 +314,6 @@ internal fun LazyListScope.settingsRootContent(
             )
             androidx.compose.foundation.layout.Spacer(
                 modifier = Modifier.height(2.dp),
-            )
-            Text(
-                text = "by RAJA JI",
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
             )
             androidx.compose.foundation.layout.Spacer(
                 modifier = Modifier.height(4.dp),

@@ -46,17 +46,17 @@ internal object WhatsNewRepository {
     ): Result<WhatsNewContent> {
         return try {
             Result.success(
-                loadInternal(
+                BundledReleaseNotes.merge(loadInternal(
                     channel = channel,
                     currentVersion = currentVersion,
                     matchBaseVersion = matchBaseVersion,
                     forceRefresh = forceRefresh,
-                ),
+                ), currentVersion),
             )
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            Result.failure(error)
+            Result.success(BundledReleaseNotes.merge(null, currentVersion))
         }
     }
 
@@ -209,9 +209,7 @@ internal object WhatsNewRepository {
 
         val eligible = ReleaseSelector.eligibleReleases(releases, channel)
         val mapped = eligible.mapNotNull { release ->
-            val rawVersion = release.tagName?.takeIf { VersionUtils.parse(it) != null }
-                ?: release.name?.takeIf { VersionUtils.parse(it) != null }
-                ?: return@mapNotNull null
+            val rawVersion = ReleaseSelector.versionName(release) ?: return@mapNotNull null
             val version = VersionUtils.normalize(rawVersion)
             WhatsNewRelease(
                 version = version,

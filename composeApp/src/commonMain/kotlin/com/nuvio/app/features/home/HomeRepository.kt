@@ -112,7 +112,7 @@ object HomeRepository {
             "all" -> "all"
             "off" -> null
             else -> selectedProviderId?.takeIf { id -> runnableCloudPlugins.any { it.metadata.id.value == id } }
-                ?: if (selectedProviderId == "off") null else runnableCloudPlugins.firstOrNull()?.metadata?.id?.value
+                ?: if (runnableCloudPlugins.isNotEmpty()) "all" else null
         }
         val cloudPlugins = when (effectiveSelectedProviderId) {
             "all" -> runnableCloudPlugins
@@ -168,7 +168,19 @@ object HomeRepository {
             var cloudErrorMessage: String? = null
             coroutineScope {
                 launch {
-                    val cloudResult = loadCloudSections(cloudPlugins, requestKey)
+                    var cloudResult = loadCloudSections(cloudPlugins, requestKey)
+                    // Auto-heal when an earlier launch auto-selected a bootstrap/repo plugin
+                    // (such as MegaRepo) that has no catalogues while other extensions exist.
+                    if (cloudResult.sections.isEmpty() &&
+                        effectiveSelectedProviderId != null &&
+                        effectiveSelectedProviderId != "all" &&
+                        runnableCloudPlugins.size > 1 &&
+                        activeRequestKey == requestKey
+                    ) {
+                        _selectedCloudStreamProviderId.value = "all"
+                        HomeCatalogSettingsRepository.setCloudStreamProviderId("all")
+                        cloudResult = loadCloudSections(runnableCloudPlugins, requestKey)
+                    }
                     if (activeRequestKey == requestKey) {
                         cachedCloudSections = cloudResult.sections
                         cloudErrorMessage = cloudResult.errorMessage

@@ -66,8 +66,12 @@ import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.firstEnabledManifestError
 import com.nuvio.app.features.addons.hasPendingEnabledManifests
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
+import androidx.compose.ui.draw.clip
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.home.buildAddonCatalogRefreshSignature
+import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
@@ -108,6 +112,7 @@ fun SearchScreen(
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
 ) {
     val focusRequester = remember { FocusRequester() }
+    val commitFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
     var isSearchFocused by remember { mutableStateOf(false) }
     var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var searchFocusRequest by remember { mutableIntStateOf(0) }
@@ -130,6 +135,7 @@ fun SearchScreen(
         AddonRepository.initialize()
         WatchedRepository.ensureLoaded()
         SearchHistoryRepository.ensureLoaded()
+        CloudStreamRepository.initialize()
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
@@ -140,11 +146,17 @@ fun SearchScreen(
         HomeCatalogSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     val recentSearches by SearchHistoryRepository.uiState.collectAsStateWithLifecycle()
+    val includeCloudStreamExtensions by SearchHistoryRepository.includeCloudStreamExtensions.collectAsStateWithLifecycle()
+    val cloudStreamUiState by CloudStreamRepository.uiState.collectAsStateWithLifecycle()
+    val runnableCloudStreamCount = remember(cloudStreamUiState.plugins) {
+        cloudStreamUiState.plugins.count(CloudStreamPluginItem::isRunnable)
+    }
     val watchedUiState by WatchedRepository.uiState.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var lastRequestedQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var tmdbSuggestions by remember { mutableStateOf<List<MetaPreview>>(emptyList()) }
     var observedOfflineState by remember { mutableStateOf(false) }
     val discoverInFocus by remember(query, listState) {
         derivedStateOf {
@@ -169,20 +181,41 @@ fun SearchScreen(
         SearchRepository.refreshDiscover(addonsUiState.addons)
     }
 
-    ScreenActivityEffect(query, addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent) { screenActive ->
+    ScreenActivityEffect(
+        query,
+        addonRefreshKey,
+        homeCatalogSettingsUiState.hideUnreleasedContent,
+        includeCloudStreamExtensions,
+        cloudStreamUiState.registryRevision,
+    ) { screenActive ->
         if (!screenActive) return@ScreenActivityEffect
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
             lastRequestedQuery = null
             SearchRepository.clear()
         } else {
-            delay(350)
+            delay(240)
             lastRequestedQuery = normalizedQuery
             SearchRepository.search(
                 query = normalizedQuery,
                 addons = addonsUiState.addons,
+                includeCloudStreamExtensions = includeCloudStreamExtensions,
             )
         }
+    }
+
+    // Nuvio Enhanced: debounced TMDB title suggestions for the autocomplete card.
+    LaunchedEffect(query) {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            tmdbSuggestions = emptyList()
+            return@LaunchedEffect
+        }
+        delay(350)
+        if (query.trim() != trimmed) return@LaunchedEffect
+        tmdbSuggestions = runCatching {
+            TmdbService.searchTitles(trimmed, limit = 8)
+        }.getOrDefault(emptyList())
     }
 
     ScreenActivityEffect(listState, query, discoverUiState.canLoadMore, discoverUiState.isLoading) { screenActive ->
@@ -300,6 +333,18 @@ fun SearchScreen(
                         NuvioInputField(
                             value = query,
                             onValueChange = { query = it },
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                            ),
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onSearch = {
+                                    if (query.isNotBlank()) {
+                                        SearchHistoryRepository.recordSearch(query.trim())
+                                    }
+                                    isSearchFocused = false
+                                    commitFocusManager.clearFocus(force = true)
+                                },
+                            ),
                             placeholder = stringResource(Res.string.compose_search_placeholder),
                             textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
                             shape = RoundedCornerShape(NuvioTokens.Radius.xl),
@@ -321,7 +366,51 @@ fun SearchScreen(
                             },
                         )
                     }
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(14.dp))
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(8.dp))
+                    SearchCloudStreamExtensionToggleRow(
+                        enabled = includeCloudStreamExtensions,
+                        runnableExtensionCount = runnableCloudStreamCount,
+                        onToggle = SearchHistoryRepository::setIncludeCloudStreamExtensions,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                    val autocompleteSuggestions =
+                        remember(query, recentSearches, uiState.sections, tmdbSuggestions) {
+                            buildSearchAutocompleteSuggestions(
+                                rawQuery = query,
+                                recentSearches = recentSearches,
+                                sections = uiState.sections,
+                                tmdbTitles = tmdbSuggestions,
+                            )
+                        }
+                    val trimmedForAutocomplete = query.trim()
+                    val autocompleteLoading = trimmedForAutocomplete.length >= 2 &&
+                        (lastRequestedQuery != trimmedForAutocomplete || uiState.isLoading)
+                    SearchAutocompleteSuggestionsCard(
+                        visible = isSearchFocused && trimmedForAutocomplete.length >= 2,
+                        isLoading = autocompleteLoading,
+                        suggestions = autocompleteSuggestions,
+                        errorMessage = if (uiState.emptyStateReason == SearchEmptyStateReason.RequestFailed) {
+                            uiState.errorMessage ?: "Network unavailable — check connection"
+                        } else null,
+                        onSelectSuggestion = { suggestion ->
+                            // Nuvio Enhanced: fill the query and run the search instead of
+                            // navigating straight to the details screen.
+                            query = suggestion.text
+                            SearchHistoryRepository.recordSearch(suggestion.text)
+                            isSearchFocused = false
+                            commitFocusManager.clearFocus(force = true)
+                        },
+                        onFillQuery = { text ->
+                            query = text
+                        },
+                        onSuggestionLongPress = { suggestion ->
+                            suggestion.preview?.let { preview -> onPosterClick?.invoke(preview) }
+                        },
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp)
+                            .padding(top = 8.dp),
+                    )
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(10.dp))
                     }
                     }
                     if (query.isBlank()) {
@@ -338,6 +427,8 @@ fun SearchScreen(
                 }
             }
 
+            // Search spans every searchable catalog, independent of Discover's type.
+            val searchResultSections = uiState.sections
             NuvioScreen(
                 horizontalPadding = 0.dp,
                 topPadding = 0.dp,
@@ -346,12 +437,18 @@ fun SearchScreen(
                 modifier = Modifier.weight(1f),
             ) {
                 if (query.isBlank()) {
-                    if (isSearchFocused && recentSearches.isNotEmpty()) {
+                    if ((isSearchFocused || isSearchVisible) && recentSearches.isNotEmpty()) {
                         item(key = "recent_searches") {
                             SearchRecentSection(
                                 recentSearches = recentSearches,
-                                onSearchPress = { recentQuery -> query = recentQuery },
+                                onSearchPress = { recentQuery ->
+                                    query = recentQuery
+                                    SearchHistoryRepository.recordSearch(recentQuery)
+                                    isSearchFocused = false
+                                    commitFocusManager.clearFocus(force = true)
+                                },
                                 onRemoveSearch = SearchHistoryRepository::removeSearch,
+                                onClearAll = SearchHistoryRepository::clearAll,
                             )
                         }
                     }
@@ -399,7 +496,7 @@ fun SearchScreen(
                             }
                         }
 
-                        uiState.sections.isEmpty() -> {
+                        searchResultSections.isEmpty() -> {
                             item {
                                 SearchEmptyStateCard(
                                     reason = uiState.emptyStateReason,
@@ -415,6 +512,7 @@ fun SearchScreen(
                                                     query = normalizedQuery,
                                                     addons = addonsUiState.addons,
                                                     forceRefresh = true,
+                                                    includeCloudStreamExtensions = includeCloudStreamExtensions,
                                                 )
                                             }
                                         }
@@ -426,7 +524,7 @@ fun SearchScreen(
 
                         else -> {
                             items(
-                                items = uiState.sections.withDuplicateSafeLazyKeys { section -> section.key },
+                                items = searchResultSections.withDuplicateSafeLazyKeys { section -> section.key },
                                 key = { section -> section.lazyKey },
                             ) { keyedSection ->
                                 val section = keyedSection.value
@@ -517,6 +615,7 @@ private fun SearchRecentSection(
     recentSearches: List<String>,
     onSearchPress: (String) -> Unit,
     onRemoveSearch: (String) -> Unit,
+    onClearAll: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -525,11 +624,29 @@ private fun SearchRecentSection(
             .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = stringResource(Res.string.compose_search_recent_searches),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(Res.string.compose_search_recent_searches),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            if (onClearAll != null && recentSearches.isNotEmpty()) {
+                Text(
+                    text = "Clear all",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onClearAll)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(4.dp))
         recentSearches.forEach { recentQuery ->
             SearchRecentRow(

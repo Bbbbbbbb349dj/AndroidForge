@@ -101,13 +101,8 @@ fun DetailMetaInfo(
     showOverallRatings: Boolean = true,
     isMdbListActive: Boolean = false,
     showNuvioRead: Boolean? = null,
-    showRatingMap: Boolean = true,
     episodeImdbRatings: Map<Pair<Int, Int>, Double> = emptyMap(),
     episodeTmdbRatings: Map<Pair<Int, Int>, Double> = emptyMap(),
-    episodeRatingsVisibility: EpisodeRatingsVisibility? = null,
-    isEpisodeWatched: ((MetaVideo) -> Boolean)? = null,
-    onEpisodeClick: ((MetaVideo) -> Unit)? = null,
-    onEpisodeLongPress: ((MetaVideo) -> Unit)? = null,
 ) {
     val enhancedSettings by remember {
         NuvioEnhancedSettingsRepository.ensureLoaded()
@@ -185,11 +180,6 @@ fun DetailMetaInfo(
                 pills = overviewPills,
                 ratings = meta.externalRatings,
                 description = meta.description,
-                showRatingMap = showRatingMap,
-                episodeRatingsVisibility = episodeRatingsVisibility,
-                isEpisodeWatched = isEpisodeWatched,
-                onEpisodeClick = onEpisodeClick,
-                onEpisodeLongPress = onEpisodeLongPress,
                 onRatingsClick = { showRatings = true },
             )
         } else {
@@ -221,22 +211,8 @@ private fun DetailPremiumOverviewCard(
     pills: List<String>,
     ratings: List<MetaExternalRating>,
     description: String?,
-    showRatingMap: Boolean = true,
-    episodeRatingsVisibility: EpisodeRatingsVisibility? = null,
-    isEpisodeWatched: ((MetaVideo) -> Boolean)? = null,
-    onEpisodeClick: ((MetaVideo) -> Unit)? = null,
-    onEpisodeLongPress: ((MetaVideo) -> Unit)? = null,
     onRatingsClick: () -> Unit,
 ) {
-    var ratingMapExpanded by remember { mutableStateOf(false) }
-    // On-demand map: show the arrow row only when the global Rating Map
-    // setting is on, a map actually exists, and episode ratings are not
-    // hidden. The map content itself still only composes when expanded.
-    val showRatingMapRow = showRatingMap &&
-        episodeRatingsVisibility != null &&
-        episodeRatingsVisibility.showRatings &&
-        isEpisodeWatched != null && onEpisodeClick != null && onEpisodeLongPress != null &&
-        meta.hasEpisodeRatingMap()
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -278,38 +254,6 @@ private fun DetailPremiumOverviewCard(
                     horizontalScrollPadding = 0.dp,
                     onClick = onRatingsClick,
                 )
-            }
-
-            if (showRatingMapRow) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { ratingMapExpanded = !ratingMapExpanded }
-                        .padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(Res.string.nuvio_read_rating_map),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Icon(
-                        imageVector = if (ratingMapExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                AnimatedVisibility(visible = ratingMapExpanded) {
-                    DetailEpisodeRatingMap(
-                        meta = meta,
-                        episodeRatingsVisibility = episodeRatingsVisibility!!,
-                        isEpisodeWatched = isEpisodeWatched!!,
-                        onEpisodeClick = onEpisodeClick!!,
-                        onEpisodeLongPress = onEpisodeLongPress!!,
-                    )
-                }
             }
 
             description?.trim()?.takeIf { it.isNotBlank() }?.let { cleanDescription ->
@@ -364,26 +308,35 @@ private fun DetailPremiumStoryBlock(description: String) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = if (expanded) Int.MAX_VALUE else 4,
-                overflow = TextOverflow.Ellipsis,
+                overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
                 lineHeight = 23.sp,
+                modifier = Modifier.clickable(enabled = canExpand || expanded) { expanded = !expanded },
                 onTextLayout = { result ->
-                    if (!expanded) canExpand = result.hasVisualOverflow
+                    if (!expanded && result.hasVisualOverflow) canExpand = true
                 },
             )
-            if (canExpand) {
-                Text(
-                    text = if (expanded) {
-                        stringResource(Res.string.details_show_less)
-                    } else {
-                        stringResource(Res.string.details_show_more)
-                    },
+            if (canExpand || expanded) {
+                Row(
                     modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f))
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
                         .clickable { expanded = !expanded }
-                        .padding(vertical = 6.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (expanded) {
+                            stringResource(Res.string.details_show_less)
+                        } else {
+                            "⋯ " + stringResource(Res.string.details_show_more)
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }
@@ -426,33 +379,42 @@ private fun DetailStandardOverview(
     description?.trim()?.takeIf { it.isNotBlank() }?.let { synopsis ->
         var expanded by remember(synopsis) { mutableStateOf(false) }
         var canExpand by remember(synopsis) { mutableStateOf(false) }
-        val scrollState = rememberScrollState()
         Column(modifier = Modifier.animateContentSize()) {
             Text(
                 text = synopsis,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = if (expanded) Int.MAX_VALUE else 3,
-                overflow = TextOverflow.Ellipsis,
+                overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
                 lineHeight = 22.sp,
-                onTextLayout = { result -> if (!expanded) canExpand = result.hasVisualOverflow },
-                modifier = if (expanded) {
-                    Modifier.heightIn(max = 220.dp).verticalScroll(scrollState)
-                } else {
-                    Modifier
+                modifier = Modifier.clickable(enabled = canExpand || expanded) { expanded = !expanded },
+                onTextLayout = { result ->
+                    if (!expanded && result.hasVisualOverflow) canExpand = true
                 },
             )
-            if (canExpand) {
-                Text(
-                    text = if (expanded) {
-                        stringResource(Res.string.details_show_less)
-                    } else {
-                        stringResource(Res.string.details_show_more)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable { expanded = !expanded }.padding(top = 4.dp),
-                )
+            if (canExpand || expanded) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(horizontal = 12.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (expanded) {
+                            stringResource(Res.string.details_show_less)
+                        } else {
+                            "⋯ " + stringResource(Res.string.details_show_more)
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }

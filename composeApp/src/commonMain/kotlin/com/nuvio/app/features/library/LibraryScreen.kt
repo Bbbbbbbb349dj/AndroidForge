@@ -123,7 +123,9 @@ import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.NuvioViewAllPillSize
 import com.nuvio.app.core.ui.ScopedDisintegrationTracker
 import com.nuvio.app.core.ui.nuvioConsumePointerEvents
+import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.LocalVerticalBarPadding
+import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.features.cloud.CloudLibraryFile
 import com.nuvio.app.features.cloud.CloudLibraryItem
@@ -245,6 +247,7 @@ fun LibraryScreen(
             ?: LibraryViewMode.Saved
     }
     var showReleaseCalendar by rememberSaveable { mutableStateOf(false) }
+    var showSortFilterSheet by rememberSaveable { mutableStateOf(false) }
     val releaseCalendarCacheState by LibraryReleaseCalendarCache.state.collectAsStateWithLifecycle()
     val releaseCalendarCacheKey = remember(uiState.items) {
         LibraryReleaseCalendarCache.cacheKeyFor(uiState.items)
@@ -279,9 +282,19 @@ fun LibraryScreen(
     var showTorboxConnectDialog by rememberSaveable { mutableStateOf(false) }
     val torboxConnected = cloudSettings.apiKeyFor(DebridProviders.TORBOX_ID).isNotBlank()
     var selectedLibrarySectionKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedLocalCategoryKey by rememberSaveable { mutableStateOf(LOCAL_LIBRARY_ALL_TAB_KEY) }
+    var savedSearchVisible by rememberSaveable { mutableStateOf(false) }
+    var savedSearchQuery by rememberSaveable { mutableStateOf("") }
     var selectedLibraryType by rememberSaveable { mutableStateOf<String?>(null) }
     var libraryGenre by rememberSaveable { mutableStateOf<String?>(null) }
     var libraryYear by rememberSaveable { mutableStateOf<String?>(null) }
+    val localCategoryCounts = remember(uiState.items) {
+        val counts = linkedMapOf<String, Int>()
+        LocalLibraryCategory.entries.forEach { category ->
+            counts[category.key] = uiState.items.count { category.key in it.effectiveLocalCategoryKeys() }
+        }
+        counts
+    }
     var libraryWatchedFilterName by rememberSaveable { mutableStateOf(LibraryWatchedFilter.ALL.name) }
     val libraryWatchedFilter = remember(libraryWatchedFilterName) {
         runCatching { LibraryWatchedFilter.valueOf(libraryWatchedFilterName) }.getOrDefault(LibraryWatchedFilter.ALL)
@@ -303,10 +316,32 @@ fun LibraryScreen(
     }
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
-    val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
-        if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
+    val isFocusedLocalCategoryTab = uiState.sourceMode == LibrarySourceMode.LOCAL &&
+        selectedLocalCategoryKey != LOCAL_LIBRARY_ALL_TAB_KEY
+    val effectiveLayoutForSaved = if (isFocusedLocalCategoryTab) {
+        LibraryLayoutMode.VERTICAL
+    } else {
+        displaySettings.layoutMode
+    }
+    val filteredSectionsBySearch = remember(uiState.sections, savedSearchQuery) {
+        val trimmed = savedSearchQuery.trim()
+        if (trimmed.isEmpty()) {
+            uiState.sections
+        } else {
+            uiState.sections.mapNotNull { section ->
+                val matching = section.items.filter { item ->
+                    item.name.contains(trimmed, ignoreCase = true) ||
+                        item.genres.any { it.contains(trimmed, ignoreCase = true) } ||
+                        item.releaseInfo?.contains(trimmed, ignoreCase = true) == true
+                }
+                if (matching.isEmpty()) null else section.copy(items = matching)
+            }
+        }
+    }
+    val sortedSections = remember(filteredSectionsBySearch, effectiveLayoutForSaved, uiState.sourceMode, sourceMode, providerOrders, visibleSortOption) {
+        if (sourceMode == LibraryViewMode.Saved && effectiveLayoutForSaved == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
-                sections = uiState.sections,
+                sections = filteredSectionsBySearch,
                 selected = visibleSortOption,
                 sourceMode = uiState.sourceMode,
                 providerOrders = providerOrders.ranks,
@@ -315,31 +350,39 @@ fun LibraryScreen(
             emptyList()
         }
     }
+    val effectiveSectionKeyForProjection = if (uiState.sourceMode == LibrarySourceMode.LOCAL) {
+        selectedLocalCategoryKey
+    } else {
+        selectedLibrarySectionKey
+    }
     val verticalProjection = remember(
         uiState.sections,
         uiState.sourceMode,
-        selectedLibrarySectionKey,
+        effectiveSectionKeyForProjection,
         selectedLibraryType,
         libraryGenre,
         libraryYear,
         libraryWatchedFilter,
+        savedSearchQuery,
         watchedUiState.watchedKeys,
         fullyWatchedSeriesKeys,
-        displaySettings,
+        effectiveLayoutForSaved,
         sourceMode,
         providerOrders,
+        visibleSortOption,
     ) {
-        if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
+        if (sourceMode == LibraryViewMode.Saved && effectiveLayoutForSaved == LibraryLayoutMode.VERTICAL) {
             buildLibraryVerticalProjection(
                 sections = uiState.sections,
                 sourceMode = uiState.sourceMode,
-                selectedSectionKey = selectedLibrarySectionKey,
+                selectedSectionKey = effectiveSectionKeyForProjection,
                 selectedType = selectedLibraryType,
                 sortOption = visibleSortOption,
                 providerOrders = providerOrders.ranks,
                 selectedGenre = libraryGenre,
                 selectedYear = libraryYear,
                 watchedFilter = libraryWatchedFilter,
+                searchQuery = savedSearchQuery,
                 isWatched = { item ->
                     WatchingState.isPosterWatched(
                         watchedKeys = watchedUiState.watchedKeys,
@@ -463,7 +506,7 @@ fun LibraryScreen(
     val disintegration = remember { LibraryDisintegrationHolder() }
     val librarySectionsDisplay = if (
         sourceMode == LibraryViewMode.Saved &&
-        displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL &&
+        effectiveLayoutForSaved == LibraryLayoutMode.HORIZONTAL &&
         uiState.isLoaded &&
         sortedSections.isNotEmpty()
     ) {
@@ -542,6 +585,22 @@ fun LibraryScreen(
                         }
                     }
                     if (sourceMode == LibraryViewMode.Saved) {
+                        IconButton(
+                            onClick = {
+                                if (savedSearchVisible) savedSearchQuery = ""
+                                savedSearchVisible = !savedSearchVisible
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .semantics { contentDescription = "Search Library" },
+                        ) {
+                            Icon(
+                                imageVector = if (savedSearchVisible) Icons.Rounded.Close else Icons.Rounded.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         val openCalendarLabel = stringResource(Res.string.library_calendar_open)
                         IconButton(
                             onClick = { showReleaseCalendar = true },
@@ -576,9 +635,54 @@ fun LibraryScreen(
                             )
                         }
                     }
-                    if (onDownloadsClick != null) {
-                        LibraryDownloadsButton(onClick = onDownloadsClick)
-                    }
+                }
+                if (
+                    sourceMode == LibraryViewMode.Saved &&
+                    uiState.sourceMode == LibrarySourceMode.LOCAL &&
+                    displaySettings.categoryNavPosition == LibraryCategoryNavPosition.TOP
+                ) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LibraryCategoryNavBar(
+                        selectedTabKey = selectedLocalCategoryKey,
+                        categoryCounts = localCategoryCounts,
+                        totalUniqueCount = uiState.items.size,
+                        onTabSelected = { nextKey ->
+                            selectedLocalCategoryKey = nextKey
+                            selectedLibraryType = null
+                        },
+                    )
+                }
+                AnimatedVisibility(
+                    visible = sourceMode == LibraryViewMode.Saved && savedSearchVisible,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
+                    OutlinedTextField(
+                        value = savedSearchQuery,
+                        onValueChange = { savedSearchQuery = it },
+                        singleLine = true,
+                        placeholder = { Text("Search saved titles, genres, or release year...") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = null,
+                            )
+                        },
+                        trailingIcon = if (savedSearchQuery.isNotEmpty()) {
+                            {
+                                IconButton(onClick = { savedSearchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = "Clear search",
+                                    )
+                                }
+                            }
+                        } else null,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
             }
@@ -692,98 +796,238 @@ fun LibraryScreen(
                     }
 
                     uiState.sections.isEmpty() -> {
+                        val selectedCategory = LocalLibraryCategory.fromKey(selectedLocalCategoryKey)
                         item {
                             HomeEmptyStateCard(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                title = when (uiState.sourceMode) {
-                                    LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_title)
-                                    LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_title)
-                                    LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_title)
-                                    LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_title)
-                                    LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_title)
-                                    LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_title)
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                title = if (uiState.sourceMode == LibrarySourceMode.LOCAL && selectedCategory != null) {
+                                    selectedCategory.emptyTitle
+                                } else {
+                                    when (uiState.sourceMode) {
+                                        LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_title)
+                                        LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_title)
+                                        LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_title)
+                                        LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_title)
+                                        LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_title)
+                                        LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_title)
+                                    }
                                 },
-                                message = when (uiState.sourceMode) {
-                                    LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_message)
-                                    LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_message)
-                                    LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_message)
-                                    LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_message)
-                                    LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_message)
-                                    LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_message)
+                                message = if (uiState.sourceMode == LibrarySourceMode.LOCAL && selectedCategory != null) {
+                                    selectedCategory.emptyMessage
+                                } else {
+                                    when (uiState.sourceMode) {
+                                        LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_message)
+                                        LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_message)
+                                        LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_message)
+                                        LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_message)
+                                        LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_message)
+                                        LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_message)
+                                    }
                                 },
                             )
                         }
                     }
 
                     else -> {
-                        stickyHeader(
-                            key = "library-saved-controls:${uiState.sourceMode}:" +
-                                "${displaySettings.layoutMode}:$effectiveSortOption",
-                        ) {
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .appBackgroundCover(MaterialTheme.colorScheme.background)
-                                        .nuvioConsumePointerEvents(),
-                                )
-                                LibrarySavedControls(
-                                    layoutMode = displaySettings.layoutMode,
-                                    sourceMode = uiState.sourceMode,
-                                    sortOption = effectiveSortOption,
-                                    verticalProjection = verticalProjection,
-                                    watchedFilter = libraryWatchedFilter,
-                                    onSectionSelected = { sectionKey ->
-                                        selectedLibrarySectionKey = sectionKey
-                                        selectedLibraryType = null
-                                    },
-                                    onTypeSelected = { type -> selectedLibraryType = type },
-                                    onGenreSelected = { genre -> libraryGenre = genre },
-                                    onYearSelected = { year -> libraryYear = year },
-                                    onWatchedFilterSelected = { filter -> libraryWatchedFilterName = filter.name },
-                                    onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
-                                    modifier = libraryContentTransitionModifier()
-                                        .padding(horizontal = 16.dp)
-                                        .padding(top = 8.dp, bottom = 14.dp),
-                                )
-                            }
-                        }
-                        when (displaySettings.layoutMode) {
+                        // On-screen LibrarySavedControls replaced by the Library-only Sort & Filter FAB.
+                        when (effectiveLayoutForSaved) {
                             LibraryLayoutMode.HORIZONTAL -> {
                                 libraryEnhancedSections(
                                     content = enhancedLibraryContent,
                                     onPosterClick = onPosterClick,
                                 )
-                                librarySections(
-                                    displaySections = librarySectionsDisplay,
-                                    releaseInfoFor = releaseInfoFor,
-                                    watchedKeys = watchedUiState.watchedKeys,
-                                    fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
-                                    sortOption = effectiveSortOption,
-                                    posterPattern = effectivePosterPattern,
-                                    onPosterClick = onPosterClick,
-                                    onSectionViewAllClick = onSectionViewAllClick,
-                                    onPosterLongClick = onPosterLongClick,
-                                    onDisintegrated = disintegration::onExited,
-                                )
+                                if (librarySectionsDisplay.isEmpty() && savedSearchQuery.isNotBlank()) {
+                                    item(key = "library_search_empty_horizontal") {
+                                        HomeEmptyStateCard(
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            title = "No matching titles",
+                                            message = "Nothing in your Library matched “${savedSearchQuery.trim()}”.",
+                                            actionLabel = "Clear search",
+                                            onActionClick = { savedSearchQuery = "" },
+                                        )
+                                    }
+                                } else {
+                                    librarySections(
+                                        displaySections = librarySectionsDisplay,
+                                        releaseInfoFor = releaseInfoFor,
+                                        watchedKeys = watchedUiState.watchedKeys,
+                                        fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                                        sortOption = effectiveSortOption,
+                                        posterPattern = effectivePosterPattern,
+                                        onPosterClick = onPosterClick,
+                                        onSectionViewAllClick = { section, sort ->
+                                            if (uiState.sourceMode == LibrarySourceMode.LOCAL &&
+                                                LocalLibraryCategory.fromKey(section.type) != null
+                                            ) {
+                                                selectedLocalCategoryKey = section.type
+                                            } else {
+                                                onSectionViewAllClick?.invoke(section, sort)
+                                            }
+                                        },
+                                        onPosterLongClick = onPosterLongClick,
+                                        onDisintegrated = disintegration::onExited,
+                                    )
+                                }
                             }
-                            LibraryLayoutMode.VERTICAL -> libraryVerticalContent(
-                                projection = verticalProjection,
-                                columns = gridColumns,
-                                releaseInfoFor = releaseInfoFor,
-                                watchedKeys = watchedUiState.watchedKeys,
-                                fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
-                                posterPattern = effectivePosterPattern,
-                                onPosterClick = onPosterClick,
-                                onPosterLongClick = onPosterLongClick,
+                            LibraryLayoutMode.VERTICAL -> {
+                                if (verticalProjection.entries.isEmpty()) {
+                                    val selectedCategory = LocalLibraryCategory.fromKey(selectedLocalCategoryKey)
+                                    item(key = "library_category_or_filter_empty") {
+                                        HomeEmptyStateCard(
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            title = when {
+                                                savedSearchQuery.isNotBlank() -> "No matching titles"
+                                                selectedCategory != null -> selectedCategory.emptyTitle
+                                                else -> stringResource(Res.string.library_empty_title)
+                                            },
+                                            message = when {
+                                                savedSearchQuery.isNotBlank() ->
+                                                    "No titles matched “${savedSearchQuery.trim()}” in this view."
+                                                selectedCategory != null -> selectedCategory.emptyMessage
+                                                else -> stringResource(Res.string.library_empty_message)
+                                            },
+                                            actionLabel = if (savedSearchQuery.isNotBlank()) "Clear search" else null,
+                                            onActionClick = if (savedSearchQuery.isNotBlank()) {
+                                                { savedSearchQuery = "" }
+                                            } else null,
+                                        )
+                                    }
+                                } else {
+                                    libraryVerticalContent(
+                                        projection = verticalProjection,
+                                        columns = gridColumns,
+                                        releaseInfoFor = releaseInfoFor,
+                                        watchedKeys = watchedUiState.watchedKeys,
+                                        fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                                        posterPattern = effectivePosterPattern,
+                                        onPosterClick = onPosterClick,
+                                        onPosterLongClick = onPosterLongClick,
+                                    )
+                                }
+                            }
+                        }
+                        item(key = "library_bottom_fab_clearance") {
+                            Spacer(
+                                modifier = Modifier.height(
+                                    if (
+                                        uiState.sourceMode == LibrarySourceMode.LOCAL &&
+                                        displaySettings.categoryNavPosition == LibraryCategoryNavPosition.BOTTOM
+                                    ) {
+                                        124.dp
+                                    } else {
+                                        76.dp
+                                    },
+                                ),
                             )
                         }
                     }
                 }
             }
+            }
+
+            val bottomNavOverlayPadding = if (LocalNuvioBottomNavigationOverlayPadding.current > 0.dp) {
+                nuvioSafeBottomPadding()
+            } else {
+                0.dp
+            }
+            val showBottomCategoryNav = sourceMode == LibraryViewMode.Saved &&
+                uiState.sourceMode == LibrarySourceMode.LOCAL &&
+                displaySettings.categoryNavPosition == LibraryCategoryNavPosition.BOTTOM
+
+            if (showBottomCategoryNav) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .appBackgroundCover(MaterialTheme.colorScheme.background, coverAbove = false)
+                        .padding(top = 6.dp, bottom = bottomNavOverlayPadding + 6.dp),
+                ) {
+                    LibraryCategoryNavBar(
+                        selectedTabKey = selectedLocalCategoryKey,
+                        categoryCounts = localCategoryCounts,
+                        totalUniqueCount = uiState.items.size,
+                        onTabSelected = { nextKey ->
+                            selectedLocalCategoryKey = nextKey
+                            selectedLibraryType = null
+                        },
+                    )
+                }
+            }
+
+            if (sourceMode == LibraryViewMode.Saved && uiState.sections.isNotEmpty()) {
+                val activeFilterCount = listOf(
+                    effectiveSortOption != LibrarySortOption.DEFAULT,
+                    selectedLibraryType != null,
+                    libraryGenre != null,
+                    libraryYear != null,
+                    libraryWatchedFilter != LibraryWatchedFilter.ALL,
+                ).count { it }
+                LibrarySortFilterFab(
+                    activeFilterCount = activeFilterCount,
+                    onClick = { showSortFilterSheet = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = 18.dp,
+                            bottom = bottomNavOverlayPadding + (if (showBottomCategoryNav) 62.dp else 16.dp),
+                        ),
+                )
+            }
         }
     }
-    }
+
+    LibrarySortFilterBottomSheet(
+        visible = showSortFilterSheet,
+        layoutMode = effectiveLayoutForSaved,
+        categoryNavPosition = displaySettings.categoryNavPosition,
+        sourceMode = uiState.sourceMode,
+        sortOption = effectiveSortOption,
+        verticalProjection = verticalProjection,
+        watchedFilter = libraryWatchedFilter,
+        onLayoutModeSelected = LibraryDisplaySettingsRepository::setLayoutMode,
+        onCategoryNavPositionSelected = LibraryDisplaySettingsRepository::setCategoryNavPosition,
+        onSectionSelected = { sectionKey ->
+            if (uiState.sourceMode == LibrarySourceMode.LOCAL) {
+                selectedLocalCategoryKey = sectionKey
+            } else {
+                selectedLibrarySectionKey = sectionKey
+            }
+            selectedLibraryType = null
+        },
+        onTypeSelected = { type ->
+            selectedLibraryType = type
+            if (type != null && displaySettings.layoutMode != LibraryLayoutMode.VERTICAL) {
+                LibraryDisplaySettingsRepository.setLayoutMode(LibraryLayoutMode.VERTICAL)
+            }
+        },
+        onGenreSelected = { genre ->
+            libraryGenre = genre
+            if (genre != null && displaySettings.layoutMode != LibraryLayoutMode.VERTICAL) {
+                LibraryDisplaySettingsRepository.setLayoutMode(LibraryLayoutMode.VERTICAL)
+            }
+        },
+        onYearSelected = { year ->
+            libraryYear = year
+            if (year != null && displaySettings.layoutMode != LibraryLayoutMode.VERTICAL) {
+                LibraryDisplaySettingsRepository.setLayoutMode(LibraryLayoutMode.VERTICAL)
+            }
+        },
+        onWatchedFilterSelected = { filter ->
+            libraryWatchedFilterName = filter.name
+            if (filter != LibraryWatchedFilter.ALL && displaySettings.layoutMode != LibraryLayoutMode.VERTICAL) {
+                LibraryDisplaySettingsRepository.setLayoutMode(LibraryLayoutMode.VERTICAL)
+            }
+        },
+        onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+        onClearFilters = {
+            selectedLibraryType = null
+            libraryGenre = null
+            libraryYear = null
+            libraryWatchedFilterName = LibraryWatchedFilter.ALL.name
+            LibraryDisplaySettingsRepository.setSortOption(LibrarySortOption.DEFAULT)
+        },
+        onDismiss = { showSortFilterSheet = false },
+    )
 
     if (showReleaseCalendar) {
         LibraryReleaseCalendarPanel(

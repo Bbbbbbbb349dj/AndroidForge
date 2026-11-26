@@ -105,7 +105,44 @@ fun SubtitleStylePanel(
                         (subtitleDelayMs + SUBTITLE_DELAY_STEP_MS).coerceAtMost(SUBTITLE_DELAY_MAX_MS),
                     )
                 },
+                // Hold-repeat: keep nudging by one step while the button is held.
+                onDecreaseHold = {
+                    onSubtitleDelayChanged(
+                        (subtitleDelayMs - SUBTITLE_DELAY_STEP_MS).coerceAtLeast(SUBTITLE_DELAY_MIN_MS),
+                    )
+                },
+                onIncreaseHold = {
+                    onSubtitleDelayChanged(
+                        (subtitleDelayMs + SUBTITLE_DELAY_STEP_MS).coerceAtMost(SUBTITLE_DELAY_MAX_MS),
+                    )
+                },
             )
+            // Fine / coarse nudge chips with a one-tap reset.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(-500, -100, -50, 50, 100, 500).forEach { deltaMs ->
+                    SubtitleDelayChip(
+                        label = buildString {
+                            if (deltaMs > 0) append('+') else append('\u2212')
+                            append(abs(deltaMs))
+                            append("ms")
+                        },
+                        highlighted = false,
+                        onClick = {
+                            onSubtitleDelayChanged(
+                                (subtitleDelayMs + deltaMs).coerceIn(SUBTITLE_DELAY_MIN_MS, SUBTITLE_DELAY_MAX_MS),
+                            )
+                        },
+                    )
+                }
+                SubtitleDelayChip(
+                    label = "0ms",
+                    highlighted = subtitleDelayMs == 0,
+                    onClick = onSubtitleDelayReset,
+                )
+            }
             SubtitleTextAction(
                 label = stringResource(Res.string.compose_player_reset),
                 onClick = onSubtitleDelayReset,
@@ -427,6 +464,31 @@ private fun SubtitleHelperText(text: String) {
         color = Color.White.copy(alpha = 0.7f),
         style = MaterialTheme.typography.bodySmall,
     )
+}
+
+@Composable
+private fun SubtitleDelayChip(
+    label: String,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (highlighted) Color.White.copy(alpha = 0.22f)
+                else Color.White.copy(alpha = 0.08f),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
 }
 
 private fun formatSubtitleDelay(delayMs: Int): String {

@@ -63,6 +63,7 @@ import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WifiOff
@@ -122,7 +123,6 @@ import com.nuvio.app.features.streams.StreamBadge
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
-import kotlin.math.roundToLong
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
 import com.nuvio.app.core.ui.glass.isAmbientLiquidGlassActive
 
@@ -344,15 +344,20 @@ internal fun PlayerControlsShell(
                 )
             }
 
-            if (enhancedSettings.playerClockEndTimeEnabled && !enhancedSettings.playerStatusOverlayEnabled) {
+            if (enhancedSettings.playerClockEndTimeEnabled &&
+                !enhancedSettings.playerStatusOverlayEnabled &&
+                !(showParentalGuide && !useLegacyLayout)
+            ) {
                 PlayerClockEndTimeOverlay(
                     playbackSnapshot = playbackSnapshot,
                     modifier = Modifier
-                        .align(if (useLegacyLayout) Alignment.TopEnd else Alignment.TopStart)
+                        // Legacy header owns TopStart/TopEnd, so the clock uses the free
+                        // TopCenter slot (status overlay is disabled in this branch).
+                        .align(if (useLegacyLayout) Alignment.TopCenter else Alignment.TopStart)
                         .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
                         .padding(
                             start = if (useLegacyLayout) 0.dp else metrics.horizontalPadding,
-                            end = if (useLegacyLayout) metrics.horizontalPadding else 0.dp,
+                            end = if (useLegacyLayout) 0.dp else metrics.horizontalPadding,
                             top = metrics.verticalPadding / 4,
                         ),
                 )
@@ -406,6 +411,7 @@ internal fun PlayerControlsShell(
                     onAudioClick = onAudioClick,
                     onSourcesClick = onSourcesClick,
                     onEpisodesClick = onEpisodesClick,
+                    onNextEpisodeClick = onNextEpisodeClick,
                     onChaptersClick = onChaptersClick,
                     onLiveChannelsClick = onLiveChannelsClick,
                     qualityLabel = qualityLabel,
@@ -720,7 +726,7 @@ private fun PlayerHeader(
                             onClick = onCastClick,
                         )
                     }
-                    if (onPictureInPictureClick != null && !enhancedSettings.hidePlayerPip) {
+                    if (onPictureInPictureClick != null) {
                         PlayerHeaderIconButton(
                             icon = Icons.Rounded.PictureInPictureAlt,
                             contentDescription = stringResource(Res.string.compose_player_picture_in_picture),
@@ -982,6 +988,7 @@ private fun ProgressControls(
     onAudioClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
+    onNextEpisodeClick: (() -> Unit)? = null,
     onChaptersClick: (() -> Unit)? = null,
     onLiveChannelsClick: (() -> Unit)? = null,
     qualityLabel: String? = null,
@@ -1080,7 +1087,7 @@ private fun ProgressControls(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (onPictureInPictureClick != null && !enhancedSettings.hidePlayerPip) {
+                    if (onPictureInPictureClick != null) {
                         PlayerActionPillButton(
                             label = stringResource(Res.string.compose_player_picture_in_picture),
                             icon = Icons.Rounded.PictureInPictureAlt,
@@ -1142,6 +1149,13 @@ private fun ProgressControls(
                             label = stringResource(Res.string.player_chapters),
                             icon = Icons.AutoMirrored.Rounded.ListAlt,
                             onClick = onChaptersClick,
+                        )
+                    }
+                    if (onNextEpisodeClick != null) {
+                        PlayerActionPillButton(
+                            label = stringResource(Res.string.player_next_episode),
+                            icon = Icons.Rounded.SkipNext,
+                            onClick = onNextEpisodeClick,
                         )
                     }
                     if (onEpisodesClick != null) {

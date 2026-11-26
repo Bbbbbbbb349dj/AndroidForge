@@ -9,6 +9,7 @@ import com.nuvio.app.core.ui.DialogOption
 import com.nuvio.app.core.ui.DialogSurface
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -179,6 +180,7 @@ internal fun PlaybackInterfaceSettings(
                     onCheckedChange = PlayerSettingsRepository::setTouchGesturesEnabled,
                 )
                 if (settings.touchGesturesEnabled && !settings.externalPlayerEnabled) {
+                    val enhancedPlayerState by NuvioEnhancedSettingsRepository.uiState.collectAsStateWithLifecycle()
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsSwitchRow(
                         title = stringResource(Res.string.settings_playback_swipe_to_seek),
@@ -187,6 +189,30 @@ internal fun PlaybackInterfaceSettings(
                         isTablet = isTablet,
                         onCheckedChange = PlayerSettingsRepository::setSwipeToSeekEnabled,
                     )
+                    if (settings.swipeToSeekEnabled) {
+                        val currentSensitivity = enhancedPlayerState.swipeSeekSensitivity
+                        val presetLabel = when {
+                            currentSensitivity <= 0.75f -> "Fine (0.65x • frame & subtitle precision)"
+                            currentSensitivity <= 1.20f -> "Balanced (1.0x • dynamic distance + velocity)"
+                            currentSensitivity <= 1.70f -> "Fast (1.45x • brisk chapter scrubbing)"
+                            else -> "Turbo (2.0x • rapid long-form jumps)"
+                        }
+                        SettingsGroupDivider(isTablet = isTablet)
+                        SettingsNavigationRow(
+                            title = "Swipe Seek Sensitivity",
+                            description = presetLabel,
+                            isTablet = isTablet,
+                            onClick = {
+                                val next = when {
+                                    currentSensitivity <= 0.75f -> 1.0f
+                                    currentSensitivity <= 1.20f -> 1.45f
+                                    currentSensitivity <= 1.70f -> 2.0f
+                                    else -> 0.65f
+                                }
+                                NuvioEnhancedSettingsRepository.setSwipeSeekSensitivity(next)
+                            },
+                        )
+                    }
                 }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(

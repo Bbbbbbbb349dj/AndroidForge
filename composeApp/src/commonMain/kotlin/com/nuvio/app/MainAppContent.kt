@@ -62,6 +62,8 @@ import com.nuvio.app.core.auth.DeviceSessionRegistration
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.deeplink.AppDeepLink
 import com.nuvio.app.core.deeplink.AppDeepLinkRepository
+import com.nuvio.app.core.deeplink.LocalVideoLaunchRequest
+import com.nuvio.app.features.streams.StreamSubtitle
 import com.nuvio.app.core.logging.InAppLogger
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.network.NetworkCondition
@@ -77,6 +79,8 @@ import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioContinueWatchingActionSheet
 import com.nuvio.app.core.ui.NuvioFloatingPrompt
 import com.nuvio.app.core.ui.NuvioPosterZoomActionOverlay
+import com.nuvio.app.core.ui.TitleQuickDetailsSheet
+import com.nuvio.app.features.library.normalizeLocalCategoryKeys
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioToastHost
@@ -122,7 +126,9 @@ import com.nuvio.app.features.home.components.shouldBlurContinueWatchingArtwork
 import com.nuvio.app.features.library.refreshLibraryReleaseScheduleIfStale
 import com.nuvio.app.features.library.warmLibraryReleaseSchedule
 import com.nuvio.app.features.library.LibraryItem
+import com.nuvio.app.features.library.DuplicateLibraryResolution
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.LocalLibraryCategory
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.rememberLibrarySectionTitleResolver
 import com.nuvio.app.features.library.LibrarySortOption
@@ -144,6 +150,7 @@ import com.nuvio.app.features.party.PartyScreen
 import com.nuvio.app.features.party.PartySync
 import com.nuvio.app.features.party.partyMediaKey
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
+import com.nuvio.app.features.player.autoCompleteFullyWatchedSeries
 import com.nuvio.app.features.player.externalPlaybackSession
 import com.nuvio.app.features.player.infusePlaybackCallbacks
 import com.nuvio.app.features.player.recordExternalPlaybackProgress
@@ -167,6 +174,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import com.nuvio.app.features.settings.AccountSettingsScreen
 import com.nuvio.app.features.settings.AddonsSettingsScreen
 import com.nuvio.app.features.settings.ContinueWatchingSettingsScreen
+import com.nuvio.app.features.settings.DownloadsSettingsScreen
 import com.nuvio.app.features.settings.HomescreenSettingsScreen
 import com.nuvio.app.features.settings.LicensesAttributionsSettingsScreen
 import com.nuvio.app.features.settings.MetaScreenSettingsScreen
@@ -328,7 +336,7 @@ internal fun MainAppContent(
             LiveTvRepository.ensureLoaded()
             LiveTvRepository.uiState
         }.collectAsStateWithLifecycle()
-        val showLiveTvInNavigation = liveTvUiState.showInNavigation
+        val showLiveTvInNavigation = true
         val authState by AuthRepository.state.collectAsStateWithLifecycle()
         val openPosterActions: (PosterActionTarget) -> Unit = { target ->
             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -363,6 +371,9 @@ internal fun MainAppContent(
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
+    LaunchedEffect(fullyWatchedSeriesKeys) {
+        autoCompleteFullyWatchedSeries(fullyWatchedSeriesKeys)
+    }
     val downloadsUiState by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
@@ -1013,6 +1024,52 @@ internal fun MainAppContent(
             navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
         }
 
+        fun openLocalVideo(req: LocalVideoLaunchRequest) {
+            val syntheticId = "local:${req.uri.hashCode().toUInt().toString(16)}"
+            val resumeEntry = WatchProgressRepository.progressForVideo(syntheticId)
+                ?.takeIf { it.isResumable }
+            val cleanMime = req.mimeType
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() && !it.endsWith("/*") && it != "application/octet-stream" }
+            val sidecars = req.sidecarSubtitles.map { sub ->
+                StreamSubtitle(url = sub.uri, language = sub.language, name = sub.label)
+            }
+            val playerLaunch = PlayerLaunch(
+                profileId = activePlaybackProfileId,
+                title = req.title,
+                sourceUrl = req.uri,
+                externalSubtitles = DownloadSubtitles.localSubtitles(req.uri) + sidecars,
+                streamType = cleanMime,
+                streamTitle = req.filename ?: req.title,
+                streamSubtitle = req.subtitle ?: "Local Storage",
+                providerName = "Local Storage",
+                poster = req.poster,
+                background = req.background,
+                seasonNumber = req.seasonNumber,
+                episodeNumber = req.episodeNumber,
+                episodeTitle = req.episodeTitle,
+                episodeThumbnail = req.episodeThumbnail,
+                contentType = req.contentType,
+                videoId = syntheticId,
+                parentMetaId = req.parentMetaId ?: syntheticId,
+                parentMetaType = req.parentMetaType,
+                sourceFilename = req.filename,
+                initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
+                initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
+            )
+            val launchId = PlayerLaunchStore.put(playerLaunch)
+            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+        }
+
+        LaunchedEffect(navController, ownsAppRuntime) {
+            if (!ownsAppRuntime) return@LaunchedEffect
+            AppDeepLinkRepository.pendingLocalVideo.collect { req ->
+                if (req == null) return@collect
+                AppDeepLinkRepository.markLocalVideoConsumed(req)
+                openLocalVideo(req)
+            }
+        }
+
         fun openExternalStreamUrl(url: String): Boolean {
             val opened = runCatching {
                 uriHandler.openUri(url)
@@ -1645,6 +1702,10 @@ internal fun MainAppContent(
                         },
                         actions = { isTabletLayout ->
                             AppTabActions(
+                                onHomeSearchClick = {
+                                    selectedTab = AppScreenTab.Search
+                                    searchFocusRequestCount++
+                                },
                                 onCatalogClick = onCatalogClick,
                                 onPosterClick = navController::openPreview,
                                 onPosterLongClick = { meta ->
@@ -1698,6 +1759,24 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onOpenDownload = ::openDownloadedItem,
+                                onDownloadDetailsClick = { item ->
+                                    navController.navigate(
+                                        DetailRoute(
+                                            type = item.parentMetaType,
+                                            id = item.parentMetaId,
+                                            title = item.title,
+                                        ),
+                                    )
+                                },
+                                onDownloadShowClick = if (useNativeNavigation) {
+                                    { showId, title -> navController.navigate(DownloadShowRoute(showId, title)) }
+                                } else {
+                                    null
+                                },
+                                onDownloadSettingsClick = {
+                                    navController.navigate(DownloadsSettingsRoute(downloadsTitle))
+                                },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onLiveTvChannelClick = onLiveTvChannelClick,
@@ -1929,6 +2008,11 @@ internal fun MainAppContent(
                         onOpenDownload = ::openDownloadedItem,
                     )
                 }
+                entry<DownloadsSettingsRoute> { route ->
+                    SettingsDestination(route, navController) { onBack ->
+                        DownloadsSettingsScreen(onBack = onBack)
+                    }
+                }
                 entry<AddonsSettingsRoute> { route ->
                     SettingsDestination(route, navController) { onBack ->
                         AddonsSettingsScreen(onBack = onBack)
@@ -2050,159 +2134,101 @@ internal fun MainAppContent(
             selectedPosterActionTarget?.let { posterActionTarget ->
                 key(posterActionTarget) {
                     val preview = posterActionTarget.preview
-                    val isSaved = LibraryRepository.isSaved(preview.id, preview.type)
+                    val savedItem = remember(libraryUiState.items, preview.id, preview.type) {
+                        LibraryRepository.savedItem(preview.id, preview.type)
+                    }
+                    val isSaved = savedItem != null || LibraryRepository.isSaved(preview.id, preview.type)
                     val isWatched = WatchingState.isPosterWatched(
                         watchedKeys = watchedUiState.watchedKeys,
                         item = preview,
                         fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
                     )
-                    val removesFromLibrary = isSaved &&
-                        (posterActionTarget.libraryItem != null || !isRemoteLibrarySource)
-                    NuvioPosterZoomActionOverlay(
-                        imageUrl = selectedPosterAnchor?.imageUrl ?: preview.poster,
-                        title = preview.name,
-                        subtitle = preview.releaseInfo
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { formatReleaseDateForDisplay(it) }
-                            ?: preview.type.replaceFirstChar { char ->
-                                if (char.isLowerCase()) char.titlecase() else char.toString()
-                            },
+                    TitleQuickDetailsSheet(
+                        item = preview,
+                        isSaved = isSaved,
+                        savedCategoryKeys = savedItem?.listKeys?.toList().orEmpty(),
                         isWatched = isWatched,
-                        anchor = selectedPosterAnchor,
-                        actions = listOf(
-                            PosterZoomOverlayAction(
-                                icon = if (isSaved) Icons.Default.DeleteOutline else Icons.Default.Add,
-                                label = if (isSaved) {
-                                    stringResource(Res.string.hero_remove_from_library)
-                                } else {
-                                    stringResource(Res.string.hero_add_to_library)
-                                },
-                                isDestructive = removesFromLibrary,
-                                exitAnimation = if (removesFromLibrary && !isRemoteLibrarySource) {
-                                    PosterZoomOverlayExitAnimation.DISINTEGRATE
-                                } else {
-                                    PosterZoomOverlayExitAnimation.COLLAPSE
-                                },
-                                onSelected = {
-                                    val libraryItem = posterActionTarget.libraryItem
-                                        ?: preview.toLibraryItem(savedAtEpochMs = 0L)
-                                    if (posterActionTarget.libraryItem != null) {
-                                        val animationKey = posterActionTarget.libraryListKey
-                                            ?.let { listKey -> librarySectionItemKey(listKey, libraryItem) }
-                                        if (isRemoteLibrarySource) {
-                                            coroutineScope.launch {
-                                                val listKey = posterActionTarget.libraryListKey
-                                                val removeMembership: suspend (Set<TrackingProviderId>) ->
-                                                    TrackingMembershipApplyResult = { confirmedProviders ->
-                                                    if (listKey.isNullOrBlank()) {
-                                                        val currentMembership = LibraryRepository.getMembershipSnapshot(libraryItem)
-                                                        LibraryRepository.applyMembershipChanges(
-                                                            item = libraryItem,
-                                                            desiredMembership = currentMembership.mapValues { false },
-                                                            confirmedRemovalProviders = confirmedProviders,
-                                                        )
-                                                    } else {
-                                                        LibraryRepository.removeFromList(
-                                                            item = libraryItem,
-                                                            listKey = listKey,
-                                                            confirmedRemovalProviders = confirmedProviders,
-                                                        )
-                                                    }
-                                                }
-                                                val removeMembershipWithAnimation:
-                                                    suspend (Set<TrackingProviderId>) -> TrackingMembershipApplyResult =
-                                                    { confirmedProviders ->
-                                                        val request = if (removesFromLibrary) {
-                                                            animationKey?.let(libraryDisintegrationRequests::arm)
-                                                        } else {
-                                                            null
-                                                        }
-                                                        try {
-                                                            removeMembership(confirmedProviders).also { result ->
-                                                                if (result.requiresRemovalConfirmation && request != null) {
-                                                                    libraryDisintegrationRequests.cancel(request)
-                                                                }
-                                                            }
-                                                        } catch (error: Throwable) {
-                                                            request?.let(libraryDisintegrationRequests::cancel)
-                                                            throw error
-                                                        }
-                                                    }
-                                                executeTrackingMembershipOperation(
-                                                    operation = { removeMembershipWithAnimation(emptySet()) },
-                                                    onSuccess = { result ->
-                                                        if (result.requiresRemovalConfirmation) {
-                                                            pendingTrackingRemoval = PendingTrackingMembershipRemoval(
-                                                                itemTitle = libraryItem.name,
-                                                                confirmations = result.requiredRemovalConfirmations,
-                                                                retry = removeMembershipWithAnimation,
-                                                                onApplied = {},
-                                                                onFailure = { error ->
-                                                                    NuvioToastController.show(
-                                                                        error.message
-                                                                            ?: trackingListsUpdateFailedMessage,
-                                                                    )
-                                                                },
-                                                            )
-                                                        }
-                                                    },
-                                                    onFailure = { error ->
-                                                        NuvioToastController.show(
-                                                            error.message ?: trackingListsUpdateFailedMessage,
-                                                        )
-                                                    },
-                                                )
-                                            }
-                                        } else {
-                                            if (removesFromLibrary) {
-                                                animationKey?.let(libraryDisintegrationRequests::arm)
-                                            }
-                                            LibraryRepository.remove(libraryItem.id)
-                                        }
-                                    } else {
-                                        if (!isRemoteLibrarySource) {
-                                            LibraryRepository.toggleLocalSaved(libraryItem)
-                                        } else {
-                                            pickerItem = libraryItem
-                                            pickerTitle = preview.name
-                                            pickerTabs = LibraryRepository.libraryListTabs(libraryItem)
-                                            pickerMembership = pickerTabs.associate { it.key to false }
-                                            pickerPending = true
-                                            pickerError = null
-                                            showLibraryListPicker = true
-                                            coroutineScope.launch {
-                                                runCatching {
-                                                    val snapshot = LibraryRepository.getMembershipSnapshot(libraryItem)
-                                                    val tabs = LibraryRepository.libraryListTabs(libraryItem)
-                                                    pickerTabs = tabs
-                                                    pickerMembership = tabs.associate { tab ->
-                                                        tab.key to (snapshot[tab.key] == true)
-                                                    }
-                                                }.onFailure { error ->
-                                                    pickerError = error.message ?: getString(Res.string.trakt_lists_load_failed)
-                                                }
-                                                pickerPending = false
-                                            }
-                                        }
+                        isRemoteLibrarySource = isRemoteLibrarySource,
+                        onOpenDetails = {
+                            selectedPosterActionTarget = null
+                            selectedPosterAnchor = null
+                            navController.navigate(
+                                DetailRoute(
+                                    type = preview.type,
+                                    id = preview.id,
+                                    title = preview.name,
+                                ),
+                            )
+                        },
+                        onSelectLocalCategory = { category ->
+                            val baseItem = savedItem
+                                ?: posterActionTarget.libraryItem
+                                ?: preview.toLibraryItem(savedAtEpochMs = 0L)
+                            val existingKeys = if (savedItem != null) {
+                                normalizeLocalCategoryKeys(savedItem.listKeys).toList()
+                            } else {
+                                emptyList()
+                            }
+                            val nextKeys = if (category.isWatchStatus) {
+                                existingKeys.filterNot { key ->
+                                    LocalLibraryCategory.fromKey(key)?.isWatchStatus == true
+                                } + category.key
+                            } else if (category.key in existingKeys) {
+                                existingKeys.filterNot { it == category.key }
+                            } else {
+                                existingKeys + category.key
+                            }
+                            LibraryRepository.save(
+                                baseItem.copy(
+                                    listKeys = normalizeLocalCategoryKeys(nextKeys),
+                                ),
+                            )
+                            NuvioToastController.show("Saved to ${category.label}")
+                        },
+                        onOpenRemoteListPicker = {
+                            val libraryItem = savedItem
+                                ?: posterActionTarget.libraryItem
+                                ?: preview.toLibraryItem(savedAtEpochMs = 0L)
+                            selectedPosterActionTarget = null
+                            selectedPosterAnchor = null
+                            pickerItem = libraryItem
+                            pickerTitle = preview.name
+                            val initialTabs = LibraryRepository.libraryListTabs(libraryItem)
+                            pickerTabs = initialTabs
+                            pickerMembership = initialTabs.associate { tab ->
+                                tab.key to (!isSaved && tab.key == LocalLibraryCategory.PLAN_TO_WATCH.key)
+                            }
+                            pickerPending = true
+                            pickerError = null
+                            showLibraryListPicker = true
+                            coroutineScope.launch {
+                                runCatching {
+                                    val snapshot = LibraryRepository.getMembershipSnapshot(libraryItem)
+                                    val tabs = LibraryRepository.libraryListTabs(libraryItem)
+                                    pickerTabs = tabs
+                                    pickerMembership = tabs.associate { tab ->
+                                        tab.key to (snapshot[tab.key] == true)
                                     }
-                                },
-                            ),
-                            PosterZoomOverlayAction(
-                                icon = if (isWatched) Icons.Default.CheckCircle else Icons.Default.CheckCircleOutline,
-                                label = if (isWatched) {
-                                    stringResource(Res.string.hero_mark_unwatched)
-                                } else {
-                                    stringResource(Res.string.hero_mark_watched)
-                                },
-                                onSelected = {
-                                    coroutineScope.launch {
-                                        WatchingActions.togglePosterWatched(preview)
-                                    }
-                                },
-                            ),
-                        ),
-                        backdrop = posterOverlayBackdrop,
-                        onDismissed = {
+                                }.onFailure { error ->
+                                    pickerError = error.message ?: getString(Res.string.trakt_lists_load_failed)
+                                }
+                                pickerPending = false
+                            }
+                        },
+                        onRemoveFromLibrary = {
+                            val libraryItem = savedItem
+                                ?: posterActionTarget.libraryItem
+                                ?: preview.toLibraryItem(savedAtEpochMs = 0L)
+                            selectedPosterActionTarget = null
+                            selectedPosterAnchor = null
+                            LibraryRepository.remove(libraryItem.id)
+                        },
+                        onToggleWatched = {
+                            coroutineScope.launch {
+                                WatchingActions.togglePosterWatched(preview)
+                            }
+                        },
+                        onDismiss = {
                             selectedPosterActionTarget = null
                             selectedPosterAnchor = null
                         },
@@ -2320,6 +2346,57 @@ internal fun MainAppContent(
                 },
             )
 
+            val submitGlobalMembership: (DuplicateLibraryResolution?) -> Unit = submit@{ resolution ->
+                val item = pickerItem ?: return@submit
+                coroutineScope.launch {
+                    pickerPending = true
+                    pickerError = null
+                    val desiredMembership = pickerMembership.toMap()
+                    val applyMembership: suspend (Set<TrackingProviderId>) ->
+                        TrackingMembershipApplyResult = { confirmedProviders ->
+                        LibraryRepository.applyMembershipChanges(
+                            item = item,
+                            desiredMembership = desiredMembership,
+                            confirmedRemovalProviders = confirmedProviders,
+                            duplicateResolution = resolution,
+                        )
+                    }
+                    val completeMembershipUpdate: suspend (TrackingMembershipApplyResult) -> Unit = { result ->
+                        showTrackingMembershipRewriteFeedback(result)
+                        val chosen = LocalLibraryCategory.entries
+                            .filter { desiredMembership[it.key] == true }
+                            .joinToString(", ") { it.label }
+                        if (chosen.isNotBlank()) {
+                            NuvioToastController.show("Saved to $chosen")
+                        }
+                        showLibraryListPicker = false
+                        pickerItem = null
+                        pickerError = null
+                    }
+                    executeTrackingMembershipOperation(
+                        operation = { applyMembership(emptySet()) },
+                        onSuccess = { result ->
+                            if (result.requiresRemovalConfirmation) {
+                                pendingTrackingRemoval = PendingTrackingMembershipRemoval(
+                                    itemTitle = item.name,
+                                    confirmations = result.requiredRemovalConfirmations,
+                                    retry = applyMembership,
+                                    onApplied = completeMembershipUpdate,
+                                    onFailure = { error ->
+                                        pickerError = error.message ?: trackingListsUpdateFailedMessage
+                                    },
+                                )
+                            } else {
+                                completeMembershipUpdate(result)
+                            }
+                        },
+                        onFailure = { error ->
+                            pickerError = error.message ?: trackingListsUpdateFailedMessage
+                        },
+                    )
+                    pickerPending = false
+                }
+            }
             TrackingListPickerDialog(
                 visible = showLibraryListPicker,
                 title = pickerTitle,
@@ -2327,6 +2404,7 @@ internal fun MainAppContent(
                 membership = pickerMembership,
                 isPending = pickerPending,
                 errorMessage = pickerError,
+                targetItem = pickerItem,
                 onToggle = { listKey ->
                     pickerMembership = toggleTrackingLibraryMembership(
                         tabs = pickerTabs,
@@ -2340,6 +2418,11 @@ internal fun MainAppContent(
                         pickerItem = null
                         pickerError = null
                     }
+                },
+                onSaveWithResolution = submitGlobalMembership,
+                onRemoveFromLibrary = {
+                    pickerMembership = pickerMembership.mapValues { false }
+                    submitGlobalMembership(null)
                 },
                 onSave = {
                     val item = pickerItem ?: return@TrackingListPickerDialog

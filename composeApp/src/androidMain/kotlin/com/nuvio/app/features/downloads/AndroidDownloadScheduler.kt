@@ -2,6 +2,7 @@ package com.nuvio.app.features.downloads
 
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
+import kotlinx.coroutines.Job
 import android.content.ComponentName
 import android.content.Context
 import android.net.Network
@@ -40,6 +41,12 @@ internal class AndroidDownloadScheduler(val context: Context) {
     val directory = File(context.filesDir, "downloads")
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Nuvio Enhanced: in-process foreground pool used when JobScheduler's user-initiated
+    // quota (about 5 jobs on many devices) refuses to schedule another transfer, so total
+    // download concurrency can reach DownloadConcurrencyLimit.MAX_VALUE (16).
+    private val foregroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val foregroundSlots = java.util.concurrent.Semaphore(16)
+    private val foregroundRuns = ConcurrentHashMap<String, Job>()
 
     init {
         AndroidDownloadExport.initialize(context)
@@ -82,16 +89,39 @@ internal class AndroidDownloadScheduler(val context: Context) {
             }
         } catch (error: Exception) {
             if (Build.VERSION.SDK_INT >= 34) {
-                store.update(item.fileName, transfer.generation) {
-                    it.copy(item = it.item.copy(status = DownloadStatus.Queued, errorMessage = null))
-                }
-                cancelScheduled(transfer)
-                Log.w(TAG, "Download is queued until the app returns to foreground", error)
+                // Nuvio Enhanced: bypass the user-initiated job quota with the foreground pool.
+                Log.w(TAG, "JobScheduler refused the download job; running in the foreground pool", error)
+                launchInForegroundPool(transfer)
             } else {
                 fail(transfer, error)
             }
         }
         return store.get(item.fileName) ?: transfer
+    }
+
+    private fun launchInForegroundPool(transfer: AndroidDownloadTransfer) {
+        val fileName = transfer.item.fileName
+        foregroundRuns[fileName]?.takeIf { it.isActive }?.let { return }
+        val run = foregroundScope.launch {
+            foregroundSlots.acquire()
+            try {
+                if (!isActive(transfer)) return@launch
+                DownloadsLiveStatusPlatform.initialize(context)
+                val retry = execute(transfer, onProgress = { updated ->
+                    DownloadsLiveStatusPlatform.notifyTransfer(updated.item)
+                })
+                notifyCurrent(fileName)
+                if (retry) {
+                    runCatching { reschedule(fileName) }.onFailure { error ->
+                        Log.w(TAG, "Foreground reschedule failed for $fileName", error)
+                    }
+                }
+            } finally {
+                foregroundSlots.release()
+            }
+        }
+        foregroundRuns[fileName] = run
+        run.invokeOnCompletion { foregroundRuns.remove(fileName, run) }
     }
 
     @RequiresApi(34)

@@ -76,7 +76,9 @@ internal fun StreamCard(
     val partyLabel = if (isCurrent) null else LocalStreamHighlight.current(stream)
     val cardShape = RoundedCornerShape(12.dp)
     val badgeImages = stream.badges.filter { it.imageURL.isNotBlank() }
-    val hasBadges = badgeImages.isNotEmpty() || (showFileSizeBadges && stream.behaviorHints.videoSize != null)
+    val audioVariantLabel = remember(stream) { StreamBadgePresentation.audioVariantOf(stream) }
+    val hasBadges = badgeImages.isNotEmpty() || audioVariantLabel != null ||
+        (showFileSizeBadges && stream.behaviorHints.videoSize != null)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -127,6 +129,7 @@ internal fun StreamCard(
             if (hasBadges && badgePlacement == StreamBadgePlacement.TOP) {
                 StreamCardBadgeRow(
                     badgeImages = badgeImages,
+                    audioVariantLabel = audioVariantLabel,
                     stream = stream,
                     showFileSizeBadges = showFileSizeBadges,
                 )
@@ -172,6 +175,7 @@ internal fun StreamCard(
                 Spacer(modifier = Modifier.height(5.dp))
                 StreamCardBadgeRow(
                     badgeImages = badgeImages,
+                    audioVariantLabel = audioVariantLabel,
                     stream = stream,
                     showFileSizeBadges = showFileSizeBadges,
                 )
@@ -225,6 +229,7 @@ internal fun StreamCardSkeleton(modifier: Modifier = Modifier) {
 @Composable
 private fun StreamCardBadgeRow(
     badgeImages: List<StreamBadge>,
+    audioVariantLabel: String?,
     stream: StreamItem,
     showFileSizeBadges: Boolean,
     modifier: Modifier = Modifier,
@@ -234,6 +239,20 @@ private fun StreamCardBadgeRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        if (audioVariantLabel != null) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White.copy(alpha = 0.16f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = audioVariantLabel,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                )
+            }
+        }
         badgeImages.forEach { badge ->
             StreamBadgeImage(badge = badge)
         }

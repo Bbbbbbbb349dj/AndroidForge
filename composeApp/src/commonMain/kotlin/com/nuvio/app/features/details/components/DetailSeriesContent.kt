@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1098,16 +1099,37 @@ private fun EpisodeHorizontalCard(
             )
 
             if (!video.overview.isNullOrBlank()) {
-                Text(
-                    text = video.overview,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = metrics.bodyTextSize,
-                        lineHeight = metrics.bodyLineHeight,
-                    ),
-                    color = Color.White.copy(alpha = 0.86f),
-                    maxLines = metrics.overviewMaxLines,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                var epExpanded by remember(video.id) { mutableStateOf(false) }
+                var epCanExpand by remember(video.id, video.overview) { mutableStateOf(false) }
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = video.overview,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = metrics.bodyTextSize,
+                            lineHeight = metrics.bodyLineHeight,
+                        ),
+                        color = Color.White.copy(alpha = 0.86f),
+                        maxLines = if (epExpanded) Int.MAX_VALUE else metrics.overviewMaxLines,
+                        overflow = if (epExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (!epExpanded && result.hasVisualOverflow) {
+                                epCanExpand = true
+                            }
+                        },
+                    )
+                    if (epCanExpand || epExpanded) {
+                        Text(
+                            text = if (epExpanded) "Show less" else "⋯ Show more",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable { epExpanded = !epExpanded }
+                                .padding(vertical = 2.dp),
+                        )
+                    }
+                }
             }
 
             if (runtimeLabel != null || hasAnyRating || formattedDate != null) {
@@ -1552,7 +1574,7 @@ private fun EpisodeListCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(sizing.cardHeight)
+            .heightIn(min = sizing.cardHeight)
             .clip(cardShape)
             .ambientLiquidGlass(
                 shape = cardShape,
@@ -1572,12 +1594,13 @@ private fun EpisodeListCard(
             ),
     ) {
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
         ) {
             Box(
                 modifier = Modifier
                     .width(sizing.imageWidth)
-                    .fillMaxHeight()
+                    .height(sizing.cardHeight)
                     .clip(RoundedCornerShape(topStart = cornerRadius, bottomStart = cornerRadius)),
             ) {
                 val episodeImage = rememberEpisodeImageState(video.thumbnail, fallbackImage)
@@ -1646,7 +1669,6 @@ private fun EpisodeListCard(
 
             Column(
                 modifier = Modifier
-                    .fillMaxHeight()
                     .weight(1f)
                     .padding(
                         start = sizing.contentHorizontalPadding,
@@ -1697,6 +1719,8 @@ private fun EpisodeListCard(
                 }
 
                 if (!video.overview.isNullOrBlank() && overviewText != null) {
+                    var overviewExpanded by remember(video.id) { mutableStateOf(false) }
+                    var overviewCanExpand by remember(video.id, overviewText) { mutableStateOf(false) }
                     Text(
                         text = overviewText,
                         style = MaterialTheme.typography.bodyMedium.copy(
@@ -1704,9 +1728,26 @@ private fun EpisodeListCard(
                             lineHeight = sizing.bodyLineHeight,
                         ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = sizing.overviewMaxLines,
-                        overflow = TextOverflow.Ellipsis,
+                        maxLines = if (overviewExpanded) Int.MAX_VALUE else sizing.overviewMaxLines,
+                        overflow = if (overviewExpanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (!overviewExpanded && result.hasVisualOverflow) {
+                                overviewCanExpand = true
+                            }
+                        },
                     )
+                    if (overviewCanExpand || overviewExpanded) {
+                        Text(
+                            text = if (overviewExpanded) "Show less" else "⋯ Show more",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable { overviewExpanded = !overviewExpanded }
+                                .padding(vertical = 2.dp),
+                        )
+                    }
                 }
             }
         }

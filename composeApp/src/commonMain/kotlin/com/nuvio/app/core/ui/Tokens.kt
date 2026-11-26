@@ -370,22 +370,24 @@ internal fun defaultNuvioThemeTokens(
     amoled: Boolean,
     colorScheme: ColorScheme?,
 ): NuvioThemeTokens {
-    val background = if (amoled) Color.Black else palette.background
-    val textPrimary = Color(0xFFF5F7F8)
-    val textSecondary = Color(0xFFB8BEC5)
-    val textMuted = Color(0xFF969CA3)
+    val effectiveAmoled = amoled && !palette.isLight
+    val background = if (effectiveAmoled) Color.Black else palette.background
+    val textPrimary = palette.textPrimary
+    val textSecondary = palette.textSecondary
+    val textMuted = palette.textMuted
     val surface = palette.backgroundElevated
     val surfaceCard = palette.backgroundCard
     val accent = palette.secondary
     val accentStrong = palette.secondaryVariant
-    val borderSubtle = Color(0xFF252A2A).copy(alpha = 0.55f)
-    val borderDefault = Color(0xFF252A2A)
-    val overlayScrim = Color.Black.copy(alpha = NuvioTokens.Opacity.overlayMedium)
+    val borderSubtle = palette.borderDefault.copy(alpha = if (palette.isLight) 0.72f else 0.55f)
+    val borderDefault = palette.borderDefault
+    val overlayScrim = Color.Black.copy(alpha = if (palette.isLight) 0.42f else NuvioTokens.Opacity.overlayMedium)
+    val interactiveTint = if (palette.isLight) palette.textPrimary else Color.White
 
     return NuvioThemeTokens(
         colors = NuvioColorTokens(
             background = background,
-            backgroundAmoled = Color.Black,
+            backgroundAmoled = if (palette.isLight) palette.background else Color.Black,
             surface = surface,
             surfaceElevated = surface,
             surfaceCard = surfaceCard,
@@ -397,7 +399,7 @@ internal fun defaultNuvioThemeTokens(
             textSecondary = textSecondary,
             textMuted = textMuted,
             textDisabled = textMuted.copy(alpha = NuvioTokens.Opacity.disabled),
-            textInverse = Color(0xFF111111),
+            textInverse = if (palette.isLight) Color(0xFFEFF1F5) else Color(0xFF111111),
             accent = accent,
             accentStrong = accentStrong,
             onAccent = palette.onSecondary,
@@ -405,21 +407,21 @@ internal fun defaultNuvioThemeTokens(
             focusBackground = palette.focusBackground,
             borderSubtle = borderSubtle,
             borderDefault = borderDefault,
-            borderStrong = Color(0xFF3A4040),
+            borderStrong = palette.borderStrong,
             borderFocus = palette.focusRing,
             borderSelected = accent.copy(alpha = NuvioTokens.Opacity.strong),
-            success = Color(0xFF66BB6A),
-            warning = Color(0xFFFFC857),
-            danger = colorScheme?.error ?: Color(0xFFE36A8A),
-            info = Color(0xFF42A5F5),
+            success = palette.successColor,
+            warning = palette.warningColor,
+            danger = colorScheme?.error ?: palette.errorColor,
+            info = palette.infoColor,
             neutral = textMuted,
             overlayScrim = overlayScrim,
-            overlayHover = Color.White.copy(alpha = NuvioTokens.Opacity.hover),
-            overlayPressed = Color.White.copy(alpha = NuvioTokens.Opacity.pressed),
-            overlaySelected = Color.White.copy(alpha = NuvioTokens.Opacity.selected),
-            overlayDisabled = Color.Black.copy(alpha = NuvioTokens.Opacity.disabled),
-            shimmer = Color.White.copy(alpha = 0.10f),
-            skeleton = Color.White.copy(alpha = 0.06f),
+            overlayHover = interactiveTint.copy(alpha = NuvioTokens.Opacity.hover),
+            overlayPressed = interactiveTint.copy(alpha = NuvioTokens.Opacity.pressed),
+            overlaySelected = interactiveTint.copy(alpha = NuvioTokens.Opacity.selected),
+            overlayDisabled = interactiveTint.copy(alpha = NuvioTokens.Opacity.disabled),
+            shimmer = interactiveTint.copy(alpha = if (palette.isLight) 0.14f else 0.10f),
+            skeleton = interactiveTint.copy(alpha = if (palette.isLight) 0.09f else 0.06f),
             playerControlsBackground = Color.Black.copy(alpha = 0.72f),
             playerControlsForeground = Color.White,
             playerTimelineTrack = Color.White.copy(alpha = 0.30f),

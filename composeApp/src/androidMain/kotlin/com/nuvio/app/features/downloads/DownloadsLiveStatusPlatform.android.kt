@@ -87,10 +87,40 @@ internal actual object DownloadsLiveStatusPlatform {
         if (item.status == DownloadStatus.Completed) {
             removeNotification(item.id)
         } else {
-            val active = item.status == DownloadStatus.Downloading
-            manager.cancel(notificationId(if (active) "inactive:${item.id}" else item.id))
-            manager.notify(notificationId(if (active) item.id else "inactive:${item.id}"), buildNotification(context, item))
+            // Nuvio Enhanced: one unified notification slot per item; drop the legacy slot.
+            manager.cancel(notificationId("inactive:${item.id}"))
+            manager.notify(notificationId(item.id), buildNotification(context, item))
         }
+    }
+
+    internal fun checkpointFile(name: String): java.io.File? {
+        val base = appContext?.filesDir ?: return null
+        if (name.isBlank() || name.contains('/') || name.contains('\\')) return null
+        val dir = java.io.File(base, "download-checkpoints")
+        if (!dir.isDirectory) dir.mkdirs()
+        return java.io.File(dir, name)
+    }
+
+    private val speedSamples = java.util.concurrent.ConcurrentHashMap<String, LongArray>()
+
+    private fun currentSpeedBytesPerSec(item: DownloadItem): Long? {
+        val now = System.currentTimeMillis()
+        val sample = speedSamples.compute(item.id) { _, previous ->
+            if (previous == null) {
+                longArrayOf(item.downloadedBytes, now, 0L)
+            } else {
+                val elapsedMs = now - previous[1]
+                val deltaBytes = item.downloadedBytes - previous[0]
+                val ema = if (elapsedMs in 1..60_000L && deltaBytes >= 0L) {
+                    val instant = deltaBytes * 1_000L / elapsedMs
+                    if (previous[2] == 0L) instant else (previous[2] * 7L + instant * 3L) / 10L
+                } else {
+                    previous[2]
+                }
+                longArrayOf(item.downloadedBytes, now, ema)
+            }
+        } ?: return null
+        return sample[2].takeIf { it > 0L }
     }
 
     internal fun removeNotification(downloadId: String) {
@@ -142,6 +172,16 @@ internal actual object DownloadsLiveStatusPlatform {
                             fileName = item.fileName,
                         ),
                     )
+                    .addAction(
+                        0,
+                        runBlocking { getString(Res.string.action_cancel) },
+                        buildActionPendingIntent(
+                            context = context,
+                            action = DownloadsNotificationActionReceiver.actionCancel,
+                            downloadId = item.id,
+                            fileName = item.fileName,
+                        ),
+                    )
 
                 val progress = progressPercent(item)
                 if (progress >= 0) {
@@ -184,16 +224,29 @@ internal actual object DownloadsLiveStatusPlatform {
     }
 
     private fun buildSubtitle(item: DownloadItem): String {
-        val detail = item.displaySubtitle
+        // Section 9: "Title — S04E01 / Source: Provider | 1080p | SUB / progress".
+        val sourceLine = item.sourceInfoLine
+        val detail = when {
+            sourceLine.isBlank() -> item.displaySubtitle
+            item.displaySubtitle.isBlank() -> sourceLine
+            else -> "${item.displaySubtitle}\n$sourceLine"
+        }
         return when (item.status) {
             DownloadStatus.Downloading -> {
                 val downloaded = formatBytes(item.downloadedBytes)
                 val total = item.totalBytes?.let(::formatBytes)
-                if (total != null) {
+                val base = if (total != null) {
                     runBlocking { getString(Res.string.downloads_live_downloading_with_total, detail, downloaded, total) }
                 } else {
                     runBlocking { getString(Res.string.downloads_live_downloading, detail, downloaded) }
                 }
+                val extras = buildList {
+                    item.providerName.takeIf { it.isNotBlank() }?.let(::add)
+                    item.audioVariant?.let(::add)
+                    currentSpeedBytesPerSec(item)?.let { add("${formatBytes(it)}/s") }
+                    progressPercent(item).takeIf { it >= 0 }?.let { add("$it%") }
+                }
+                if (extras.isEmpty()) base else "$base \u2022 ${extras.joinToString(" \u2022 ")}"
             }
 
             DownloadStatus.Paused -> runBlocking { getString(Res.string.downloads_live_paused, detail) }

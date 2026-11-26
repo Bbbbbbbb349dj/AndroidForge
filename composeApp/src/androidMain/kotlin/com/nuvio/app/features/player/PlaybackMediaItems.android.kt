@@ -59,8 +59,26 @@ private fun isLocalUri(url: String): Boolean {
 }
 
 private fun sniffLocalMimeType(url: String): String? {
-    val header = readLocalHeaderBytes(url) ?: return null
-    return mimeTypeFromHeader(header)
+    val header = readLocalHeaderBytes(url)
+    if (header != null) {
+        mimeTypeFromHeader(header)?.let { return it }
+    }
+    return runCatching {
+        val uri = Uri.parse(url)
+        if (uri.scheme?.equals("content", ignoreCase = true) == true) {
+            val context = PlayerSettingsStorage.applicationContext() ?: return@runCatching null
+            val resolverType = context.contentResolver.getType(uri)?.trim()
+            normalizeMimeType(resolverType)
+                ?: com.nuvio.app.features.downloads.LocalFolderVideosPlatform
+                    .resolveDisplayName(context, uri)
+                    .let(::inferMimeTypeFromPath)
+                ?: resolverType?.takeIf {
+                    it.startsWith("video/", ignoreCase = true) && !it.endsWith("/*")
+                }
+        } else {
+            null
+        }
+    }.getOrNull()
 }
 
 private fun readLocalHeaderBytes(url: String): ByteArray? = runCatching {
@@ -131,7 +149,7 @@ private fun inferMimeTypeFromStreamType(streamType: String?): String? {
         "hls", "m3u8" -> MimeTypes.APPLICATION_M3U8
         "dash", "mpd" -> MimeTypes.APPLICATION_MPD
         "smoothstreaming", "ss" -> MimeTypes.APPLICATION_SS
-        else -> null
+        else -> normalizeMimeType(normalized)
     }
 }
 
@@ -195,8 +213,14 @@ internal fun normalizeMimeType(contentType: String?): String? {
 
         "video/x-matroska",
         "audio/x-matroska",
+        "application/x-matroska",
         "video/mkv",
         "audio/mkv" -> MimeTypes.VIDEO_MATROSKA
+
+        "video/quicktime" -> MIME_VIDEO_QUICK_TIME
+        "video/x-msvideo",
+        "video/avi" -> MimeTypes.VIDEO_AVI
+        "video/mpeg" -> MimeTypes.VIDEO_MPEG
 
         else -> null
     }

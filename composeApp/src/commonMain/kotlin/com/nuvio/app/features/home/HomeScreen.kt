@@ -37,6 +37,8 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -107,6 +109,9 @@ import com.nuvio.app.features.home.components.HomeSkeletonRow
 import com.nuvio.app.features.home.components.HomeContinueWatchingSectionBottomPadding
 import com.nuvio.app.features.home.components.ContinueWatchingLayout
 import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.home.components.PosterGridRow
+import com.nuvio.app.features.home.components.rememberPosterGridColumnCount
+import com.nuvio.app.features.settings.CloudStreamHomeLayout
 import com.nuvio.app.features.settings.NuvioEnhancedSettingsRepository
 import com.nuvio.app.features.tracking.TrackingSettingsRepository
 import com.nuvio.app.features.tracking.WatchProgressSource
@@ -169,6 +174,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     animateCollectionGifs: Boolean = true,
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
+    onSearchClick: (() -> Unit)? = null,
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
@@ -240,12 +246,12 @@ fun HomeScreen(
     LaunchedEffect(runnableCloudStreamProviders, selectedCloudStreamProviderId) {
         if (runnableCloudStreamProviders.isNotEmpty()) {
             if (selectedCloudStreamProviderId == null) {
-                HomeRepository.setSelectedCloudStreamProvider(runnableCloudStreamProviders.first().metadata.id.value)
+                HomeRepository.setSelectedCloudStreamProvider("all")
             } else if (selectedCloudStreamProviderId != "off" &&
                 selectedCloudStreamProviderId != "all" &&
                 runnableCloudStreamProviders.none { it.metadata.id.value == selectedCloudStreamProviderId }
             ) {
-                HomeRepository.setSelectedCloudStreamProvider(runnableCloudStreamProviders.first().metadata.id.value)
+                HomeRepository.setSelectedCloudStreamProvider("all")
             }
         } else if (selectedCloudStreamProviderId != null && selectedCloudStreamProviderId != "off") {
             HomeRepository.setSelectedCloudStreamProvider(null)
@@ -1119,6 +1125,7 @@ fun HomeScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val homeSectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
         val posterCardStyle = rememberPosterCardStyleUiState()
+        val cloudStreamGridColumns = rememberPosterGridColumnCount(maxWidth)
         val continueWatchingLayout = rememberContinueWatchingLayout(maxWidth.value, posterCardStyle)
         val nativeBottomNavigationOverlayHeight =
             if (LocalNuvioBottomNavigationOverlayPadding.current > 0.dp) {
@@ -1473,27 +1480,183 @@ fun HomeScreen(
                         }
 
 
-                        cloudStreamHomeSections.forEach { section ->
-                            item(key = section.key, contentType = "catalog") {
-                                HomeCatalogRowSection(
-                                    section = section,
-                                    entries = section.items.take(HOME_CATALOG_PREVIEW_LIMIT),
-                                    posterCardStyle = posterCardStyle,
-                                    modifier = Modifier.padding(bottom = 12.dp),
-                                    sectionPadding = homeSectionPadding,
-                                    onViewAllClick = if (section.canOpenCatalog(HOME_CATALOG_PREVIEW_LIMIT)) {
-                                        onCatalogClick?.let { { it(section) } }
-                                    } else {
-                                        null
-                                    },
-                                    watchedKeys = watchedUiState.watchedKeys,
-                                    fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
-                                    onPosterClick = onPosterClick,
-                                    onPosterLongClick = onPosterLongClick,
-                                )
+                        if (cloudStreamHomeSections.isNotEmpty() && selectedCloudStreamProviderId != null) {
+                            item(key = "cloudstream_layout_bar", contentType = "cloudstream_header") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = homeSectionPadding, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Extension Catalogue",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(999.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                                            .border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                                                RoundedCornerShape(999.dp),
+                                            )
+                                            .padding(2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        listOf(
+                                            CloudStreamHomeLayout.ROWS to "Rows",
+                                            CloudStreamHomeLayout.COLUMNS to "Columns",
+                                        ).forEach { (layoutMode, label) ->
+                                            val isSelectedLayout = enhancedSettings.cloudStreamHomeLayout == layoutMode
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(999.dp))
+                                                    .background(
+                                                        if (isSelectedLayout) {
+                                                            MaterialTheme.colorScheme.primary
+                                                        } else {
+                                                            Color.Transparent
+                                                        },
+                                                    )
+                                                    .clickable {
+                                                        NuvioEnhancedSettingsRepository.setCloudStreamHomeLayout(layoutMode)
+                                                    }
+                                                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isSelectedLayout) {
+                                                        MaterialTheme.colorScheme.onPrimary
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (enhancedSettings.cloudStreamHomeLayout == CloudStreamHomeLayout.COLUMNS &&
+                            cloudStreamHomeSections.isNotEmpty()
+                        ) {
+                            cloudStreamHomeSections.forEach { section ->
+                                val distinctItems = section.items.distinctBy { "${it.type}:${it.id}" }
+                                if (distinctItems.isNotEmpty()) {
+                                    item(key = "${section.key}:col_header", contentType = "cloudstream_col_header") {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(
+                                                    start = homeSectionPadding,
+                                                    end = homeSectionPadding,
+                                                    top = 10.dp,
+                                                    bottom = 8.dp,
+                                                ),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = section.title,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onBackground,
+                                            )
+                                            if (section.canOpenCatalog(HOME_CATALOG_PREVIEW_LIMIT) && onCatalogClick != null) {
+                                                Text(
+                                                    text = "View All",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(999.dp))
+                                                        .clickable { onCatalogClick(section) }
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    val chunkedRows = distinctItems
+                                        .take(HOME_CATALOG_PREVIEW_LIMIT.coerceAtLeast(cloudStreamGridColumns * 3))
+                                        .chunked(cloudStreamGridColumns)
+                                    chunkedRows.forEachIndexed { rowIndex, rowItems ->
+                                        item(
+                                            key = "${section.key}:col_row:$rowIndex",
+                                            contentType = "cloudstream_col_row",
+                                        ) {
+                                            PosterGridRow(
+                                                items = rowItems,
+                                                columns = cloudStreamGridColumns,
+                                                modifier = Modifier.padding(
+                                                    start = homeSectionPadding,
+                                                    end = homeSectionPadding,
+                                                    bottom = 12.dp,
+                                                ),
+                                                watchedKeys = watchedUiState.watchedKeys,
+                                                fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                                                onPosterClick = onPosterClick,
+                                                onPosterLongClick = onPosterLongClick,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            cloudStreamHomeSections.forEach { section ->
+                                item(key = section.key, contentType = "catalog") {
+                                    HomeCatalogRowSection(
+                                        section = section,
+                                        entries = section.items.distinctBy { "${it.type}:${it.id}" }.take(HOME_CATALOG_PREVIEW_LIMIT),
+                                        posterCardStyle = posterCardStyle,
+                                        modifier = Modifier.padding(bottom = 12.dp),
+                                        sectionPadding = homeSectionPadding,
+                                        onViewAllClick = if (section.canOpenCatalog(HOME_CATALOG_PREVIEW_LIMIT)) {
+                                            onCatalogClick?.let { { it(section) } }
+                                        } else {
+                                            null
+                                        },
+                                        watchedKeys = watchedUiState.watchedKeys,
+                                        fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                                        onPosterClick = onPosterClick,
+                                        onPosterLongClick = onPosterLongClick,
+                                    )
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+
+        if (onSearchClick != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 10.dp, end = 16.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.84f))
+                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f), CircleShape)
+                        .clickable(onClick = onSearchClick),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = "Search movies, series, and extensions",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(21.dp),
+                    )
                 }
             }
         }

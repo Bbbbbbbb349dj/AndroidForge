@@ -11,6 +11,31 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+data class LocalSidecarSubtitleItem(
+    val uri: String,
+    val language: String,
+    val label: String,
+)
+
+data class LocalVideoLaunchRequest(
+    val uri: String,
+    val title: String,
+    val filename: String? = null,
+    val subtitle: String? = null,
+    val mimeType: String? = null,
+    val poster: String? = null,
+    val background: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
+    val episodeTitle: String? = null,
+    val episodeThumbnail: String? = null,
+    val contentType: String = "movie",
+    val parentMetaId: String? = null,
+    val parentMetaType: String = "movie",
+    val sidecarSubtitles: List<LocalSidecarSubtitleItem> = emptyList(),
+    val nonce: Long = 0L,
+)
+
 internal sealed interface AppDeepLink {
     data class Meta(
         val type: String,
@@ -31,6 +56,56 @@ internal sealed interface AppDeepLink {
 internal object AppDeepLinkRepository {
     private val _pendingDeepLink = MutableStateFlow<AppDeepLink?>(null)
     val pendingDeepLink: StateFlow<AppDeepLink?> = _pendingDeepLink.asStateFlow()
+
+    private var localVideoSeq = 0L
+    private val _pendingLocalVideo = MutableStateFlow<LocalVideoLaunchRequest?>(null)
+    val pendingLocalVideo: StateFlow<LocalVideoLaunchRequest?> = _pendingLocalVideo.asStateFlow()
+
+    fun openLocalVideo(
+        uri: String,
+        title: String,
+        filename: String? = null,
+        subtitle: String? = null,
+        mimeType: String? = null,
+        poster: String? = null,
+        background: String? = null,
+        seasonNumber: Int? = null,
+        episodeNumber: Int? = null,
+        episodeTitle: String? = null,
+        episodeThumbnail: String? = null,
+        contentType: String = "movie",
+        parentMetaId: String? = null,
+        parentMetaType: String = "movie",
+        sidecarSubtitles: List<LocalSidecarSubtitleItem> = emptyList(),
+    ) {
+        val trimmed = uri.trim()
+        if (trimmed.isEmpty()) return
+        localVideoSeq += 1L
+        _pendingLocalVideo.value = LocalVideoLaunchRequest(
+            uri = trimmed,
+            title = title.trim().ifEmpty { "Local Video" },
+            filename = filename?.trim()?.takeIf { it.isNotEmpty() },
+            subtitle = subtitle?.trim()?.takeIf { it.isNotEmpty() },
+            mimeType = mimeType?.trim()?.takeIf { it.isNotEmpty() },
+            poster = poster?.trim()?.takeIf { it.isNotEmpty() },
+            background = background?.trim()?.takeIf { it.isNotEmpty() },
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            episodeTitle = episodeTitle?.trim()?.takeIf { it.isNotEmpty() },
+            episodeThumbnail = episodeThumbnail?.trim()?.takeIf { it.isNotEmpty() },
+            contentType = contentType,
+            parentMetaId = parentMetaId?.trim()?.takeIf { it.isNotEmpty() },
+            parentMetaType = parentMetaType,
+            sidecarSubtitles = sidecarSubtitles,
+            nonce = localVideoSeq,
+        )
+    }
+
+    fun markLocalVideoConsumed(request: LocalVideoLaunchRequest) {
+        if (_pendingLocalVideo.value?.nonce == request.nonce) {
+            _pendingLocalVideo.value = null
+        }
+    }
 
     fun handleUrl(url: String) {
         parseAppDeepLink(url)?.let { deepLink ->

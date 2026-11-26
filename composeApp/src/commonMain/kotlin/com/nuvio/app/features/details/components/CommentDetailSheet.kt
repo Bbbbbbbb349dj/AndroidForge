@@ -32,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,6 +55,7 @@ fun CommentDetailSheet(
     onNext: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scrollState = rememberScrollState()
     val isSpoilerRevealed = rememberSaveable(comment.id) {
@@ -157,9 +159,32 @@ fun CommentDetailSheet(
                 }
             }
 
-            if (comment.review) {
-                Spacer(modifier = Modifier.height(12.dp))
-                CommentDetailChip(text = stringResource(Res.string.detail_comments_badge_review))
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CommentDetailChip(text = comment.sourceName)
+                if (comment.review) {
+                    CommentDetailChip(text = stringResource(Res.string.detail_comments_badge_review))
+                }
+                comment.sourceUrl?.let { url ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                            .clickable { runCatching { uriHandler.openUri(url) } }
+                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            text = "Read original on ${comment.sourceName} ↗",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

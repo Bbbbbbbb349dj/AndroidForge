@@ -34,13 +34,29 @@ internal class SoftwareVideoDecoder(
     var outputMode: Int = C.VIDEO_OUTPUT_MODE_NONE
 
     init {
-        val name = codecNameFor(format.sampleMimeType)
-        handle = if (name != null && isAvailable) nativeCreate(name, extraData(format), threads) else 0L
+        val names = codecNamesFor(format.sampleMimeType)
+        var chosenName: String? = null
+        handle = if (isAvailable && names.isNotEmpty()) {
+            val extra = extraData(format)
+            names.firstNotNullOfOrNull { candidate ->
+                val created = nativeCreate(candidate, extra, threads)
+                if (created != 0L) {
+                    chosenName = candidate
+                    created
+                } else {
+                    null
+                }
+            } ?: 0L
+        } else {
+            0L
+        }
         if (handle == 0L) {
             release()
-            throw SoftwareVideoDecoderException("Failed to initialize software decoder for ${format.sampleMimeType}")
+            throw SoftwareVideoDecoderException(
+                "Failed to initialize software decoder for ${format.sampleMimeType} (tried ${names.joinToString()})",
+            )
         }
-        codecName = name!!
+        codecName = requireNotNull(chosenName)
         setInitialInputBufferSize(
             if (format.maxInputSize != Format.NO_VALUE) format.maxInputSize else DEFAULT_INPUT_BUFFER_SIZE,
         )
@@ -133,6 +149,7 @@ internal class SoftwareVideoDecoder(
 
         private val HIGH_BIT_DEPTH_AVC_PROFILES = setOf(44, 110, 122, 244)
         private const val HEVC_PROFILE_RANGE_EXTENSIONS = 4
+        private const val HEVC_PROFILE_MAIN_10 = 2
 
         val isAvailable: Boolean by lazy {
             runCatching {
@@ -144,18 +161,25 @@ internal class SoftwareVideoDecoder(
             }.onFailure { Log.w(TAG, "Software video decoding is unavailable", it) }.getOrDefault(false)
         }
 
-        fun codecNameFor(mimeType: String?): String? =
+        /** Candidate FFmpeg decoder names, tried in order until one opens successfully. */
+        fun codecNamesFor(mimeType: String?): List<String> =
             when (mimeType) {
-                MimeTypes.VIDEO_H264 -> "h264"
-                MimeTypes.VIDEO_H265 -> "hevc"
-                MimeTypes.VIDEO_VC1 -> "vc1"
-                else -> null
+                MimeTypes.VIDEO_H264 -> listOf("h264")
+                MimeTypes.VIDEO_H265 -> listOf("hevc")
+                MimeTypes.VIDEO_VC1 -> listOf("vc1")
+                MimeTypes.VIDEO_VP9 -> listOf("vp9")
+                MimeTypes.VIDEO_AV1 -> listOf("dav1d", "av1")
+                else -> emptyList()
             }
+
+        fun codecNameFor(mimeType: String?): String? = codecNamesFor(mimeType).firstOrNull()
 
         fun needsSoftwareDecoding(format: Format): Boolean =
             when (format.sampleMimeType) {
                 MimeTypes.VIDEO_H264 -> avcProfile(format) in HIGH_BIT_DEPTH_AVC_PROFILES
-                MimeTypes.VIDEO_H265 -> hevcProfile(format) == HEVC_PROFILE_RANGE_EXTENSIONS
+                MimeTypes.VIDEO_H265 ->
+                    hevcProfile(format) == HEVC_PROFILE_RANGE_EXTENSIONS ||
+                        hevcProfile(format) == HEVC_PROFILE_MAIN_10
                 MimeTypes.VIDEO_VC1 -> true
                 else -> false
             }

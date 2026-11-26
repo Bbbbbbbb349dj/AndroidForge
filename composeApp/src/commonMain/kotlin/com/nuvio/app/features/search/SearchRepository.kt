@@ -23,9 +23,12 @@ import com.nuvio.app.features.catalog.supportsPagination
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
+import com.nuvio.app.features.tmdb.TmdbService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +82,7 @@ object SearchRepository {
         query: String,
         addons: List<ManagedAddon>,
         forceRefresh: Boolean = false,
+        includeCloudStreamExtensions: Boolean = SearchHistoryRepository.includeCloudStreamExtensions.value,
     ) {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
@@ -91,15 +95,23 @@ object SearchRepository {
         val addonManifestErrorMessage = enabledAddons.firstEnabledManifestError()
         val activeAddons = enabledAddons.filter { it.manifest != null }
         val serverSearches = ServerCatalog.searchTargets()
-        if (activeAddons.isEmpty() && serverSearches.isEmpty()) {
+        val runnableCloudPlugins = if (includeCloudStreamExtensions) {
+            CloudStreamRepository.initialize()
+            CloudStreamRepository.uiState.value.plugins.filter(CloudStreamPluginItem::isRunnable)
+        } else {
+            emptyList()
+        }
+        val noExternalSearchSources =
+            activeAddons.isEmpty() && serverSearches.isEmpty() && runnableCloudPlugins.isEmpty()
+        if (noExternalSearchSources && (hasPendingAddonManifests || addonManifestErrorMessage != null)) {
             activeJob?.cancel()
             lastRequestKey = null
             _uiState.value = SearchUiState(
                 isLoading = hasPendingAddonManifests,
-                emptyStateReason = when {
-                    hasPendingAddonManifests -> null
-                    addonManifestErrorMessage != null -> SearchEmptyStateReason.RequestFailed
-                    else -> SearchEmptyStateReason.NoActiveAddons
+                emptyStateReason = if (hasPendingAddonManifests) {
+                    null
+                } else {
+                    SearchEmptyStateReason.RequestFailed
                 },
                 errorMessage = addonManifestErrorMessage,
             )
@@ -110,13 +122,12 @@ object SearchRepository {
             addons = activeAddons,
             query = normalizedQuery,
         )
-        if (requests.isEmpty() && serverSearches.isEmpty()) {
+        val useTmdbFallback =
+            requests.isEmpty() && serverSearches.isEmpty() && runnableCloudPlugins.isEmpty()
+        if (useTmdbFallback && hasPendingAddonManifests) {
             activeJob?.cancel()
             lastRequestKey = null
-            _uiState.value = SearchUiState(
-                isLoading = hasPendingAddonManifests,
-                emptyStateReason = if (hasPendingAddonManifests) null else SearchEmptyStateReason.NoSearchCatalogs,
-            )
+            _uiState.value = SearchUiState(isLoading = true)
             return
         }
 
@@ -129,14 +140,23 @@ object SearchRepository {
             append('|')
             append(
                 requests.joinToString(separator = "|") { request ->
-                    "${request.addon.manifestUrl}:${request.type}:${request.catalogId}"
+                    "${request.addon.manifestUrl}:${request.type}:${request.catalogId}:${request.genre.orEmpty()}"
                 },
             )
             serverSearches.forEach { ref ->
                 append("|server:${ref.connection.id}:${ref.kind.contentType}:")
                 append(ref.connection.selectedLibraries(ref.kind).joinToString(",") { it.id })
             }
+            append("|csExt=$includeCloudStreamExtensions:")
+            append(runnableCloudPlugins.joinToString(",") { it.metadata.id.value })
+            if (useTmdbFallback) append("|tmdbFallback")
         }
+        val tmdbFallbackLoader: (suspend () -> HomeCatalogSection)? =
+            if (useTmdbFallback) {
+                suspend { tmdbFallbackSection(normalizedQuery) }
+            } else {
+                null
+            }
         val loaders: List<suspend () -> HomeCatalogSection> =
             requests.map { request -> suspend { request.toSection(forceRefresh = forceRefresh) } } +
                 serverSearches.map { ref ->
@@ -147,7 +167,32 @@ object SearchRepository {
                             }
                         }
                     }
-                }
+                } +
+                runnableCloudPlugins.map { plugin ->
+                    suspend {
+                        val singleResult = kotlinx.coroutines.withTimeoutOrNull(14_000L) {
+                            CloudStreamRepository.search(
+                                query = normalizedQuery,
+                                providerId = plugin.metadata.id.value,
+                            ).firstOrNull()
+                        } ?: Result.failure(IllegalStateException("${plugin.metadata.name} timed out"))
+                        val items = singleResult.getOrThrow()
+                            .filter { it.name.isNotBlank() && it.data.isNotBlank() }
+                            .distinctBy { "${it.type}:${it.data.trim().lowercase()}" }
+                        val section = buildCloudStreamSearchSections(
+                            listOf(
+                                CloudStreamProviderSearchOutcome(
+                                    plugin = plugin,
+                                    items = items,
+                                ),
+                            ),
+                        ).firstOrNull()
+                        requireNotNull(section) {
+                            "No CloudStream matches in ${plugin.metadata.name}"
+                        }
+                    }
+                } +
+                listOfNotNull(tmdbFallbackLoader)
         if (canReuseRequestState(forceRefresh, requestKey, lastRequestKey)) return
         lastRequestKey = requestKey
 
@@ -439,17 +484,41 @@ object SearchRepository {
         }.flatMap { (addon, manifest) ->
             manifest.catalogs
                 .filter { catalog -> catalog.supportsSearch() }
-                .map { catalog ->
-                    SearchCatalogRequest(
-                        addon = addon,
-                        catalogId = catalog.id,
-                        catalogName = catalog.name,
-                        type = catalog.type,
-                        query = query,
-                        supportsPagination = catalog.supportsPagination(),
-                    )
+                .flatMap { catalog ->
+                    val requiredGenres: List<String?> = catalog.genreExtra()
+                        ?.takeIf { it.isRequired }?.options ?: listOf(null)
+                    requiredGenres.map { genre ->
+                        SearchCatalogRequest(
+                            addon = addon,
+                            catalogId = catalog.id,
+                            catalogName = listOfNotNull(catalog.name, genre).joinToString(" • "),
+                            type = catalog.type,
+                            query = query,
+                            genre = genre,
+                            supportsPagination = catalog.supportsPagination(),
+                        )
+                    }
                 }
         }
+
+    private suspend fun tmdbFallbackSection(query: String): HomeCatalogSection {
+        val items = TmdbService.searchTitles(query)
+        require(items.isNotEmpty()) {
+            getString(Res.string.search_error_no_results_for_catalog, "TMDB")
+        }
+        return HomeCatalogSection(
+            key = "tmdb:search:${query.lowercase()}",
+            title = "TMDB",
+            subtitle = "Built-in catalog",
+            addonName = "TMDB",
+            target = CatalogTarget.Addon(
+                manifestUrl = "tmdb://builtin",
+                contentType = if (items.first().type == "series") "series" else "movie",
+                catalogId = "search",
+            ),
+            items = items,
+        )
+    }
 
     private fun buildDiscoverSources(addons: List<ManagedAddon>): List<DiscoverCatalogOption> =
         addons.mapNotNull { addon ->
@@ -481,6 +550,8 @@ object SearchRepository {
             type = type,
             catalogId = catalogId,
             search = query,
+            genre = genre,
+            skip = if (supportsPagination) 0 else null,
             forceRefresh = forceRefresh,
         ).withUnreleasedFilter()
         val posterPattern = com.nuvio.app.core.poster.CustomPosterUrlRepository.let {
@@ -493,7 +564,7 @@ object SearchRepository {
         }
 
         return HomeCatalogSection(
-            key = "${manifest.id}:search:$type:$catalogId:${query.lowercase()}",
+            key = "${manifest.id}:search:$type:$catalogId:${genre.orEmpty()}:${query.lowercase()}",
             title = getString(Res.string.discover_catalog_context, catalogName, type.displayLabel()),
             subtitle = addon.displayTitle,
             addonName = addon.displayTitle,
@@ -653,12 +724,19 @@ private data class SearchCatalogRequest(
     val catalogName: String,
     val type: String,
     val query: String,
+    val genre: String? = null,
     val supportsPagination: Boolean,
 )
 
-private fun AddonCatalog.supportsSearch(): Boolean =
+internal fun AddonCatalog.supportsSearch(): Boolean =
     extra.any { property -> property.name == "search" } &&
-        extra.none { property -> property.isRequired && property.name != "search" }
+        extra.none { property ->
+            property.isRequired && when (property.name) {
+                "search", "skip" -> false
+                "genre" -> property.options.isEmpty()
+                else -> true
+            }
+        }
 
 private fun AddonCatalog.supportsDiscover(): Boolean {
     if (extra.any { property -> property.name == "search" && property.isRequired }) {

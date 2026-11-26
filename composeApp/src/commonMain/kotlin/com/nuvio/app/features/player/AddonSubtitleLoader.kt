@@ -147,7 +147,13 @@ private suspend fun parseAddonSubtitles(response: String, request: SubtitleAddon
                 request.addonName,
             ),
             addonName = request.addonName,
-            label = addonProvidedId?.takeIf { it != language && it != url },
+            label = obj.stringValue("name") ?: obj.stringValue("label")
+                ?: addonProvidedId?.takeIf { it != language && it != url },
+            isForced = obj.stringValue("forced").equals("true", true) ||
+                obj.stringValue("isForced").equals("true", true),
+            isSdh = obj.stringValue("sdh").equals("true", true) ||
+                obj.stringValue("hearingImpaired").equals("true", true),
+            format = obj.stringValue("format"),
         )
     }
 }

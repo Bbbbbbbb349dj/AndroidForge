@@ -10,6 +10,10 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.LocalEpisodePlaylistRegistry
+import com.nuvio.app.features.downloads.LocalPlaylistEpisode
+import com.nuvio.app.features.streams.StreamSubtitle
+import kotlinx.coroutines.delay
 import com.nuvio.app.features.livetv.LiveTvChannel
 import com.nuvio.app.features.livetv.LiveTvRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
@@ -428,8 +432,11 @@ internal fun PlayerScreenRuntime.switchToSource(
                     PlayerStreamsRepository.loadSources(
                         type = contentType ?: parentMetaType,
                         videoId = vid,
+                        parentMetaId = parentMetaId,
+                        parentMetaType = parentMetaType,
                         season = activeSeasonNumber,
                         episode = activeEpisodeNumber,
+                        searchTitle = playerMeta?.name ?: title,
                         forceRefresh = true,
                     )
                 }
@@ -526,8 +533,11 @@ internal fun PlayerScreenRuntime.switchToEpisodeStream(
                 PlayerStreamsRepository.loadEpisodeStreams(
                     type = contentType ?: parentMetaType,
                     videoId = episode.id,
+                    parentMetaId = parentMetaId,
+                    parentMetaType = parentMetaType,
                     season = episode.season,
                     episode = episode.episode,
+                    searchTitle = playerMeta?.name ?: title,
                     forceRefresh = true,
                 )
             },
@@ -628,11 +638,114 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     )
 }
 
+internal fun PlayerScreenRuntime.switchToLocalPlaylistEpisode(
+    localEpisode: LocalPlaylistEpisode,
+    episode: MetaVideo,
+) {
+    resetEpisodePanelAndNextEpisodeState()
+    flushWatchProgress()
+    stopActiveP2pStream()
+
+    val resolvedVideoId = localEpisode.videoId
+    val epEntry = WatchProgressRepository.progressForVideo(
+        videoId = resolvedVideoId,
+        parentMetaId = parentMetaId,
+        seasonNumber = localEpisode.seasonNumber,
+        episodeNumber = localEpisode.episodeNumber,
+    )?.takeIf { !it.isCompleted }
+    val epResumeFraction = epEntry?.progressPercent
+        ?.takeIf { it > 0f }
+        ?.let { (it / 100f).coerceIn(0f, 1f) }
+    val epResumePositionMs = epEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L
+
+    val sidecars = localEpisode.sidecarSubtitles.map { sub ->
+        StreamSubtitle(url = sub.uri, language = sub.language, name = sub.label)
+    }
+    externalSubtitles = DownloadSubtitles.localSubtitles(localEpisode.uri) + sidecars
+    activeSourceUrl = localEpisode.uri
+    restartSourceFallback(activeSourceUrl, autoSelection = null)
+    activeSourceAudioUrl = null
+    activeSourceHeaders = emptyMap()
+    activeSourceResponseHeaders = emptyMap()
+    activeStreamType = localEpisode.mimeType
+    activeSourceIdentityKey = null
+    activeSourceFilename = localEpisode.filename
+    activeStreamTitle = localEpisode.filename.ifBlank { episode.title.ifBlank { title } }
+    activeStreamSubtitle = "Local Storage"
+    activeStreamFilename = localEpisode.filename
+    activeProviderName = "Local Storage"
+    activeProviderAddonId = null
+    activeStream = null
+    currentStreamBingeGroup = null
+    activeSubtitleExtras = null
+    currentStreamFilename = localEpisode.filename
+    currentStreamInfoHash = null
+    activeSeasonNumber = localEpisode.seasonNumber
+    activeEpisodeNumber = localEpisode.episodeNumber
+    activeEpisodeTitle = episode.title
+    activeEpisodeThumbnail = episode.thumbnail ?: localEpisode.thumbnailUrl
+    activePauseDescription = episode.overview
+    activeVideoId = resolvedVideoId
+    activeInitialPositionMs = epResumePositionMs
+    activeInitialProgressFraction = epResumeFraction
+    controlsVisible = true
+    InAppLogger.info(
+        "Player/Source",
+        "switch local folder episode videoId=$resolvedVideoId s=${localEpisode.seasonNumber} e=${localEpisode.episodeNumber} resumeMs=$epResumePositionMs",
+    )
+}
+
 internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
+    val nextInfo = nextEpisodeInfo?.takeIf { it.hasAired }
+    val localNext = if (nextInfo != null) {
+        LocalEpisodePlaylistRegistry.findEpisode(
+            parentMetaId = parentMetaId,
+            activeSourceUrl = activeSourceUrl,
+            videoId = nextInfo.videoId,
+            season = nextInfo.season,
+            episode = nextInfo.episode,
+        )
+    } else null
+    if (localNext != null && nextInfo != null) {
+        val nextMetaVideo = playerMetaVideos.firstOrNull { it.id == nextInfo.videoId }
+            ?: MetaVideo(
+                id = localNext.videoId,
+                title = localNext.episodeTitle?.takeIf { it.isNotBlank() } ?: nextInfo.title,
+                released = "2000-01-01T00:00:00.000Z",
+                thumbnail = localNext.thumbnailUrl ?: nextInfo.thumbnail,
+                season = localNext.seasonNumber,
+                episode = localNext.episodeNumber,
+                overview = nextInfo.overview,
+            )
+        if (!automatic) {
+            nextEpisodeAutoPlayJob?.cancel()
+            nextEpisodeAutoPlayJob = null
+            switchToLocalPlaylistEpisode(localNext, nextMetaVideo)
+            return
+        }
+        if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
+        val playbackKey = activePlaybackKey
+        nextEpisodeAutoPlayAutomatic = true
+        nextEpisodeAutoPlaySearching = false
+        nextEpisodeAutoPlaySourceName = "Local Storage"
+        showNextEpisodeCard = true
+        nextEpisodeAutoPlayJob?.cancel()
+        nextEpisodeAutoPlayJob = scope.launch {
+            for (sec in 5 downTo 1) {
+                if (activePlaybackKey != playbackKey) return@launch
+                nextEpisodeAutoPlayCountdown = sec
+                delay(1000L)
+            }
+            if (activePlaybackKey != playbackKey) return@launch
+            nextEpisodeAutoPlayCountdown = null
+            switchToLocalPlaylistEpisode(localNext, nextMetaVideo)
+        }
+        return
+    }
     if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
     nextEpisodePreloadTriggered = false
     val playbackKey = activePlaybackKey
-    val nextVideoId = nextEpisodeInfo?.takeIf { it.hasAired }?.videoId ?: return
+    val nextVideoId = nextInfo?.videoId ?: return
     fun isCurrentRequest(): Boolean = playbackKey == activePlaybackKey &&
         nextEpisodeInfo?.videoId == nextVideoId &&
         (!automatic || (
@@ -649,6 +762,7 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
         parentMetaId = parentMetaId,
         parentMetaType = parentMetaType,
         contentType = contentType,
+        searchTitle = playerMeta?.name ?: title,
         settings = playerSettingsUiState,
         currentStreamBingeGroup = currentStreamBingeGroup,
         onDownloadedEpisodeSelected = { item, episode ->
@@ -694,8 +808,11 @@ internal fun PlayerScreenRuntime.openSourcesPanel() {
     PlayerStreamsRepository.loadSources(
         type = contentType ?: parentMetaType,
         videoId = vid,
+        parentMetaId = parentMetaId,
+        parentMetaType = parentMetaType,
         season = activeSeasonNumber,
         episode = activeEpisodeNumber,
+        searchTitle = playerMeta?.name ?: title,
     )
     showSourcesPanel = true
     showEpisodesPanel = false
@@ -709,7 +826,19 @@ internal fun PlayerScreenRuntime.openEpisodesPanel() {
         "open episodes panel parentType=$parentMetaType parentId=$parentMetaId cachedVideos=${playerMetaVideos.size}",
     )
     if (playerMetaVideos.isEmpty()) {
-        scope.launch {
+        val localEps = LocalEpisodePlaylistRegistry.episodesForPlayback(parentMetaId, activeSourceUrl)
+        if (localEps.isNotEmpty()) {
+            playerMetaVideos = localEps.map { ep ->
+                MetaVideo(
+                    id = ep.videoId,
+                    title = ep.episodeTitle?.takeIf { it.isNotBlank() } ?: "Episode ${ep.episodeNumber}",
+                    released = "2000-01-01T00:00:00.000Z",
+                    thumbnail = ep.thumbnailUrl,
+                    season = ep.seasonNumber,
+                    episode = ep.episodeNumber,
+                )
+            }
+        } else scope.launch {
             playerMetaVideos = MetaDetailsRepository.fetch(parentMetaType, parentMetaId)?.videos ?: emptyList()
             InAppLogger.info(
                 "Player/Episodes",

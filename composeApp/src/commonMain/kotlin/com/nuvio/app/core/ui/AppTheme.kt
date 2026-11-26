@@ -18,6 +18,10 @@ import nuvio.composeapp.generated.resources.theme_gold
 import nuvio.composeapp.generated.resources.theme_jade
 import nuvio.composeapp.generated.resources.theme_rose_gold
 import nuvio.composeapp.generated.resources.theme_arctic_blue
+import nuvio.composeapp.generated.resources.theme_catppuccin_frappe
+import nuvio.composeapp.generated.resources.theme_catppuccin_latte
+import nuvio.composeapp.generated.resources.theme_catppuccin_macchiato
+import nuvio.composeapp.generated.resources.theme_catppuccin_mocha
 import nuvio.composeapp.generated.resources.theme_graphite
 import org.jetbrains.compose.resources.StringResource
 
@@ -40,7 +44,23 @@ enum class AppTheme {
     ROSE_GOLD,
     ARCTIC_BLUE,
     GRAPHITE,
+    CATPPUCCIN_LATTE,
+    CATPPUCCIN_FRAPPE,
+    CATPPUCCIN_MACCHIATO,
+    CATPPUCCIN_MOCHA,
 }
+
+val AppTheme.catppuccinFlavorOrNull: CatppuccinFlavor?
+    get() = when (this) {
+        AppTheme.CATPPUCCIN_LATTE -> CatppuccinFlavor.LATTE
+        AppTheme.CATPPUCCIN_FRAPPE -> CatppuccinFlavor.FRAPPE
+        AppTheme.CATPPUCCIN_MACCHIATO -> CatppuccinFlavor.MACCHIATO
+        AppTheme.CATPPUCCIN_MOCHA -> CatppuccinFlavor.MOCHA
+        else -> null
+    }
+
+val AppTheme.isCatppuccin: Boolean
+    get() = catppuccinFlavorOrNull != null
 
 val AppTheme.isEnhanced: Boolean
     get() = this == AppTheme.MESSENGER ||
@@ -70,4 +90,8 @@ val AppTheme.labelRes: StringResource
         AppTheme.ROSE_GOLD -> Res.string.theme_rose_gold
         AppTheme.ARCTIC_BLUE -> Res.string.theme_arctic_blue
         AppTheme.GRAPHITE -> Res.string.theme_graphite
+        AppTheme.CATPPUCCIN_LATTE -> Res.string.theme_catppuccin_latte
+        AppTheme.CATPPUCCIN_FRAPPE -> Res.string.theme_catppuccin_frappe
+        AppTheme.CATPPUCCIN_MACCHIATO -> Res.string.theme_catppuccin_macchiato
+        AppTheme.CATPPUCCIN_MOCHA -> Res.string.theme_catppuccin_mocha
     }

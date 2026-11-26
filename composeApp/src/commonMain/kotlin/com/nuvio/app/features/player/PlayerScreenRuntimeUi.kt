@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +36,7 @@ import com.nuvio.app.core.logging.InAppLogger
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.features.p2p.P2pStreamingState
+import com.nuvio.app.features.downloads.LocalEpisodePlaylistRegistry
 import com.nuvio.app.features.party.PartyRepository
 import com.nuvio.app.features.p2p.formatP2pMegabytes
 import com.nuvio.app.features.p2p.formatP2pSpeed
@@ -168,7 +168,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         val shouldInspectHls = activeTorrentInfoHash == null &&
             activeSourceAudioUrl == null &&
             activeSourceUrl.contains(".m3u8", ignoreCase = true)
-        activePlaybackSourceUrl = if (shouldInspectHls) null else activeSourceUrl
+        activePlaybackSourceUrl = activeSourceUrl
         playerQualityState = PlayerQualitySelectionState(
             isLoading = shouldInspectHls,
             sourceUrl = activeSourceUrl,
@@ -182,11 +182,15 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
 
         if (shouldInspectHls) {
             val resolved = runCatching {
-                PlayerQualityResolver.resolve(
-                    sourceUrl = resolvingSourceUrl,
-                    requestHeaders = resolvingHeaders,
-                )
+                kotlinx.coroutines.withTimeout(5_000L) {
+                    PlayerQualityResolver.resolve(
+                        sourceUrl = resolvingSourceUrl,
+                        requestHeaders = resolvingHeaders,
+                    )
+                }
             }.getOrElse { error ->
+                if (error is kotlinx.coroutines.CancellationException &&
+                    error !is kotlinx.coroutines.TimeoutCancellationException) throw error
                 InAppLogger.warn(
                     "Player/Quality",
                     "resolve quality failed url=${InAppLogger.redactUrl(resolvingSourceUrl)} " +
@@ -210,7 +214,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
             }
 
             playerQualityState = resolved
-            activePlaybackSourceUrl = resolved.playbackUrlFor(null) ?: resolvingSourceUrl
+            // Keep the master playing adaptively. Only explicit quality selection switches URLs.
             InAppLogger.info(
                 "Player/Quality",
                 "quality state ready variants=${resolved.variants.size} " +
@@ -367,7 +371,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
                         }
                         // Engine failover is decided here, driven by its own player setting;
                         // the engine's own decoder/MIME retries have already been tried.
-                        if (message != null && maybeFailoverPlaybackEngine(resolvedAutoEngine)) {
+                        if (message != null && maybeFailoverPlaybackEngine(resolvedAutoEngine, message)) {
                             return@PlatformPlayerSurface
                         }
                         errorMessage = message
@@ -512,6 +516,26 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
         val portraitPlayback by PlayerOrientationPreference.portrait.collectAsStateWithLifecycle()
         val pipAvailable = isIos && playerSettingsUiState.miniPlayerEnabled &&
             playerController?.isPictureInPictureSupported() == true
+        PlayerFeatureActions(
+            nightModeVisible = playerSettingsUiState.nightModeButtonEnabled,
+            nightModeEnabled = playerSettingsUiState.nightModeEnabled,
+            nightModeSupported = playerController?.supportsNightMode == true &&
+                !playerSettingsUiState.androidAudioPassthroughEnabled && !playerSettingsUiState.tunnelingEnabled,
+            glassEnabled = playerSettingsUiState.playerControlGlassEnabled,
+            onNightModeToggle = { PlayerSettingsRepository.setNightModeEnabled(!playerSettingsUiState.nightModeEnabled) },
+            recommendationsVisible = isMoviePlayback && playerSettingsUiState.movieRecommendationsEnabled,
+            onRecommendations = { showManualRecommendations = true },
+        )
+        PlayerRecommendationsDialog(
+            visible = showManualRecommendations,
+            items = movieRecommendationCandidates,
+            onOpen = { preview ->
+                showManualRecommendations = false
+                flushWatchProgress()
+                args.onOpenMetaDetails?.invoke(preview)
+            },
+            onDismiss = { showManualRecommendations = false },
+        )
         // Live TV channel artwork is not a title logo; retain the program title text instead.
         val playerTitleLogo = if (isLiveTvPlayback) null else logo
         val showPlayerTitleLogo = playerSettingsUiState.showPlayerTitleLogo && !isLiveTvPlayback
@@ -553,7 +577,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
                 if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
             },
             onBack = {
-                flushWatchProgress()
+                if (!playerSettingsUiState.miniPlayerEnabled || !handOffToMiniPlayer()) flushWatchProgress()
                 args.onBack()
             },
             onPartyClick = if (PartyRepository.available.collectAsStateWithLifecycle().value) {
@@ -607,7 +631,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
                         controlsVisible = false
                     }
                 }
-                !isIos && canHandOffToMiniPlayer() -> {
+                !isIos && playerSettingsUiState.miniPlayerEnabled && canHandOffToMiniPlayer() -> {
                     {
                         InAppLogger.info("Player/MiniPlayer", "minimize requested")
                         if (handOffToMiniPlayer()) args.onBack()
@@ -786,6 +810,10 @@ private fun BoxScope.RenderPlaybackOverlays(
                 delay(1_000L)
             }
         }
+        val overlayEnhancedSettings by remember {
+            NuvioEnhancedSettingsRepository.ensureLoaded()
+            NuvioEnhancedSettingsRepository.uiState
+        }.collectAsStateWithLifecycle()
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
             useLegacyLayout = playerSettingsUiState.useLegacyPlayerLayout,
@@ -818,6 +846,9 @@ private fun BoxScope.RenderPlaybackOverlays(
         p2pRebufferProgress = p2pRebufferProgress,
         currentGestureFeedback = currentGestureFeedback,
         renderedGestureFeedback = renderedGestureFeedback,
+        sourceFallbackStatus = sourceFallbackStatus,
+        subtitleDelayMs = subtitleDelayMs,
+        playerStatusOverlayEnabled = overlayEnhancedSettings.playerStatusOverlayEnabled,
         initialLoadCompleted = initialLoadCompleted,
         pausedOverlayVisible = pausedOverlayVisible,
         activeSkipInterval = activeSkipInterval,
@@ -1027,6 +1058,19 @@ private fun PlayerScreenRuntime.RenderPlayerModals() {
             preferredSubtitleSelectionApplied = true
             persistAddonSubtitlePreference(addon)
             attachSelectedAddonSubtitleWithAutoSync(addon.url) // AutoSync hook
+            if (activeSourceUrl.isLocalSubtitleUri() && !addon.url.isLocalSubtitleUri()) {
+                val localUri = activeSourceUrl
+                scope.launch {
+                    runCatching {
+                        com.nuvio.app.features.downloads.DownloadSubtitles.cacheSelected(localUri, addon)
+                    }.onFailure {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        com.nuvio.app.core.ui.NuvioToastController.show(
+                            org.jetbrains.compose.resources.getString(Res.string.v121_subtitle_save_failed),
+                        )
+                    }
+                }
+            }
             if (hasBurnedInServerSubtitle) clearServerSubtitleTrack()
         },
         onFetchAddonSubtitles = { fetchAddonSubtitlesForActiveItem() },
@@ -1076,8 +1120,11 @@ private fun PlayerScreenRuntime.RenderPlayerModals() {
                 PlayerStreamsRepository.loadSources(
                     type = contentType ?: parentMetaType,
                     videoId = vid,
+                    parentMetaId = parentMetaId,
+                    parentMetaType = parentMetaType,
                     season = activeSeasonNumber,
                     episode = activeEpisodeNumber,
+                    searchTitle = playerMeta?.name ?: title,
                     forceRefresh = true,
                 )
             }
@@ -1108,18 +1155,33 @@ private fun PlayerScreenRuntime.RenderPlayerModals() {
         episodeStreamsPanelState = episodeStreamsPanelState,
         episodeStreamsRepoState = episodeStreamsRepoState,
         onEpisodeSelectedForDownload = { episode ->
-            selectDownloadedEpisodeForPlayback(
+            val localEp = LocalEpisodePlaylistRegistry.findEpisode(
                 parentMetaId = parentMetaId,
-                episode = episode,
-                onDownloadedEpisodeSelected = { item, video -> switchToDownloadedEpisode(item, video) },
+                activeSourceUrl = activeSourceUrl,
+                videoId = episode.id,
+                season = episode.season,
+                episode = episode.episode,
             )
+            if (localEp != null) {
+                switchToLocalPlaylistEpisode(localEp, episode)
+                true
+            } else {
+                selectDownloadedEpisodeForPlayback(
+                    parentMetaId = parentMetaId,
+                    episode = episode,
+                    onDownloadedEpisodeSelected = { item, video -> switchToDownloadedEpisode(item, video) },
+                )
+            }
         },
         onEpisodeStreamsRequested = { episode ->
             PlayerStreamsRepository.loadEpisodeStreams(
                 type = contentType ?: parentMetaType,
                 videoId = episode.id,
+                parentMetaId = parentMetaId,
+                parentMetaType = parentMetaType,
                 season = episode.season,
                 episode = episode.episode,
+                searchTitle = playerMeta?.name ?: title,
             )
             episodeStreamsPanelState = EpisodeStreamsPanelState(showStreams = true, selectedEpisode = episode)
         },
@@ -1141,8 +1203,11 @@ private fun PlayerScreenRuntime.RenderPlayerModals() {
                 PlayerStreamsRepository.loadEpisodeStreams(
                     type = contentType ?: parentMetaType,
                     videoId = episode.id,
+                    parentMetaId = parentMetaId,
+                    parentMetaType = parentMetaType,
                     season = episode.season,
                     episode = episode.episode,
+                    searchTitle = playerMeta?.name ?: title,
                     forceRefresh = true,
                 )
             }

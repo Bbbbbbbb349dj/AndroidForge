@@ -4,6 +4,10 @@
     <string name="theme_rose_gold">Rose Gold</string>
     <string name="theme_arctic_blue">Arctic Blue</string>
     <string name="theme_graphite">Graphite</string>
+    <string name="theme_catppuccin_latte">Latte</string>
+    <string name="theme_catppuccin_frappe">Frappé</string>
+    <string name="theme_catppuccin_macchiato">Macchiato</string>
+    <string name="theme_catppuccin_mocha">Mocha</string>
     <string name="profile_choose_background">Choose Profile Background</string>
     <string name="profile_background_member_note">Custom background URLs can be configured from the Nuvio web panel.</string>
     <string name="profile_background_normal">Normal</string>
@@ -1252,7 +1256,7 @@
     <string name="settings_playback_touch_gestures_description">Allow swipes and double-taps on the player surface to seek, adjust brightness, or adjust volume.</string>
     <string name="settings_playback_swipe_to_seek">Swipe to Seek</string>
     <string name="settings_playback_movie_recommendations">Movie Recommendations</string>
-    <string name="settings_playback_movie_recommendations_description">Suggest titles from More Like This when a movie reaches its end credits.</string>
+    <string name="settings_playback_movie_recommendations_description">Open More Like This from the player at any time, with recommendations also shown near a movie’s end credits.</string>
     <string name="settings_playback_swipe_to_seek_description">Swipe left or right across the player to scrub through the video. Turn this off to keep only the up and down swipes for brightness and volume — double-tapping to skip still works.</string>
     <string name="settings_playback_auto_show_subtitles_on_rewind">Auto-Show Subtitles on Rewind</string>
     <string name="settings_playback_auto_show_subtitles_on_rewind_description">When subtitles are off, automatically turn them on while you rewind, then hide them again once playback catches back up to where you rewound from.</string>
@@ -2874,8 +2878,8 @@
     <string name="nuvio_read_rating_map">Rating Map</string>
     <string name="details_where_to_watch_attribution">Availability by JustWatch</string>
     <string name="details_where_to_watch_tmdb_required">Enable TMDB to see streaming availability</string>
-    <string name="support_buymeacoffee_title">Support Nuvio Enhanced 2.0</string>
-    <string name="support_buymeacoffee_message">Every update of Nuvio Enhanced 2.0 comes from one person\'s free time — no team, no sponsors, no ads. A small coffee from you means this app stays free and keeps getting better.</string>
+    <string name="support_buymeacoffee_title">Buy Me a Coffee</string>
+    <string name="support_buymeacoffee_message">Enjoying Nuvio Enhanced? Buy the developer a coffee to help keep independent releases polished, fast, and ad-free.</string>
     <string name="support_buymeacoffee_button">Buy Me a Coffee</string>
     <string name="compose_player_next_ep">Next Ep</string>
     <string name="player_next_episode_ready_via">Ready via %1$s</string>
@@ -3540,6 +3544,11 @@
     <string name="settings_tracking_in_app_rating_requires_tracker">Connect a tracker above to turn this on.</string>
     <string name="layout_rating_map">Rating Map</string>
     <string name="layout_rating_map_sub">Show a color-coded map of episode ratings at the bottom of show and anime pages.</string>
+    <string name="layout_rating_map_position">Rating Map Position</string>
+    <string name="profile_use_primary_plugins">Use primary profile plugins</string>
+    <string name="profile_use_primary_plugins_description">Share the primary profile's installed plugins with this profile.</string>
+    <string name="profile_choose_from_gallery">Choose from gallery</string>
+    <string name="layout_rating_map_position_sub">Choose whether the rating map appears at the top or bottom of the details page.</string>
     <string name="details_rating_map">Rating Map</string>
     <string name="details_rating_map_summary">Average %1$s · %2$d episodes rated</string>
     <string name="details_rating_map_season_rated">%1$d rated</string>

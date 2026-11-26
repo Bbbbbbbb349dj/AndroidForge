@@ -32,10 +32,12 @@ import com.nuvio.app.features.streams.supportsStream
 import com.nuvio.app.features.streams.toEmptyStateReason
 import com.nuvio.app.features.streams.toPluginProviderGroups
 import com.nuvio.app.features.streams.toStreamItem
+import com.nuvio.app.features.cloudstream.CloudStreamLiveLinkHub
 import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.cloudstream.parseCloudStreamRouteId
 import com.nuvio.app.features.streams.buildCloudStreamSearchRequest
 import com.nuvio.app.features.streams.cloudStreamProviderGroupsForRequest
+import com.nuvio.app.features.streams.loadCloudStreamRouteProgressive
 import com.nuvio.app.features.streams.resolveCloudStreamProviderStreams
 import com.nuvio.app.features.streams.cloudStreamSourcesToStreamItems
 import com.nuvio.app.features.streams.StreamsRepository
@@ -63,8 +65,8 @@ object PlayerStreamsRepository {
     private val log = Logger.withTag("PlayerStreamsRepo")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val cloudStreamSemaphore = Semaphore(4)
-    private const val PLAYER_STREAM_PROVIDER_TIMEOUT_MS = 35_000L
+    private val cloudStreamSemaphore = Semaphore(8)
+    private const val PLAYER_STREAM_PROVIDER_TIMEOUT_MS = 90_000L
 
     // source panel
     private val _sourceState = MutableStateFlow(StreamsUiState())
@@ -135,12 +137,16 @@ object PlayerStreamsRepository {
     fun stopSourcesLoading() {
         PluginRepository.setLocalPluginSearchPaused(true)
         cancelSourceJob()
+        if (episodeStreamsJob?.isActive != true) {
+            CloudStreamLiveLinkHub.notifyPlaybackStarted()
+        }
     }
 
     fun pauseSearchForPlayback() {
         PluginRepository.setLocalPluginSearchPaused(true)
         cancelSourceJob()
         cancelEpisodeStreamsJob()
+        CloudStreamLiveLinkHub.notifyPlaybackStarted()
     }
 
     private fun cancelSourceJob() {
@@ -223,7 +229,8 @@ object PlayerStreamsRepository {
         } else {
             PluginsUiState(pluginsEnabled = false)
         }
-        val cloudStreamSearchRequest = buildCloudStreamSearchRequest(
+        CloudStreamRepository.initialize()
+        val initialCloudStreamSearchRequest = buildCloudStreamSearchRequest(
             type = type,
             videoId = videoId,
             parentMetaId = parentMetaId,
@@ -232,6 +239,7 @@ object PlayerStreamsRepository {
             episode = episode,
             searchTitle = searchTitle,
         )
+        val cloudStreamSearchRequest = initialCloudStreamSearchRequest
         val cloudStreamProviderGroups = if (AppFeaturePolicy.pluginsEnabled) {
             cloudStreamProviderGroupsForRequest(type, cloudStreamSearchRequest)
         } else {
@@ -302,22 +310,46 @@ object PlayerStreamsRepository {
                 isAnyLoading = true,
             )
             val job = scope.launch {
-                val result = runCatching {
-                    withTimeoutOrNull(PLAYER_STREAM_PROVIDER_TIMEOUT_MS) {
-                        CloudStreamRepository.loadLinks(cloudStreamRoute.providerId, cloudStreamRoute.data)
-                    } ?: error("$providerName timed out")
-                }.fold(
-                    onSuccess = { it },
-                    onFailure = { Result.failure(it) },
-                )
+                CloudStreamLiveLinkHub.onPlayerLoadStarted()
+                val result = try {
+                    loadCloudStreamRouteProgressive(
+                        providerId = cloudStreamRoute.providerId,
+                        providerName = providerName,
+                        linkData = cloudStreamRoute.data,
+                        timeoutMs = PLAYER_STREAM_PROVIDER_TIMEOUT_MS,
+                        forceRefresh = forceRefresh,
+                        onProgress = { partialStreams ->
+                            if (requestKeyHolder() != requestKey || partialStreams.isEmpty()) return@loadCloudStreamRouteProgressive
+                            val presentedPartial = StreamBadgePresentation.apply(
+                                groups = listOf(
+                                    AddonStreamGroup(
+                                        addonName = providerName,
+                                        addonId = providerAddonId,
+                                        streams = partialStreams.sortedForGroupedDisplay(),
+                                        isLoading = true,
+                                    ),
+                                ),
+                                rules = streamBadgeRules,
+                            )
+                            stateFlow.update { current ->
+                                val existing = current.groups.firstOrNull { it.addonId == providerAddonId }
+                                if (existing != null && !existing.isLoading) return@update current
+                                current.copy(
+                                    groups = presentedPartial,
+                                    activeAddonIds = setOf(providerAddonId),
+                                    isAnyLoading = true,
+                                    emptyStateReason = null,
+                                )
+                            }
+                        },
+                    )
+                } finally {
+                    CloudStreamLiveLinkHub.onPlayerLoadFinished()
+                }
                 if (requestKeyHolder() != requestKey) return@launch
                 result.fold(
-                    onSuccess = { sources ->
-                        val streams = cloudStreamSourcesToStreamItems(
-                            providerId = cloudStreamRoute.providerId,
-                            providerName = providerName,
-                            sources = sources,
-                        )
+                    onSuccess = { rawStreams ->
+                        val streams = rawStreams.sortedForGroupedDisplay()
                         val presentedGroup = StreamBadgePresentation.apply(
                             groups = listOf(
                                 AddonStreamGroup(
@@ -474,6 +506,32 @@ object PlayerStreamsRepository {
                 ).firstOrNull() ?: badgeGroup
             }
 
+            fun publishPartialCloudStreamGroup(partialGroup: AddonStreamGroup) {
+                if (partialGroup.streams.isEmpty()) return
+                val presented = presentStreamGroup(partialGroup)
+                stateFlow.update { current ->
+                    val target = current.groups.firstOrNull { it.addonId == presented.addonId }
+                    if (target != null && !target.isLoading) return@update current
+                    val updated = StreamAutoPlaySelector.orderAddonStreams(
+                        groups = current.groups.map { g ->
+                            if (g.addonId == presented.addonId) {
+                                presented.copy(isLoading = true, error = null)
+                            } else {
+                                g
+                            }
+                        },
+                        installedOrder = installedAddonOrder,
+                        preferredGroupIds = preferredGroupIds,
+                    )
+                    val anyLoading = updated.any { it.isLoading }
+                    current.copy(
+                        groups = updated,
+                        isAnyLoading = anyLoading,
+                        emptyStateReason = updated.toEmptyStateReason(anyLoading),
+                    )
+                }
+            }
+
             fun publishStreamGroup(group: AddonStreamGroup) {
                 stateFlow.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -617,13 +675,46 @@ object PlayerStreamsRepository {
             }
             cloudStreamProviderGroups.forEach { providerGroup ->
                 launch {
-                    val group = withTimeoutOrNull(PLAYER_STREAM_PROVIDER_TIMEOUT_MS) {
-                        cloudStreamSemaphore.withPermit {
-                            resolveCloudStreamProviderStreams(
-                                providerGroup = providerGroup,
-                                request = cloudStreamSearchRequest,
-                            )
+                    CloudStreamLiveLinkHub.onPlayerLoadStarted()
+                    val effectiveRequest = cloudStreamSearchRequest ?: run {
+                        val fallbackMetaId = parentMetaId?.takeIf { it.isNotBlank() }
+                            ?: videoId.substringBefore(':').takeIf { it.isNotBlank() } ?: videoId
+                        val fallbackMetaType = parentMetaType?.takeIf { it.isNotBlank() } ?: type
+                        runCatchingUnlessCancelled {
+                            MetaDetailsRepository.fetch(fallbackMetaType, fallbackMetaId)
                         }
+                        buildCloudStreamSearchRequest(
+                            type = type,
+                            videoId = videoId,
+                            parentMetaId = fallbackMetaId,
+                            parentMetaType = fallbackMetaType,
+                            season = season,
+                            episode = episode,
+                            searchTitle = searchTitle,
+                        )
+                    }
+                    val group = try {
+                        withTimeoutOrNull(PLAYER_STREAM_PROVIDER_TIMEOUT_MS) {
+                            cloudStreamSemaphore.withPermit {
+                                resolveCloudStreamProviderStreams(
+                                    providerGroup = providerGroup,
+                                    request = effectiveRequest,
+                                    forceRefresh = forceRefresh,
+                                    onProgress = { partialStreams ->
+                                        publishPartialCloudStreamGroup(
+                                            AddonStreamGroup(
+                                                addonName = providerGroup.addonName,
+                                                addonId = providerGroup.addonId,
+                                                streams = partialStreams.sortedForGroupedDisplay(),
+                                                isLoading = true,
+                                            ),
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    } finally {
+                        CloudStreamLiveLinkHub.onPlayerLoadFinished()
                     } ?: AddonStreamGroup(
                         addonName = providerGroup.addonName,
                         addonId = providerGroup.addonId,

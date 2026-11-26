@@ -9,7 +9,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,8 +25,18 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,19 +59,35 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
+import com.nuvio.app.core.ui.DialogButton
+import com.nuvio.app.core.ui.DialogButtonStyle
+import com.nuvio.app.core.ui.DialogButtons
+import com.nuvio.app.core.ui.DialogSurface
+import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvio
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.NuvioIconActionButton
 import com.nuvio.app.core.ui.NuvioInfoBadge
 import com.nuvio.app.core.ui.NuvioInputField
+import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.core.ui.NuvioSectionLabel
 import com.nuvio.app.core.ui.NuvioSurfaceCard
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.cloudstream.AddCloudStreamRepositoryResult
 import com.nuvio.app.features.cloudstream.CloudStreamBulkInstallResult
 import com.nuvio.app.features.cloudstream.CloudStreamInstallResult
 import com.nuvio.app.features.cloudstream.CloudStreamPlatformSupport
+import com.nuvio.app.features.cloudstream.CloudStreamExtensionConfigBridge
+import com.nuvio.app.features.cloudstream.CloudStreamInternalSource
+import com.nuvio.app.features.cloudstream.CloudStreamPluginConfigSnapshot
 import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
+import com.nuvio.app.features.cloudstream.CloudStreamPreferenceEntry
+import com.nuvio.app.features.cloudstream.CloudStreamSubProviderConfig
+import kotlinx.coroutines.delay
 import com.nuvio.app.features.cloudstream.CloudStreamRepository
 import com.nuvio.app.features.settings.AppLanguage
 import com.nuvio.app.features.settings.ThemeSettingsRepository
@@ -64,7 +95,25 @@ import com.nuvio.app.features.streams.StreamSourcePreferencesRepository
 import com.nuvio.app.features.streams.cloudStreamAddonId
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalLayoutApi::class)
+private enum class CloudStreamStatusFilter(val key: String) {
+    ALL("all"),
+    INSTALLED("installed"),
+    ENABLED("enabled"),
+    UPDATES("updates"),
+    PINNED("pinned"),
+    AVAILABLE("available"),
+}
+
+private enum class CloudStreamSortOrder(val key: String) {
+    SMART("smart"),
+    ENABLED_FIRST("enabled_first"),
+    INSTALLED_FIRST("installed_first"),
+    NAME_ASC("name_asc"),
+    NAME_DESC("name_desc"),
+    VERSION_DESC("version_desc"),
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun CloudStreamSettingsSection() {
     LaunchedEffect(Unit) {
@@ -85,9 +134,27 @@ internal fun CloudStreamSettingsSection() {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedLanguage by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedType by rememberSaveable { mutableStateOf<String?>(null) }
+    var statusFilterKey by rememberSaveable { mutableStateOf(CloudStreamStatusFilter.ALL.key) }
+    var sortOrderKey by rememberSaveable { mutableStateOf(CloudStreamSortOrder.SMART.key) }
+    val selectedStatusFilter = remember(statusFilterKey) {
+        CloudStreamStatusFilter.entries.firstOrNull { it.key == statusFilterKey } ?: CloudStreamStatusFilter.ALL
+    }
+    val selectedSortOrder = remember(sortOrderKey) {
+        CloudStreamSortOrder.entries.firstOrNull { it.key == sortOrderKey } ?: CloudStreamSortOrder.SMART
+    }
+    var showFilterSheet by remember { mutableStateOf(false) }
+    val activeFilterCount =
+        (if (selectedStatusFilter != CloudStreamStatusFilter.ALL) 1 else 0) +
+            (if (selectedSortOrder != CloudStreamSortOrder.SMART) 1 else 0) +
+            (if (selectedLanguage != null) 1 else 0) +
+            (if (selectedType != null) 1 else 0)
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var bulkInstallMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isBulkInstalling by remember { mutableStateOf(false) }
+    var configuringPluginId by rememberSaveable { mutableStateOf<String?>(null) }
+    var useNuvioSettingsUi by remember {
+        mutableStateOf(CloudStreamExtensionConfigBridge.preferNuvioSettingsUi())
+    }
 
     val languages = remember(state.plugins) {
         state.plugins.mapNotNull { it.metadata.language }.distinct().sorted()
@@ -95,18 +162,74 @@ internal fun CloudStreamSettingsSection() {
     val types = remember(state.plugins) {
         state.plugins.flatMap { it.metadata.rawTvTypes }.distinct().sorted()
     }
-    val visiblePlugins = remember(state.plugins, query, selectedLanguage, selectedType) {
+    val pinnedSourceIds = remember(sourcePreferences.pinnedSources) {
+        sourcePreferences.pinnedSources.map { it.id }.toSet()
+    }
+    val installedTotalCount = remember(state.plugins) { state.plugins.count { it.isInstalled } }
+    val enabledTotalCount = remember(state.plugins) { state.plugins.count { it.isInstalled && it.enabled } }
+    val updatesTotalCount = remember(state.plugins) { state.plugins.count { it.isInstalled && it.hasUpdate } }
+    val pinnedTotalCount = remember(state.plugins, pinnedSourceIds) {
+        state.plugins.count { cloudStreamAddonId(it.metadata.id.value) in pinnedSourceIds }
+    }
+    val availableNotInstalledCount = remember(state.plugins) { state.plugins.count { !it.isInstalled } }
+    val updatableInstalledPlugins = remember(state.plugins) {
+        state.plugins.filter { it.isInstalled && it.hasUpdate && !it.isInstalling }
+    }
+    val visiblePlugins = remember(
+        state.plugins,
+        query,
+        selectedLanguage,
+        selectedType,
+        selectedStatusFilter,
+        selectedSortOrder,
+        pinnedSourceIds,
+    ) {
         val normalizedQuery = query.trim().lowercase()
-        state.plugins.filter { item ->
-            (normalizedQuery.isBlank() || listOf(
-                item.metadata.name,
-                item.metadata.internalName,
-                item.metadata.description.orEmpty(),
-                item.metadata.authors.joinToString(" "),
-            ).any { it.lowercase().contains(normalizedQuery) }) &&
+        val filtered = state.plugins.filter { item ->
+            val matchesStatus = when (selectedStatusFilter) {
+                CloudStreamStatusFilter.ALL -> true
+                CloudStreamStatusFilter.INSTALLED -> item.isInstalled
+                CloudStreamStatusFilter.ENABLED -> item.isInstalled && item.enabled
+                CloudStreamStatusFilter.UPDATES -> item.isInstalled && item.hasUpdate
+                CloudStreamStatusFilter.PINNED -> cloudStreamAddonId(item.metadata.id.value) in pinnedSourceIds
+                CloudStreamStatusFilter.AVAILABLE -> !item.isInstalled
+            }
+            matchesStatus &&
+                (normalizedQuery.isBlank() || listOf(
+                    item.metadata.name,
+                    item.metadata.internalName,
+                    item.metadata.description.orEmpty(),
+                    item.metadata.authors.joinToString(" "),
+                ).any { it.lowercase().contains(normalizedQuery) }) &&
                 (selectedLanguage == null || item.metadata.language == selectedLanguage) &&
                 (selectedType == null || selectedType in item.metadata.rawTvTypes)
         }
+        val comparator = when (selectedSortOrder) {
+            CloudStreamSortOrder.SMART -> compareByDescending<CloudStreamPluginItem> {
+                cloudStreamAddonId(it.metadata.id.value) in pinnedSourceIds
+            }.thenByDescending { it.isInstalled && it.hasUpdate }
+                .thenByDescending { it.isInstalled && it.enabled }
+                .thenByDescending { it.isInstalled }
+                .thenBy { it.metadata.name.lowercase() }
+            CloudStreamSortOrder.ENABLED_FIRST -> compareByDescending<CloudStreamPluginItem> {
+                it.isInstalled && it.enabled
+            }.thenByDescending { it.isInstalled }
+                .thenBy { it.metadata.name.lowercase() }
+            CloudStreamSortOrder.INSTALLED_FIRST -> compareByDescending<CloudStreamPluginItem> {
+                it.isInstalled
+            }.thenByDescending { it.enabled }
+                .thenBy { it.metadata.name.lowercase() }
+            CloudStreamSortOrder.NAME_ASC -> compareBy<CloudStreamPluginItem> {
+                it.metadata.name.lowercase()
+            }
+            CloudStreamSortOrder.NAME_DESC -> compareByDescending<CloudStreamPluginItem> {
+                it.metadata.name.lowercase()
+            }
+            CloudStreamSortOrder.VERSION_DESC -> compareByDescending<CloudStreamPluginItem> {
+                it.metadata.version
+            }.thenBy { it.metadata.name.lowercase() }
+        }
+        filtered.sortedWith(comparator)
     }
     val bulkActionPlugins = remember(visiblePlugins) {
         visiblePlugins.filter { item ->
@@ -116,19 +239,37 @@ internal fun CloudStreamSettingsSection() {
                 (!item.isRunnable || item.hasUpdate || !item.isInstalled || !item.verified)
         }
     }
-    val pinnedSourceIds = remember(sourcePreferences.pinnedSources) {
-        sourcePreferences.pinnedSources.map { it.id }.toSet()
-    }
 
     NuvioSectionLabel(copy.sectionTitle)
     NuvioSurfaceCard {
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             NuvioInfoBadge(text = copy.repositoryCount(state.repositories.size))
-            NuvioInfoBadge(text = copy.installedCount(state.plugins.count { it.isInstalled }))
-            NuvioInfoBadge(text = copy.enabledProviderCount(state.plugins.count { it.isRunnable }))
+            CloudStreamFilterChip(
+                label = copy.installedCount(installedTotalCount),
+                selected = selectedStatusFilter == CloudStreamStatusFilter.INSTALLED,
+                onClick = {
+                    statusFilterKey = if (selectedStatusFilter == CloudStreamStatusFilter.INSTALLED) {
+                        CloudStreamStatusFilter.ALL.key
+                    } else {
+                        CloudStreamStatusFilter.INSTALLED.key
+                    }
+                },
+            )
+            CloudStreamFilterChip(
+                label = copy.enabledProviderCount(enabledTotalCount),
+                selected = selectedStatusFilter == CloudStreamStatusFilter.ENABLED,
+                onClick = {
+                    statusFilterKey = if (selectedStatusFilter == CloudStreamStatusFilter.ENABLED) {
+                        CloudStreamStatusFilter.ALL.key
+                    } else {
+                        CloudStreamStatusFilter.ENABLED.key
+                    }
+                },
+            )
         }
         Spacer(Modifier.height(12.dp))
         Text(
@@ -136,6 +277,16 @@ internal fun CloudStreamSettingsSection() {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (CloudStreamExtensionConfigBridge.isSupported) {
+            Spacer(Modifier.height(12.dp))
+            CloudStreamSettingsUiModeSelector(
+                useNuvioSettingsUi = useNuvioSettingsUi,
+                onModeChange = { preferNuvio ->
+                    useNuvioSettingsUi = preferNuvio
+                    CloudStreamExtensionConfigBridge.setPreferNuvioSettingsUi(preferNuvio)
+                },
+            )
+        }
     }
 
     if (!state.securityWarningAccepted) {
@@ -271,7 +422,6 @@ internal fun CloudStreamSettingsSection() {
                         modifier = Modifier.padding(end = 4.dp),
                     )
                     IconButton(
-                        enabled = plugin.verified && plugin.compatibility.isRunnable,
                         onClick = {
                             repositoryUrl = repository.manifest.sourceUrl
                             editingRepositoryUrl = repository.manifest.sourceUrl
@@ -353,29 +503,132 @@ internal fun CloudStreamSettingsSection() {
                 value = query,
                 onValueChange = { query = it },
                 placeholder = copy.searchPlaceholder,
-            )
-            Spacer(Modifier.height(10.dp))
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CloudStreamFilterChip(copy.allLanguages, selectedLanguage == null) { selectedLanguage = null }
-                languages.forEach { language ->
-                    CloudStreamFilterChip(language.uppercase(), selectedLanguage == language) {
-                        selectedLanguage = language.takeUnless { selectedLanguage == language }
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showFilterSheet = true }) {
+                            if (activeFilterCount > 0) {
+                                BadgedBox(
+                                    badge = { Badge { Text(text = activeFilterCount.toString()) } },
+                                ) {
+                                    Icon(Icons.Rounded.Tune, contentDescription = "Sort and filter extensions")
+                                }
+                            } else {
+                                Icon(Icons.Rounded.Tune, contentDescription = "Sort and filter extensions")
+                            }
+                        }
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Clear search")
+                            }
+                        }
                     }
-                }
-            }
-            if (types.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                },
+            )
+            if (showFilterSheet) {
+                val filterSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                NuvioModalBottomSheet(
+                    onDismissRequest = { showFilterSheet = false },
+                    sheetState = filterSheetState,
                 ) {
-                    CloudStreamFilterChip(copy.allTypes, selectedType == null) { selectedType = null }
-                    types.forEach { type ->
-                        CloudStreamFilterChip(type, selectedType == type) {
-                            selectedType = type.takeUnless { selectedType == type }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = "Extension Status",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CloudStreamFilterChip(
+                                label = "All (${state.plugins.size})",
+                                selected = selectedStatusFilter == CloudStreamStatusFilter.ALL,
+                            ) { statusFilterKey = CloudStreamStatusFilter.ALL.key }
+                            CloudStreamFilterChip(
+                                label = "Installed ($installedTotalCount)",
+                                selected = selectedStatusFilter == CloudStreamStatusFilter.INSTALLED,
+                            ) { statusFilterKey = CloudStreamStatusFilter.INSTALLED.key }
+                            CloudStreamFilterChip(
+                                label = "Enabled ($enabledTotalCount)",
+                                selected = selectedStatusFilter == CloudStreamStatusFilter.ENABLED,
+                            ) { statusFilterKey = CloudStreamStatusFilter.ENABLED.key }
+                            if (updatesTotalCount > 0 || selectedStatusFilter == CloudStreamStatusFilter.UPDATES) {
+                                CloudStreamFilterChip(
+                                    label = "Updates ($updatesTotalCount)",
+                                    selected = selectedStatusFilter == CloudStreamStatusFilter.UPDATES,
+                                ) { statusFilterKey = CloudStreamStatusFilter.UPDATES.key }
+                            }
+                            if (pinnedTotalCount > 0 || selectedStatusFilter == CloudStreamStatusFilter.PINNED) {
+                                CloudStreamFilterChip(
+                                    label = "Pinned ($pinnedTotalCount)",
+                                    selected = selectedStatusFilter == CloudStreamStatusFilter.PINNED,
+                                ) { statusFilterKey = CloudStreamStatusFilter.PINNED.key }
+                            }
+                            CloudStreamFilterChip(
+                                label = "Not Installed ($availableNotInstalledCount)",
+                                selected = selectedStatusFilter == CloudStreamStatusFilter.AVAILABLE,
+                            ) { statusFilterKey = CloudStreamStatusFilter.AVAILABLE.key }
+                        }
+                        Text(
+                            text = "Sort Extensions",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            listOf(
+                                CloudStreamSortOrder.SMART to "Smart Order",
+                                CloudStreamSortOrder.ENABLED_FIRST to "Enabled First",
+                                CloudStreamSortOrder.INSTALLED_FIRST to "Installed First",
+                                CloudStreamSortOrder.NAME_ASC to "Name (A-Z)",
+                                CloudStreamSortOrder.NAME_DESC to "Name (Z-A)",
+                                CloudStreamSortOrder.VERSION_DESC to "Newest Version",
+                            ).forEach { (order, label) ->
+                                CloudStreamFilterChip(
+                                    label = label,
+                                    selected = selectedSortOrder == order,
+                                ) { sortOrderKey = order.key }
+                            }
+                        }
+                        Text(
+                            text = "Languages & Types",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CloudStreamFilterChip(copy.allLanguages, selectedLanguage == null) { selectedLanguage = null }
+                            languages.forEach { language ->
+                                CloudStreamFilterChip(language.uppercase(), selectedLanguage == language) {
+                                    selectedLanguage = language.takeUnless { selectedLanguage == language }
+                                }
+                            }
+                        }
+                        if (types.isNotEmpty()) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CloudStreamFilterChip(copy.allTypes, selectedType == null) { selectedType = null }
+                                types.forEach { type ->
+                                    CloudStreamFilterChip(type, selectedType == type) {
+                                        selectedType = type.takeUnless { selectedType == type }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -415,6 +668,67 @@ internal fun CloudStreamSettingsSection() {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (updatableInstalledPlugins.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    enabled = state.securityWarningAccepted && !isBulkInstalling,
+                    onClick = {
+                        val updateIds = updatableInstalledPlugins.map { it.metadata.id.value }
+                        isBulkInstalling = true
+                        bulkInstallMessage = null
+                        scope.launch {
+                            bulkInstallMessage = runCatching {
+                                CloudStreamRepository.installAndEnablePlugins(updateIds).toUserMessage(copy)
+                            }.getOrElse { err ->
+                                err.message ?: copy.bulkInstallFailed
+                            }
+                            isBulkInstalling = false
+                        }
+                    },
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Update all installed (${updatableInstalledPlugins.size})",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            val hasActiveFilters = query.isNotBlank() ||
+                selectedLanguage != null ||
+                selectedType != null ||
+                selectedStatusFilter != CloudStreamStatusFilter.ALL ||
+                selectedSortOrder != CloudStreamSortOrder.SMART
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Showing ${visiblePlugins.size} of ${state.plugins.size} extensions",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (hasActiveFilters) {
+                    Text(
+                        text = "Reset filters",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            query = ""
+                            selectedLanguage = null
+                            selectedType = null
+                            statusFilterKey = CloudStreamStatusFilter.ALL.key
+                            sortOrderKey = CloudStreamSortOrder.SMART.key
+                        },
+                    )
+                }
+            }
             bulkInstallMessage?.let {
                 Spacer(Modifier.height(10.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -428,7 +742,33 @@ internal fun CloudStreamSettingsSection() {
             securityWarningAccepted = state.securityWarningAccepted,
             pinnedSourceIds = pinnedSourceIds,
             copy = copy,
+            useNuvioSettingsUi = useNuvioSettingsUi,
             onMessage = { message = it },
+            onOpenConfig = { configuringPluginId = plugin.metadata.id.value },
+        )
+    }
+
+    val configuringPlugin = configuringPluginId?.let { id ->
+        state.plugins.firstOrNull { it.metadata.id.value == id }
+    }
+    if (configuringPlugin != null) {
+        CloudStreamExtensionSettingsDialog(
+            plugin = configuringPlugin,
+            onDismiss = { configuringPluginId = null },
+            onLaunchNativeSettings = {
+                val targetId = configuringPlugin.metadata.id.value
+                configuringPluginId = null
+                scope.launch {
+                    delay(140)
+                    CloudStreamRepository.openPluginSettings(targetId)
+                        .onFailure { error ->
+                            val errText = error.message
+                                ?: "Could not open CloudStream native settings"
+                            message = errText
+                            NuvioToastController.show(errText)
+                        }
+                }
+            },
         )
     }
 }
@@ -458,7 +798,9 @@ private fun CloudStreamPluginCard(
     securityWarningAccepted: Boolean,
     pinnedSourceIds: Set<String>,
     copy: CloudStreamSettingsCopy,
+    useNuvioSettingsUi: Boolean = false,
     onMessage: (String) -> Unit,
+    onOpenConfig: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val sourceId = remember(plugin.metadata.id.value) { cloudStreamAddonId(plugin.metadata.id.value) }
@@ -499,14 +841,27 @@ private fun CloudStreamPluginCard(
                 )
                 if (plugin.isInstalled) {
                     IconButton(
+                        enabled = plugin.verified && plugin.compatibility.isRunnable,
                         onClick = {
-                            scope.launch {
-                                CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)
-                                    .onFailure { error ->
-                                        onMessage(
-                                            error.message ?: "This extension does not provide configurable settings",
-                                        )
-                                    }
+                            if (CloudStreamExtensionConfigBridge.isSupported && useNuvioSettingsUi) {
+                                onOpenConfig()
+                            } else {
+                                scope.launch {
+                                    CloudStreamRepository.openPluginSettings(plugin.metadata.id.value)
+                                        .onFailure { error ->
+                                            if (CloudStreamExtensionConfigBridge.isSupported) {
+                                                NuvioToastController.show(
+                                                    "Native CloudStream UI unavailable — opening Nuvio extension settings",
+                                                )
+                                                onOpenConfig()
+                                            } else {
+                                                val errText = error.message
+                                                    ?: "This extension does not provide configurable settings"
+                                                onMessage(errText)
+                                                NuvioToastController.show(errText)
+                                            }
+                                        }
+                                }
                             }
                         },
                     ) {
@@ -837,5 +1192,817 @@ private fun CloudStreamFilterChip(
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
         )
+    }
+}
+
+
+@Composable
+private fun CloudStreamSettingsUiModeSelector(
+    useNuvioSettingsUi: Boolean,
+    onModeChange: (Boolean) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceElevated,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Tune,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Extension Gear Button UI",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+            }
+            Text(
+                text = "CloudStream UI is the default. Switch to Nuvio UI if an extension's native settings screen doesn't work.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textSecondary,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                NuvioModeSegmentChip(
+                    label = "CloudStream UI (Default)",
+                    selected = !useNuvioSettingsUi,
+                    onClick = { onModeChange(false) },
+                    modifier = Modifier.weight(1f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Nuvio UI",
+                    selected = useNuvioSettingsUi,
+                    onClick = { onModeChange(true) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NuvioModeSegmentChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.sm),
+        color = if (selected) tokens.colors.accent.copy(alpha = 0.2f) else tokens.colors.surfaceCard,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) tokens.colors.accent else tokens.colors.borderSubtle,
+        ),
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected) tokens.colors.accent else tokens.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private enum class NuvioExtConfigTab {
+    Sources,
+    Domains,
+    Tokens,
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CloudStreamExtensionSettingsDialog(
+    plugin: CloudStreamPluginItem,
+    onDismiss: () -> Unit,
+    onLaunchNativeSettings: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val scope = rememberCoroutineScope()
+    var snapshot by remember(plugin.metadata.id.value) { mutableStateOf<CloudStreamPluginConfigSnapshot?>(null) }
+    var loadError by remember(plugin.metadata.id.value) { mutableStateOf<String?>(null) }
+    var isBusy by remember { mutableStateOf(true) }
+    var activeTab by remember { mutableStateOf(NuvioExtConfigTab.Sources) }
+    var sourceQuery by remember { mutableStateOf("") }
+    var newKey by remember { mutableStateOf("") }
+    var newValue by remember { mutableStateOf("") }
+    var newType by remember { mutableStateOf("string") }
+
+    LaunchedEffect(plugin.metadata.id.value) {
+        isBusy = true
+        loadError = null
+        CloudStreamExtensionConfigBridge.inspect(plugin)
+            .onSuccess { snapshot = it }
+            .onFailure { loadError = it.message ?: "Failed to inspect extension settings" }
+        isBusy = false
+    }
+
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth(0.95f),
+        title = plugin.metadata.name.ifBlank { plugin.metadata.internalName },
+        message = "Nuvio Extension Configuration",
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        val snap = snapshot
+
+        if (snap != null) {
+            val enabledSourcesCount = snap.internalSources.count { it.enabled }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                NuvioModeSegmentChip(
+                    label = "Sources ($enabledSourcesCount/${snap.internalSources.size})",
+                    selected = activeTab == NuvioExtConfigTab.Sources,
+                    onClick = { activeTab = NuvioExtConfigTab.Sources },
+                    modifier = Modifier.weight(1.25f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Domains (${snap.subProviders.size})",
+                    selected = activeTab == NuvioExtConfigTab.Domains,
+                    onClick = { activeTab = NuvioExtConfigTab.Domains },
+                    modifier = Modifier.weight(0.9f),
+                )
+                NuvioModeSegmentChip(
+                    label = "Tokens",
+                    selected = activeTab == NuvioExtConfigTab.Tokens,
+                    onClick = { activeTab = NuvioExtConfigTab.Tokens },
+                    modifier = Modifier.weight(0.85f),
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 440.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (isBusy && snap == null) {
+                Text(
+                    text = "Inspecting extension sources and settings...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textSecondary,
+                )
+            }
+
+            loadError?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.danger,
+                )
+            }
+
+            if (snap != null) {
+                if (snap.hasNativeSettings) {
+                    Surface(
+                        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+                        color = tokens.colors.surfaceCard,
+                        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onLaunchNativeSettings),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Open CloudStream Native UI",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.colors.textPrimary,
+                                )
+                                Text(
+                                    text = "Launch ${plugin.metadata.name}'s built-in dialog directly",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = tokens.colors.textSecondary,
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                                contentDescription = null,
+                                tint = tokens.colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+
+                when (activeTab) {
+                    NuvioExtConfigTab.Sources -> {
+                        val filteredSources = remember(snap.internalSources, sourceQuery) {
+                            val q = sourceQuery.trim().lowercase()
+                            if (q.isEmpty()) {
+                                snap.internalSources
+                            } else {
+                                snap.internalSources.filter { src ->
+                                    src.name.lowercase().contains(q) ||
+                                        src.id.lowercase().contains(q) ||
+                                        src.kind.lowercase().contains(q)
+                                }
+                            }
+                        }
+
+                        if (snap.internalSources.size > 4) {
+                            NuvioInputField(
+                                value = sourceQuery,
+                                onValueChange = { sourceQuery = it },
+                                placeholder = "Search ${snap.internalSources.size} sources inside ${plugin.metadata.name}...",
+                                trailingContent = if (sourceQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(onClick = { sourceQuery = "" }) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Close,
+                                                contentDescription = "Clear",
+                                                tint = tokens.colors.textMuted,
+                                            )
+                                        }
+                                    }
+                                } else null,
+                            )
+                        }
+
+                        val toggleableFiltered = remember(filteredSources) {
+                            filteredSources.filter { it.canToggle }.map { it.id }
+                        }
+                        if (toggleableFiltered.size > 1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                NuvioModeSegmentChip(
+                                    label = "Enable All (${toggleableFiltered.size})",
+                                    selected = false,
+                                    onClick = {
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.setAllInternalSources(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceIds = toggleableFiltered,
+                                                enabled = true,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Enabled ${toggleableFiltered.size} sources")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                NuvioModeSegmentChip(
+                                    label = "Disable All",
+                                    selected = false,
+                                    onClick = {
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.setAllInternalSources(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceIds = toggleableFiltered,
+                                                enabled = false,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Disabled ${toggleableFiltered.size} sources")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+
+                        if (filteredSources.isEmpty()) {
+                            Text(
+                                text = "No matching sources found inside this extension.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tokens.colors.textMuted,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        } else {
+                            filteredSources.forEach { src ->
+                                InternalSourceRowCard(
+                                    source = src,
+                                    onToggle = { checked ->
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.toggleInternalSource(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                sourceId = src.id,
+                                                enabled = checked,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Could not update source")
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    NuvioExtConfigTab.Domains -> {
+                        if (snap.subProviders.isEmpty()) {
+                            Text(
+                                text = "This extension does not register separate MainAPI domains.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tokens.colors.textMuted,
+                            )
+                        } else {
+                            snap.subProviders.forEach { sub ->
+                                SubProviderConfigCard(
+                                    sub = sub,
+                                    onSave = { enabled, overrideUrl ->
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.updateSubProvider(
+                                                plugin = plugin,
+                                                apiClassName = sub.apiClassName,
+                                                enabled = enabled,
+                                                overrideMainUrl = overrideUrl,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                NuvioToastController.show("Saved ${sub.name}")
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Could not save provider config")
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    NuvioExtConfigTab.Tokens -> {
+                        Text(
+                            text = "Configure FebBox/SuperStream UI token, Wyzie subtitles key, concurrency, cookies, or custom extension flags (${snap.defaultPrefFile}).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.colors.textSecondary,
+                        )
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            listOf(
+                                Triple("token", "string", "FebBox Token"),
+                                Triple("wyzie_key", "string", "Wyzie Key"),
+                                Triple("provider_concurrency", "int", "Concurrency"),
+                                Triple("tmdb_language_code", "string", "TMDB Lang"),
+                                Triple("cookie", "string", "Cookie"),
+                            ).forEach { (presetKey, presetType, label) ->
+                                NuvioModeSegmentChip(
+                                    label = "+ $label",
+                                    selected = newKey == presetKey,
+                                    onClick = {
+                                        newKey = presetKey
+                                        newType = presetType
+                                        if (presetKey == "provider_concurrency" && newValue.isBlank()) {
+                                            newValue = "8"
+                                        } else if (presetKey == "tmdb_language_code" && newValue.isBlank()) {
+                                            newValue = "en-US"
+                                        }
+                                    },
+                                )
+                            }
+                        }
+
+                        snap.preferences.forEach { entry ->
+                            PreferenceEntryCard(
+                                entry = entry,
+                                onSave = { updatedVal ->
+                                    scope.launch {
+                                        CloudStreamExtensionConfigBridge.savePreference(
+                                            plugin = plugin,
+                                            prefFile = entry.prefFile,
+                                            key = entry.key,
+                                            value = updatedVal,
+                                            valueType = entry.valueType,
+                                        ).onSuccess { updated ->
+                                            snapshot = updated
+                                            NuvioToastController.show("Saved ${entry.key}")
+                                        }.onFailure { err ->
+                                            NuvioToastController.show(err.message ?: "Failed saving ${entry.key}")
+                                        }
+                                    }
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        CloudStreamExtensionConfigBridge.deletePreference(
+                                            plugin = plugin,
+                                            prefFile = entry.prefFile,
+                                            key = entry.key,
+                                        ).onSuccess { updated ->
+                                            snapshot = updated
+                                            NuvioToastController.show("Removed ${entry.key}")
+                                        }
+                                    }
+                                },
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(NuvioTokens.Radius.md),
+                            color = tokens.colors.surfaceCard,
+                            border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "Add / Set Preference Key",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.colors.textPrimary,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("string", "boolean", "int").forEach { t ->
+                                        NuvioModeSegmentChip(
+                                            label = t.uppercase(),
+                                            selected = newType == t,
+                                            onClick = {
+                                                newType = t
+                                                if (t == "boolean" && newValue !in listOf("true", "false")) {
+                                                    newValue = "true"
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                                NuvioInputField(
+                                    value = newKey,
+                                    onValueChange = { newKey = it },
+                                    placeholder = "Key name (e.g. token, wyzie_key, cookie)",
+                                )
+                                NuvioInputField(
+                                    value = newValue,
+                                    onValueChange = { newValue = it },
+                                    placeholder = if (newType == "boolean") "true or false" else "Value",
+                                )
+                                DialogButton(
+                                    text = "Save Key",
+                                    enabled = newKey.isNotBlank(),
+                                    style = DialogButtonStyle.Primary,
+                                    onClick = {
+                                        val k = newKey.trim()
+                                        val v = newValue
+                                        val vt = newType
+                                        scope.launch {
+                                            CloudStreamExtensionConfigBridge.savePreference(
+                                                plugin = plugin,
+                                                prefFile = snap.defaultPrefFile,
+                                                key = k,
+                                                value = v,
+                                                valueType = vt,
+                                            ).onSuccess { updated ->
+                                                snapshot = updated
+                                                newKey = ""
+                                                newValue = ""
+                                                NuvioToastController.show("Saved $k")
+                                            }.onFailure { err ->
+                                                NuvioToastController.show(err.message ?: "Failed saving key")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = "Reload",
+                onClick = {
+                    scope.launch {
+                        CloudStreamExtensionConfigBridge.reloadPlugin(plugin)
+                            .onSuccess {
+                                snapshot = it
+                                NuvioToastController.show("Reloaded ${plugin.metadata.name}")
+                            }
+                    }
+                },
+                style = DialogButtonStyle.Secondary,
+            )
+            DialogButton(
+                text = "Done",
+                onClick = onDismiss,
+                style = DialogButtonStyle.Primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun InternalSourceRowCard(
+    source: CloudStreamInternalSource,
+    onToggle: (Boolean) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (source.enabled) tokens.colors.borderSubtle else tokens.colors.borderSubtle.copy(alpha = 0.45f),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (source.canToggle) Modifier.clickable { onToggle(!source.enabled) } else Modifier,
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = source.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (source.enabled) tokens.colors.textPrimary else tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = tokens.colors.accent.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(4.dp),
+                            )
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            text = source.kind.uppercase(),
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.colors.accent,
+                        )
+                    }
+                    if (!source.id.contains("::")) {
+                        Text(
+                            text = source.id,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (source.canToggle) {
+                Switch(
+                    checked = source.enabled,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = tokens.colors.onAccent,
+                        checkedTrackColor = tokens.colors.accent,
+                        uncheckedThumbColor = tokens.colors.textSecondary,
+                        uncheckedTrackColor = tokens.colors.surfaceElevated,
+                    ),
+                )
+            } else {
+                Text(
+                    text = "ACTIVE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.accent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubProviderConfigCard(
+    sub: CloudStreamSubProviderConfig,
+    onSave: (enabled: Boolean, overrideUrl: String) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    var urlDraft by remember(sub.apiClassName, sub.overrideMainUrl) {
+        mutableStateOf(sub.overrideMainUrl)
+    }
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = sub.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.textPrimary,
+                    )
+                    Text(
+                        text = "${sub.lang.uppercase()} • ${sub.defaultMainUrl}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Switch(
+                    checked = sub.enabled,
+                    onCheckedChange = { checked -> onSave(checked, urlDraft) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = tokens.colors.onAccent,
+                        checkedTrackColor = tokens.colors.accent,
+                        uncheckedThumbColor = tokens.colors.textSecondary,
+                        uncheckedTrackColor = tokens.colors.surfaceElevated,
+                    ),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    NuvioInputField(
+                        value = urlDraft,
+                        onValueChange = { urlDraft = it },
+                        placeholder = "Custom domain override (${sub.defaultMainUrl})",
+                    )
+                }
+                IconButton(
+                    onClick = { onSave(sub.enabled, urlDraft) },
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = "Save domain",
+                        tint = tokens.colors.accent,
+                    )
+                }
+                if (urlDraft.isNotBlank()) {
+                    IconButton(
+                        onClick = {
+                            urlDraft = ""
+                            onSave(sub.enabled, "")
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = "Reset domain",
+                            tint = tokens.colors.textSecondary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreferenceEntryCard(
+    entry: CloudStreamPreferenceEntry,
+    onSave: (String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    var draft by remember(entry.prefFile, entry.key, entry.value) { mutableStateOf(entry.value) }
+    val friendlyTitle = when (entry.key) {
+        "token" -> "FebBox / SuperStream UI Token (token)"
+        "wyzie_key" -> "Wyzie Subtitles API Key (wyzie_key)"
+        "provider_concurrency" -> "Scraper Concurrency (provider_concurrency)"
+        "tmdb_language_code" -> "TMDB Metadata Language (tmdb_language_code)"
+        "streamplay_stremio_saved_links" -> "Stremio Addon Links"
+        else -> entry.key
+    }
+    Surface(
+        shape = RoundedCornerShape(NuvioTokens.Radius.md),
+        color = tokens.colors.surfaceCard,
+        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = friendlyTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.textPrimary,
+                    )
+                    Text(
+                        text = if (entry.isDiscoveredHint) "Available key (${entry.valueType}) — not set" else "${entry.prefFile} (${entry.valueType})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+                if (entry.valueType == "boolean") {
+                    Switch(
+                        checked = draft.equals("true", ignoreCase = true),
+                        onCheckedChange = { checked ->
+                            val next = checked.toString()
+                            draft = next
+                            onSave(next)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = tokens.colors.onAccent,
+                            checkedTrackColor = tokens.colors.accent,
+                            uncheckedThumbColor = tokens.colors.textSecondary,
+                            uncheckedTrackColor = tokens.colors.surfaceElevated,
+                        ),
+                    )
+                }
+                if (!entry.isDiscoveredHint) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            imageVector = Icons.Rounded.Delete,
+                            contentDescription = "Delete ${entry.key}",
+                            tint = tokens.colors.danger,
+                        )
+                    }
+                }
+            }
+            if (entry.valueType != "boolean") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        NuvioInputField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            placeholder = "Enter ${entry.key}...",
+                        )
+                    }
+                    IconButton(onClick = { onSave(draft) }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Save ${entry.key}",
+                            tint = tokens.colors.accent,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

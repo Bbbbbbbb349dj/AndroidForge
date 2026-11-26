@@ -3,6 +3,7 @@ package com.nuvio.app.features.streams
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.ManagedAddon
+import com.nuvio.app.features.cloudstream.CloudStreamLiveLinkHub
 import com.nuvio.app.features.cloudstream.CloudStreamLoadItem
 import com.nuvio.app.features.cloudstream.CloudStreamEpisode
 import com.nuvio.app.features.cloudstream.CloudStreamPluginItem
@@ -25,6 +26,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlin.math.abs
+import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import nuvio.composeapp.generated.resources.Res
@@ -33,6 +43,52 @@ import org.jetbrains.compose.resources.getString
 
 private val cloudStreamFetchLog = Logger.withTag("CloudStreamFetch")
 private val cloudStreamProviderScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+private val cloudStreamCacheMutex = Mutex()
+private val cloudStreamSearchCache = LinkedHashMap<String, List<CloudStreamSearchItem>>()
+private val cloudStreamLoadCache = LinkedHashMap<String, CloudStreamLoadItem>()
+
+private suspend fun cachedCloudStreamSearch(
+    providerId: String,
+    query: String,
+): List<CloudStreamSearchItem> {
+    val key = "$providerId::${query.trim().lowercase()}"
+    cloudStreamCacheMutex.withLock {
+        cloudStreamSearchCache[key]?.let { return it }
+    }
+    val fresh = CloudStreamRepository.search(query, providerId)
+        .firstOrNull()
+        ?.getOrThrow()
+        .orEmpty()
+        .distinctBy { item -> item.type to item.data }
+    if (fresh.isNotEmpty()) {
+        CloudStreamSearchRouteIndex.remember(providerId, query, fresh)
+        cloudStreamCacheMutex.withLock {
+            if (cloudStreamSearchCache.size >= 64) {
+                cloudStreamSearchCache.keys.firstOrNull()?.let(cloudStreamSearchCache::remove)
+            }
+            cloudStreamSearchCache[key] = fresh
+        }
+    }
+    return fresh
+}
+
+private suspend fun cachedCloudStreamLoad(
+    providerId: String,
+    data: String,
+): CloudStreamLoadItem {
+    val key = "$providerId::$data"
+    cloudStreamCacheMutex.withLock {
+        cloudStreamLoadCache[key]?.let { return it }
+    }
+    val loaded = CloudStreamRepository.load(providerId, data).getOrThrow()
+    cloudStreamCacheMutex.withLock {
+        if (cloudStreamLoadCache.size >= 64) {
+            cloudStreamLoadCache.keys.firstOrNull()?.let(cloudStreamLoadCache::remove)
+        }
+        cloudStreamLoadCache[key] = loaded
+    }
+    return loaded
+}
 
 internal data class InstalledStreamAddonTarget(
     val addonName: String,
@@ -116,9 +172,201 @@ internal fun cloudStreamProviderGroupsForRequest(
         .distinctBy { it.providerId }
 }
 
+private val hlsVariantCacheMutex = Mutex()
+private val hlsVariantCache = LinkedHashMap<String, List<StreamItem>>()
+private val hlsExpandInFlight = HashSet<String>()
+private val hlsExpandSemaphore = Semaphore(10)
+
+private fun hlsCacheKeyForStream(stream: StreamItem): String? {
+    val sourceUrl = stream.playableDirectUrl?.takeIf { it.isNotBlank() } ?: return null
+    val normalizedType = normalizeStreamType(stream.streamType)
+    val shouldInspect = normalizedType == "hls" || sourceUrl.contains(".m3u8", ignoreCase = true)
+    if (!shouldInspect) return null
+    return "${stream.addonId}::${stream.sourceName.orEmpty()}::${stream.streamLabel}::$sourceUrl"
+}
+
+private fun deduplicateCloudStreamItems(items: List<StreamItem>): List<StreamItem> =
+    items.distinctBy { stream ->
+        listOf(
+            stream.addonId,
+            stream.sourceName.orEmpty(),
+            stream.streamLabel,
+            stream.playableDirectUrl.orEmpty(),
+        )
+    }
+
+internal fun fastCloudStreamSourcesToStreamItems(
+    providerId: String,
+    providerName: String,
+    sources: List<CloudStreamPlaybackSource>,
+): List<StreamItem> {
+    if (sources.isEmpty()) return emptyList()
+    val cachedSnapshot: Map<String, List<StreamItem>> = if (hlsVariantCacheMutex.tryLock()) {
+        try { HashMap(hlsVariantCache) } finally { hlsVariantCacheMutex.unlock() }
+    } else {
+        emptyMap()
+    }
+    val mapped = sources.flatMap { source ->
+        val base = source.toStreamItem(
+            providerId = providerId,
+            providerName = providerName,
+        )
+        val key = hlsCacheKeyForStream(base)
+        if (key != null) cachedSnapshot[key] ?: listOf(base) else listOf(base)
+    }
+    return deduplicateCloudStreamItems(mapped)
+}
+
+private fun scheduleBackgroundHlsExpansion(
+    providerId: String,
+    providerName: String,
+    sources: List<CloudStreamPlaybackSource>,
+    onVariantsExpanded: () -> Unit,
+) {
+    sources.forEach { source ->
+        val base = source.toStreamItem(providerId = providerId, providerName = providerName)
+        val key = hlsCacheKeyForStream(base) ?: return@forEach
+        cloudStreamProviderScope.launch {
+            val shouldStart = hlsVariantCacheMutex.withLock {
+                if (key in hlsVariantCache || key in hlsExpandInFlight) {
+                    false
+                } else {
+                    hlsExpandInFlight.add(key)
+                    true
+                }
+            }
+            if (!shouldStart) return@launch
+            val expanded = try {
+                hlsExpandSemaphore.withPermit {
+                    withTimeoutOrNull(3_000L) { base.expandCloudStreamHlsVariants() }
+                        ?: listOf(base)
+                }
+            } catch (_: Throwable) {
+                listOf(base)
+            }
+            var hadMultiVariants = false
+            hlsVariantCacheMutex.withLock {
+                hlsExpandInFlight.remove(key)
+                if (hlsVariantCache.size >= 512) {
+                    hlsVariantCache.keys.firstOrNull()?.let(hlsVariantCache::remove)
+                }
+                hlsVariantCache[key] = expanded
+                hadMultiVariants = expanded.size > 1
+            }
+            if (hadMultiVariants) {
+                onVariantsExpanded()
+            }
+        }
+    }
+}
+
+internal suspend fun loadCloudStreamRouteProgressive(
+    providerId: String,
+    providerName: String,
+    linkData: String,
+    timeoutMs: Long = CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS,
+    forceRefresh: Boolean = false,
+    onProgress: ((List<StreamItem>) -> Unit)? = null,
+): Result<List<StreamItem>> = coroutineScope {
+    if (forceRefresh) {
+        CloudStreamLiveLinkHub.invalidate(providerId, linkData)
+    } else {
+        CloudStreamLiveLinkHub.snapshot(providerId, linkData)?.let { snap ->
+            if (snap.sources.isNotEmpty()) {
+                val cachedItems = fastCloudStreamSourcesToStreamItems(
+                    providerId = providerId,
+                    providerName = providerName,
+                    sources = snap.sources,
+                )
+                if (cachedItems.isNotEmpty()) {
+                    onProgress?.invoke(cachedItems)
+                    if (snap.isComplete) {
+                        return@coroutineScope Result.success(cachedItems)
+                    }
+                }
+            }
+        }
+    }
+
+    var lastEmittedCount = 0
+    var lastEmitMark: TimeSource.Monotonic.ValueTimeMark? = null
+
+    fun emitSources(sources: List<CloudStreamPlaybackSource>, force: Boolean = false) {
+        if (sources.isEmpty()) return
+        if (onProgress != null) {
+            val nowMark = TimeSource.Monotonic.markNow()
+            val elapsedMs = lastEmitMark?.elapsedNow()?.inWholeMilliseconds ?: Long.MAX_VALUE
+            val shouldEmit = force || lastEmittedCount == 0 ||
+                (sources.size != lastEmittedCount && elapsedMs >= 140L) ||
+                elapsedMs >= 500L
+            if (shouldEmit) {
+                val items = fastCloudStreamSourcesToStreamItems(
+                    providerId = providerId,
+                    providerName = providerName,
+                    sources = sources,
+                )
+                if (items.isNotEmpty()) {
+                    lastEmittedCount = sources.size
+                    lastEmitMark = nowMark
+                    onProgress.invoke(items)
+                }
+            }
+        }
+        scheduleBackgroundHlsExpansion(providerId, providerName, sources) {
+            if (onProgress != null) {
+                val latest = CloudStreamLiveLinkHub.snapshot(providerId, linkData)?.sources ?: sources
+                val updated = fastCloudStreamSourcesToStreamItems(providerId, providerName, latest)
+                if (updated.isNotEmpty()) {
+                    onProgress.invoke(updated)
+                }
+            }
+        }
+    }
+
+    val liveJob = launch {
+        CloudStreamLiveLinkHub.observe(providerId, linkData).collect { snap ->
+            emitSources(snap.sources, force = lastEmittedCount == 0 || snap.isComplete)
+        }
+    }
+
+    val loadedSourcesResult = try {
+        val direct = withTimeoutOrNull(timeoutMs) {
+            CloudStreamRepository.loadLinks(providerId, linkData)
+        }
+        when {
+            direct != null && direct.isSuccess -> direct
+            else -> {
+                val partial = CloudStreamLiveLinkHub.snapshot(providerId, linkData)?.sources.orEmpty()
+                if (partial.isNotEmpty()) {
+                    Result.success(partial)
+                } else {
+                    direct ?: Result.failure(IllegalStateException("$providerName timed out"))
+                }
+            }
+        }
+    } finally {
+        liveJob.cancel()
+    }
+
+    loadedSourcesResult.map { finalSources ->
+        val fastFinal = fastCloudStreamSourcesToStreamItems(
+            providerId = providerId,
+            providerName = providerName,
+            sources = finalSources,
+        )
+        if (fastFinal.isNotEmpty()) {
+            onProgress?.invoke(fastFinal)
+        }
+        scheduleBackgroundHlsExpansion(providerId, providerName, finalSources) {}
+        fastFinal
+    }
+}
+
 internal suspend fun resolveCloudStreamProviderStreams(
     providerGroup: CloudStreamProviderGroup,
     request: CloudStreamSearchRequest?,
+    forceRefresh: Boolean = false,
+    onProgress: ((List<StreamItem>) -> Unit)? = null,
 ): AddonStreamGroup {
     val searchRequest = request?.takeIf { it.title.isNotBlank() }
         ?: return providerGroup.toCloudStreamGroup(
@@ -137,7 +385,7 @@ internal suspend fun resolveCloudStreamProviderStreams(
                 allowProviderRankedFallback: Boolean,
             ): List<StreamItem>? {
                 val loaded = runCatchingUnlessCancelled {
-                    CloudStreamRepository.load(providerGroup.providerId, match.data).getOrThrow()
+                    cachedCloudStreamLoad(providerGroup.providerId, match.data)
                 }.onFailure { error -> lastError = error }
                     .getOrNull()
                     ?: return null
@@ -154,16 +402,18 @@ internal suspend fun resolveCloudStreamProviderStreams(
                     return null
                 }
 
-                val sources = runCatchingUnlessCancelled {
-                    CloudStreamRepository.loadLinks(providerGroup.providerId, linkData).getOrThrow()
+                val progressiveStreams = runCatchingUnlessCancelled {
+                    loadCloudStreamRouteProgressive(
+                        providerId = providerGroup.providerId,
+                        providerName = providerGroup.addonName,
+                        linkData = linkData,
+                        forceRefresh = forceRefresh,
+                        onProgress = onProgress,
+                    ).getOrThrow()
                 }.onFailure { error -> lastError = error }
                     .getOrNull()
                     ?: return null
-                return cloudStreamSourcesToStreamItems(
-                    providerId = providerGroup.providerId,
-                    providerName = providerGroup.addonName,
-                    sources = sources,
-                ).takeIf { streams -> streams.isNotEmpty() }
+                return progressiveStreams.takeIf { streams -> streams.isNotEmpty() }
                     ?: run {
                         lastError = IllegalStateException("No links found")
                         null
@@ -190,28 +440,25 @@ internal suspend fun resolveCloudStreamProviderStreams(
                 if (loaded != null) {
                     val linkData = loaded.linkDataForCloudStreamRequest(searchRequest)
                     if (linkData != null) {
-                        val directSources = runCatchingUnlessCancelled {
-                            CloudStreamRepository.loadLinks(providerGroup.providerId, linkData).getOrThrow()
-                        }.onFailure { error -> lastError = error }
-                            .getOrNull()
-                        if (directSources != null) {
-                            val directStreams = cloudStreamSourcesToStreamItems(
+                        val directStreams = runCatchingUnlessCancelled {
+                            loadCloudStreamRouteProgressive(
                                 providerId = providerGroup.providerId,
                                 providerName = providerGroup.addonName,
-                                sources = directSources,
-                            )
-                            if (directStreams.isNotEmpty()) return@runCatchingUnlessCancelled directStreams
+                                linkData = linkData,
+                                forceRefresh = forceRefresh,
+                                onProgress = onProgress,
+                            ).getOrThrow()
+                        }.onFailure { error -> lastError = error }
+                            .getOrNull()
+                        if (!directStreams.isNullOrEmpty()) {
+                            return@runCatchingUnlessCancelled directStreams
                         }
                     }
                 }
             }
             for (query in searchRequest.searchQueries()) {
                 val searchResults = runCatchingUnlessCancelled {
-                    CloudStreamRepository.search(query, providerGroup.providerId)
-                        .firstOrNull()
-                        ?.getOrThrow()
-                        .orEmpty()
-                        .distinctBy { item -> item.type to item.data }
+                    cachedCloudStreamSearch(providerGroup.providerId, query)
                 }.onFailure { error -> lastError = error }
                     .getOrDefault(emptyList())
 
@@ -262,7 +509,7 @@ internal suspend fun cloudStreamSourcesToStreamItems(
     providerId: String,
     providerName: String,
     sources: List<CloudStreamPlaybackSource>,
-): List<StreamItem> =
+): List<StreamItem> = coroutineScope {
     sources
         .map { source ->
             source.toStreamItem(
@@ -270,7 +517,14 @@ internal suspend fun cloudStreamSourcesToStreamItems(
                 providerName = providerName,
             )
         }
-        .flatMap { stream -> stream.expandCloudStreamHlsVariants() }
+        .map { stream ->
+            async {
+                withTimeoutOrNull(4_000L) { stream.expandCloudStreamHlsVariants() }
+                    ?: listOf(stream)
+            }
+        }
+        .awaitAll()
+        .flatten()
         .distinctBy { stream ->
             listOf(
                 stream.addonId,
@@ -279,6 +533,7 @@ internal suspend fun cloudStreamSourcesToStreamItems(
                 stream.playableDirectUrl.orEmpty(),
             )
         }
+}
 
 private suspend fun StreamItem.expandCloudStreamHlsVariants(): List<StreamItem> {
     val sourceUrl = playableDirectUrl?.takeIf { it.isNotBlank() } ?: return listOf(this)
@@ -363,8 +618,12 @@ internal fun buildCloudStreamSearchRequest(
     searchTitle: String?,
 ): CloudStreamSearchRequest? {
     val metaLookupType = parentMetaType?.takeIf { it.isNotBlank() } ?: type
-    val metaLookupId = parentMetaId?.takeIf { it.isNotBlank() } ?: videoId
+    val inferredParentId = parentMetaId?.takeIf { it.isNotBlank() }
+        ?: videoId.substringBefore(':').takeIf { it.isNotBlank() && it != videoId }
+    val metaLookupId = inferredParentId ?: videoId
     val meta = MetaDetailsRepository.peek(metaLookupType, metaLookupId)
+        ?: MetaDetailsRepository.peek("series", metaLookupId)
+        ?: MetaDetailsRepository.peek("movie", metaLookupId)
     val title = searchTitle?.trim()?.takeIf { it.isNotBlank() }
         ?: meta?.name?.trim()?.takeIf { it.isNotBlank() }
         ?: return null
@@ -381,7 +640,7 @@ internal fun buildCloudStreamSearchRequest(
         ?.title
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-    val externalId = sequenceOf(videoId, parentMetaId, metaLookupId)
+    val externalId = sequenceOf(videoId, videoId.substringBefore(':'), parentMetaId, metaLookupId)
         .filterNotNull()
         .map(String::trim)
         .firstOrNull { id -> id.matches(Regex("^tt\\d{5,12}$", RegexOption.IGNORE_CASE)) }
@@ -420,8 +679,8 @@ internal suspend fun <T> runCatchingUnlessCancelled(block: suspend () -> T): Res
 // CloudStream providers own stage-specific timeout hints. The host timeout only
 // prevents a permanently stuck provider; it must leave enough room for the
 // callback-based loadLinks contract, whose upstream default is measured in minutes.
-private const val CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS = 120_000L
-private const val CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT = 3
+private const val CLOUDSTREAM_PROVIDER_STREAM_TIMEOUT_MS = 85_000L
+private const val CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT = 6
 
 internal fun PluginRuntimeResult.toStreamItem(
     scraper: PluginScraper,
@@ -586,28 +845,31 @@ internal fun List<CloudStreamSearchItem>.bestCloudStreamMatches(
     request: CloudStreamSearchRequest,
 ): List<CloudStreamSearchItem> {
     val requestedType = normalizeCloudStreamNuvioType(request.type)
-    val typedCandidates = filter { item -> item.type.matchesCloudStreamType(requestedType) }
-    val candidates = typedCandidates.ifEmpty { this }
+    // Never pre-discard Movie-tagged search cards before title scoring: multi-API
+    // packages like StreamPlay tag TMDB TV series search cards as TvType.Movie while
+    // sibling StreamPlayAnime cards use TvType.Anime, which previously caused all
+    // StreamPlay TV series matches to be filtered out.
     val requestedTitles = request.titleCandidates
         .map { title -> title.normalizedCloudStreamSearchTitle() }
         .filter { title -> title.isNotBlank() }
         .distinct()
-    return candidates
-        .mapNotNull { item ->
-            requestedTitles
-                .mapIndexedNotNull { index, requestedTitle ->
-                    item.matchScore(requestedTitle, request.year)?.let { score ->
-                        score + if (index == 0) 5 else 0
-                    }
+    return mapIndexedNotNull { originalIndex, item ->
+        requestedTitles
+            .mapIndexedNotNull { index, requestedTitle ->
+                item.matchScore(requestedTitle, request.year)?.let { score ->
+                    val typeBonus = if (item.type.matchesCloudStreamType(requestedType)) 4 else 0
+                    score + (if (index == 0) 5 else 0) + typeBonus
                 }
-                .maxOrNull()
-                ?.let { score -> item to score }
-        }
+            }
+            .maxOrNull()
+            ?.let { score -> Triple(item, score, originalIndex) }
+    }
         .sortedWith(
-            compareByDescending<Pair<CloudStreamSearchItem, Int>> { (_, score) -> score }
-                .thenBy { (item, _) -> item.name.length },
+            compareByDescending<Triple<CloudStreamSearchItem, Int, Int>> { it.second }
+                .thenBy { it.third }
+                .thenBy { it.first.name.length },
         )
-        .map { (item, _) -> item }
+        .map { it.first }
         .distinctBy { item -> item.data }
         .take(CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT)
 }
@@ -615,21 +877,11 @@ internal fun List<CloudStreamSearchItem>.bestCloudStreamMatches(
 private fun List<CloudStreamSearchItem>.providerRankedCloudStreamFallbacks(
     request: CloudStreamSearchRequest,
 ): List<CloudStreamSearchItem> {
-    val requestedType = normalizeCloudStreamNuvioType(request.type)
-    val typedCandidates = filter { item -> item.type.matchesCloudStreamType(requestedType) }
-    // A significant number of real CloudStream providers label every search card as
-    // Movie and only reveal TvSeries from load(url). This mirrors CloudStream itself:
-    // trust provider search ranking here, then validate the actual LoadResponse type.
-    val candidates = typedCandidates.ifEmpty { this }
-    return candidates
-        .filter { item ->
-            val candidateYear = item.year
-                ?: item.name.normalizedCloudStreamSearchTitle().trailingCloudStreamReleaseYear()
-            request.year == null || candidateYear == null || candidateYear == request.year
-        }
-        // Provider search endpoints already return relevance-ranked results. A localized
-        // title (for example "Les Evades") must not be discarded solely because it is
-        // different from the metadata title used for the query.
+    return filter { item ->
+        val candidateYear = item.year
+            ?: item.name.normalizedCloudStreamSearchTitle().trailingCloudStreamReleaseYear()
+        request.year == null || candidateYear == null || abs(candidateYear - request.year) <= 1
+    }
         .distinctBy { item -> item.data }
         .take(CLOUDSTREAM_SEARCH_CANDIDATE_LIMIT)
 }
@@ -641,10 +893,11 @@ private fun CloudStreamSearchItem.matchScore(requestedTitle: String, requestedYe
     if (requestedCanonical.isBlank() || candidateCanonical.isBlank()) return null
 
     val candidateYear = year ?: candidateTitle.trailingCloudStreamReleaseYear()
-    if (requestedYear != null && candidateYear != null && requestedYear != candidateYear) return null
+    if (requestedYear != null && candidateYear != null && abs(requestedYear - candidateYear) > 1) return null
 
     val yearBonus = when {
         requestedYear != null && candidateYear == requestedYear -> 25
+        requestedYear != null && candidateYear != null && abs(requestedYear - candidateYear) == 1 -> 12
         candidateYear != null -> 1
         else -> 0
     }
@@ -751,9 +1004,8 @@ internal fun CloudStreamLoadItem.matchesCloudStreamRequest(
     val searchYear = searchItem.year ?: searchItem.name.normalizedCloudStreamSearchTitle().trailingCloudStreamReleaseYear()
     val loadedYear = year ?: loadedTitle.trailingCloudStreamReleaseYear()
     if (requestedYear != null) {
-        if (searchYear != null && searchYear != requestedYear) return false
-        if (loadedYear != null && loadedYear != requestedYear) return false
-        if (requestedType == "movie" && searchYear != requestedYear && loadedYear != requestedYear) return false
+        if (searchYear != null && abs(searchYear - requestedYear) > 1) return false
+        if (loadedYear != null && abs(loadedYear - requestedYear) > 1) return false
     }
 
     return titleMatches || allowProviderRankedFallback

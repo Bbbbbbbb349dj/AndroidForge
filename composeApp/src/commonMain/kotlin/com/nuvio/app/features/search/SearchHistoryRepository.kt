@@ -3,12 +3,19 @@ package com.nuvio.app.features.search
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+@Serializable
+private data class StoredSearchPreferencesPayload(
+    val recentSearches: List<String> = emptyList(),
+    val includeCloudStreamExtensions: Boolean = false,
+)
+
 object SearchHistoryRepository {
-    private const val MAX_RECENT_SEARCHES = 10
+    const val MAX_RECENT_SEARCHES = 15
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -20,6 +27,9 @@ object SearchHistoryRepository {
 
     private val _enabled = MutableStateFlow(true)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+
+    private val _includeCloudStreamExtensions = MutableStateFlow(false)
+    val includeCloudStreamExtensions: StateFlow<Boolean> = _includeCloudStreamExtensions.asStateFlow()
 
     private var hasLoaded = false
     private var recentSearches: List<String> = emptyList()
@@ -39,6 +49,13 @@ object SearchHistoryRepository {
         _enabled.value = enabled
         SearchHistoryStorage.saveEnabled(enabled)
         publish()
+    }
+
+    fun setIncludeCloudStreamExtensions(include: Boolean) {
+        ensureLoaded()
+        if (_includeCloudStreamExtensions.value == include) return
+        _includeCloudStreamExtensions.value = include
+        persist()
     }
 
     fun recordSearch(query: String) {
@@ -61,10 +78,18 @@ object SearchHistoryRepository {
 
     fun removeSearch(query: String) {
         ensureLoaded()
-        val updatedSearches = recentSearches.filterNot { it == query }
+        val updatedSearches = recentSearches.filterNot { it.equals(query.trim(), ignoreCase = true) }
         if (updatedSearches == recentSearches) return
 
         recentSearches = updatedSearches
+        publish()
+        persist()
+    }
+
+    fun clearAll() {
+        ensureLoaded()
+        if (recentSearches.isEmpty()) return
+        recentSearches = emptyList()
         publish()
         persist()
     }
@@ -73,16 +98,22 @@ object SearchHistoryRepository {
         hasLoaded = true
         _enabled.value = SearchHistoryStorage.loadEnabled() ?: true
         val payload = SearchHistoryStorage.loadPayload().orEmpty().trim()
-        recentSearches = if (payload.isEmpty()) {
-            emptyList()
+        if (payload.isEmpty()) {
+            recentSearches = emptyList()
+            _includeCloudStreamExtensions.value = false
+        } else if (payload.startsWith("{")) {
+            val decoded = runCatching {
+                json.decodeFromString<StoredSearchPreferencesPayload>(payload)
+            }.getOrDefault(StoredSearchPreferencesPayload())
+            recentSearches = sanitizeSearchHistoryList(decoded.recentSearches, MAX_RECENT_SEARCHES)
+            _includeCloudStreamExtensions.value = decoded.includeCloudStreamExtensions
         } else {
-            runCatching {
+            // Backward-compatible migration from legacy JSON array format
+            val legacyList = runCatching {
                 json.decodeFromString<List<String>>(payload)
             }.getOrDefault(emptyList())
-                .map { it.trim() }
-                .filter { it.length >= 2 }
-                .distinct()
-                .take(MAX_RECENT_SEARCHES)
+            recentSearches = sanitizeSearchHistoryList(legacyList, MAX_RECENT_SEARCHES)
+            _includeCloudStreamExtensions.value = false
         }
         publish()
     }
@@ -92,20 +123,48 @@ object SearchHistoryRepository {
     }
 
     private fun persist() {
-        SearchHistoryStorage.savePayload(json.encodeToString(recentSearches))
+        SearchHistoryStorage.savePayload(
+            json.encodeToString(
+                StoredSearchPreferencesPayload(
+                    recentSearches = recentSearches,
+                    includeCloudStreamExtensions = _includeCloudStreamExtensions.value,
+                ),
+            ),
+        )
     }
+}
+
+internal fun sanitizeSearchHistoryList(
+    entries: List<String>,
+    limit: Int = SearchHistoryRepository.MAX_RECENT_SEARCHES,
+): List<String> {
+    val seen = HashSet<String>()
+    val out = ArrayList<String>(limit)
+    for (raw in entries) {
+        val trimmed = raw.trim()
+        if (trimmed.length < 2) continue
+        if (seen.add(trimmed.lowercase())) {
+            out += trimmed
+            if (out.size >= limit) break
+        }
+    }
+    return out
 }
 
 internal fun applySearchHistoryEntry(
     current: List<String>,
     query: String,
     limit: Int,
-): List<String> =
-    buildList {
-        add(query)
+): List<String> {
+    val trimmed = query.trim()
+    if (trimmed.length < 2) return sanitizeSearchHistoryList(current, limit)
+    return buildList {
+        add(trimmed)
         current.forEach { existing ->
-            if (existing != query && size < limit) {
-                add(existing)
+            val clean = existing.trim()
+            if (clean.length >= 2 && !clean.equals(trimmed, ignoreCase = true) && size < limit) {
+                add(clean)
             }
         }
     }
+}

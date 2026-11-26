@@ -59,12 +59,20 @@ object DownloadsRepository {
             .distinctUntilChanged()
             .onEach { (_, allowMobile, networkAllowed) ->
                 if (!hasLoaded) return@onEach
+                // Nuvio Enhanced: transient transportState flickers must not queue running
+                // transfers — only act on a denial that still holds after the settle window.
+                val networkDenied = if (!networkAllowed) {
+                    kotlinx.coroutines.delay(2_500L)
+                    !isDownloadNetworkAllowed()
+                } else {
+                    false
+                }
                 // Running transfers keep the network rule they started with, so restart them when it
                 // changes. Where a restart loses progress (iOS), only do so when the rule gets stricter.
                 val ruleChanged = lastAllowMobile != null && lastAllowMobile != allowMobile
                 val becameWifiOnly = lastAllowMobile == true && !allowMobile
                 lastAllowMobile = allowMobile
-                if (!networkAllowed || becameWifiOnly || (ruleChanged && DownloadsPlatformDownloader.restartKeepsProgress)) {
+                if (networkDenied || becameWifiOnly || (ruleChanged && DownloadsPlatformDownloader.restartKeepsProgress)) {
                     val runningIds = _uiState.value.items
                         .filter { it.status == DownloadStatus.Downloading }
                         .mapTo(mutableSetOf()) { it.id }
@@ -206,11 +214,13 @@ object DownloadsRepository {
             return DownloadEnqueueResult.RequiresWifi
         }
 
+        val audioVariant = com.nuvio.app.features.streams.StreamBadgePresentation.audioVariantOf(stream)
         val now = DownloadsClock.nowEpochMs()
         val logicalKey = buildLogicalKey(
             parentMetaId = parentMetaId,
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
+            audioVariant = audioVariant,
         )
 
         updateOfflineMetadata(
@@ -274,6 +284,7 @@ object DownloadsRepository {
                 extras = SubtitleRequestExtras.from(stream.behaviorHints, sourceUrl),
             ),
             sourceSubtitles = stream.externalSubtitles,
+            audioVariant = audioVariant,
             localFileUri = null,
             fileName = fileName,
             status = DownloadStatus.Queued,
@@ -320,8 +331,12 @@ object DownloadsRepository {
     private fun replaceExistingDownload(logicalKey: String): DownloadItem? {
         val existing = _uiState.value.items.firstOrNull { it.logicalContentKey == logicalKey } ?: return null
         dropHandle(existing.id)?.cancel()
-        DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
-        DownloadsPlatformDownloader.removePartialFile(existing.fileName)
+        // Nuvio Enhanced: never delete the partial file of an ACTIVE download — the
+        // replacement transfer resumes from it instead of starting from zero.
+        if (!existing.isActive) {
+            DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
+            DownloadsPlatformDownloader.removePartialFile(existing.fileName)
+        }
         return existing
     }
 
@@ -563,7 +578,7 @@ object DownloadsRepository {
                         } else {
                             current.copy(
                                 downloadedBytes = downloadedBytes.coerceAtLeast(0L),
-                                totalBytes = totalBytes?.takeIf { it > 0L },
+                                totalBytes = totalBytes?.takeIf { it > 0L } ?: current.totalBytes,
                                 updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                                 errorMessage = null,
                             )
@@ -792,10 +807,14 @@ internal fun buildLogicalKey(
     parentMetaId: String,
     seasonNumber: Int?,
     episodeNumber: Int?,
-): String = if (seasonNumber != null && episodeNumber != null) {
-    "${parentMetaId.trim()}|$seasonNumber|$episodeNumber"
-} else {
-    "${parentMetaId.trim()}|movie"
+    audioVariant: String? = null,
+): String {
+    val base = if (seasonNumber != null && episodeNumber != null) {
+        "${parentMetaId.trim()}|$seasonNumber|$episodeNumber"
+    } else {
+        "${parentMetaId.trim()}|movie"
+    }
+    return audioVariant?.takeIf { it.isNotBlank() }?.let { "$base|$it" } ?: base
 }
 
 private fun buildFileName(
@@ -838,11 +857,17 @@ private fun String.sanitizeFileName(): String =
 
 private fun String.fileExtensionFromUrl(): String {
     val withoutQuery = substringBefore('?').substringBefore('#')
+    val lowerUrl = lowercase()
+    if (lowerUrl.contains(".m3u8") || lowerUrl.contains("/hls/")) {
+        return "ts"
+    }
     val suffix = withoutQuery.substringAfterLast('.', missingDelimiterValue = "")
         .lowercase()
         .trim()
 
-    return if (suffix.length in 2..5 && suffix.all { it.isLetterOrDigit() }) {
+    return if (suffix in setOf("m3u8", "m3u", "txt", "php", "aspx", "jsp")) {
+        "ts"
+    } else if (suffix.length in 2..5 && suffix.all { it.isLetterOrDigit() }) {
         suffix
     } else {
         "mp4"
@@ -852,7 +877,6 @@ private fun String.fileExtensionFromUrl(): String {
 internal fun String.isSupportedDownloadUrl(): Boolean {
     val normalized = trim().lowercase()
     if (normalized.startsWith("magnet:")) return false
-    if (normalized.endsWith(".m3u8") || normalized.contains(".m3u8?")) return false
     if (normalized.endsWith(".mpd") || normalized.contains(".mpd?")) return false
     if (normalized.endsWith(".torrent") || normalized.contains(".torrent?")) return false
     return normalized.startsWith("http://") || normalized.startsWith("https://")

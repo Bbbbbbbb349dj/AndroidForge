@@ -37,3 +37,8 @@ iosApp/Configuration/DeviceSigning.local.json
 
 # Local MPVKit iOS build environment (sparse APFS image, see MPVKit docs)
 .mpvkit-build.sparseimage
+
+# Agent-local Python validation tools (never ship these in source releases).
+.venv/
+__pycache__/
+*.pyc

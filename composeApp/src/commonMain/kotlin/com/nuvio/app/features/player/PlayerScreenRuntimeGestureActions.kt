@@ -114,23 +114,38 @@ internal fun PlayerScreenRuntime.showSeekFeedback(direction: PlayerSeekDirection
 internal fun PlayerScreenRuntime.showHorizontalSeekPreview(previewPositionMs: Long, baselinePositionMs: Long) {
     val deltaMs = previewPositionMs - baselinePositionMs
     val direction = if (deltaMs < 0L) PlayerSeekDirection.Backward else PlayerSeekDirection.Forward
+    val totalDurationMs = playbackSnapshot.durationMs
+    val formattedTarget = if (totalDurationMs > 0L) {
+        "${formatPlaybackTime(previewPositionMs)} / ${formatPlaybackTime(totalDurationMs)}"
+    } else {
+        formatPlaybackTime(previewPositionMs)
+    }
+    val absDeltaSeconds = (abs(deltaMs) / 1000f).roundToInt()
+    val signedDeltaLabel = buildString {
+        append(if (deltaMs >= 0L) "+" else "-")
+        if (absDeltaSeconds >= 60) {
+            append(formatPlaybackTime(abs(deltaMs)))
+        } else {
+            append("${absDeltaSeconds}s")
+        }
+    }
     liveGestureFeedback = GestureFeedbackState(
-        message = formatPlaybackTime(previewPositionMs),
+        message = formattedTarget,
         icon = if (direction == PlayerSeekDirection.Forward) {
             GestureFeedbackIcon.SeekForward
         } else {
             GestureFeedbackIcon.SeekBackward
         },
-        secondaryMessageRes = if (deltaMs >= 0L) {
-            Res.string.compose_player_seek_delta_forward
-        } else {
-            Res.string.compose_player_seek_delta_backward
-        },
-        secondaryMessageArgs = listOf((abs(deltaMs) / 1000f).roundToInt()),
+        secondaryMessage = signedDeltaLabel,
         secondaryMessageColor = if (direction == PlayerSeekDirection.Forward) {
             Color(0xFF6EE7A8)
         } else {
             Color(0xFFFF9A76)
+        },
+        level = if (totalDurationMs > 0L) {
+            (previewPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+        } else {
+            null
         },
     )
 }

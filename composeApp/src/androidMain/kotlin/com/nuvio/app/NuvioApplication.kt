@@ -40,6 +40,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         com.nuvio.app.features.settings.NuvioEnhancedSettingsStorage.initialize(this)
         com.nuvio.app.features.cloudstream.CloudStreamPlatformStorage.initialize(this)
         com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.initialize(this)
+        com.nuvio.app.core.ui.background.AppBackgroundStorage.initialize(this)
     }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {

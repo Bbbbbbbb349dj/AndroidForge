@@ -3,6 +3,7 @@ package com.nuvio.app.features.tmdb
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.logging.InAppLogger
 import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.home.MetaPreview
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
@@ -192,6 +193,74 @@ object TmdbService {
         }.getOrNull()
     }
 
+    suspend fun fetchPublicReviews(
+        tmdbId: String,
+        mediaType: String,
+        page: Int = 1,
+    ): TmdbPublicReviewsPage? {
+        val apiKey = TmdbSettingsRepository.effectiveApiKey()
+        if (apiKey.isBlank() || tmdbId.isBlank()) return null
+        val normalizedType = normalizeMediaType(mediaType)
+        val endpoint = when (normalizedType) {
+            "tv" -> "tv/$tmdbId/reviews"
+            "movie" -> "movie/$tmdbId/reviews"
+            else -> return null
+        }
+        return fetch<TmdbPublicReviewsPage>(
+            endpoint = endpoint,
+            apiKey = apiKey,
+            query = mapOf("page" to page.coerceAtLeast(1).toString()),
+        )
+    }
+
+    /**
+     * Built-in title search (Nuvio Enhanced): powers Search autocomplete
+     * suggestions and the no-addon fallback results section.
+     */
+    suspend fun searchTitles(query: String, limit: Int = 14): List<MetaPreview> {
+        val apiKey = TmdbSettingsRepository.effectiveApiKey()
+        val cleanQuery = query.trim()
+        if (apiKey.isBlank() || cleanQuery.isBlank()) return emptyList()
+        val body = fetch<TmdbMultiSearchResponse>(
+            endpoint = "search/multi",
+            apiKey = apiKey,
+            query = mapOf(
+                "query" to cleanQuery,
+                "include_adult" to "false",
+            ),
+        ) ?: return emptyList()
+        return body.results.asSequence()
+            .filter { item -> item.id > 0 && (item.mediaType == "movie" || item.mediaType == "tv") }
+            .distinctBy { item -> "${item.mediaType}:${item.id}" }
+            .mapNotNull { item ->
+                val title = (item.title ?: item.name)?.trim().orEmpty()
+                if (title.isEmpty()) return@mapNotNull null
+                val rawDate = item.releaseDate ?: item.firstAirDate
+                val year = rawDate
+                    ?.take(4)
+                    ?.takeIf { it.length == 4 && it.all(Char::isDigit) }
+                MetaPreview(
+                    id = "tmdb:${item.id}",
+                    type = if (item.mediaType == "tv") "series" else "movie",
+                    name = title,
+                    poster = item.posterPath?.takeIf { it.isNotBlank() }
+                        ?.let { path -> "https://image.tmdb.org/t/p/w500$path" },
+                    banner = item.backdropPath?.takeIf { it.isNotBlank() }
+                        ?.let { path -> "https://image.tmdb.org/t/p/w780$path" },
+                    description = item.overview,
+                    releaseInfo = year,
+                    rawReleaseDate = rawDate,
+                    popularity = item.popularity,
+                    voteCount = item.voteCount,
+                    imdbRating = item.voteAverage
+                        ?.takeIf { it > 0.0 }
+                        ?.let { value -> if (value % 1.0 == 0.0) value.toInt().toString() else value.toString() },
+                )
+            }
+            .take(limit)
+            .toList()
+    }
+
     internal fun normalizeMediaType(mediaType: String): String =
         when (mediaType.trim().lowercase()) {
             "movie", "film" -> "movie"
@@ -245,4 +314,52 @@ private data class TmdbSearchResponse(
 @Serializable
 private data class TmdbSearchResultItem(
     val id: Int,
+)
+
+
+@Serializable
+data class TmdbPublicReviewsPage(
+    val page: Int = 1,
+    @SerialName("total_pages") val totalPages: Int = 0,
+    @SerialName("total_results") val totalResults: Int = 0,
+    val results: List<TmdbPublicReviewDto> = emptyList(),
+)
+
+@Serializable
+data class TmdbPublicReviewDto(
+    val id: String = "",
+    val author: String? = null,
+    @SerialName("author_details") val authorDetails: TmdbPublicReviewAuthorDto? = null,
+    val content: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    val url: String? = null,
+)
+
+@Serializable
+data class TmdbPublicReviewAuthorDto(
+    val name: String? = null,
+    val username: String? = null,
+    val rating: Double? = null,
+)
+
+@Serializable
+private data class TmdbMultiSearchResponse(
+    val results: List<TmdbMultiSearchItem> = emptyList(),
+)
+
+@Serializable
+private data class TmdbMultiSearchItem(
+    val id: Int = 0,
+    @SerialName("media_type") val mediaType: String? = null,
+    val title: String? = null,
+    val name: String? = null,
+    val overview: String? = null,
+    @SerialName("poster_path") val posterPath: String? = null,
+    @SerialName("backdrop_path") val backdropPath: String? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
+    @SerialName("first_air_date") val firstAirDate: String? = null,
+    @SerialName("vote_average") val voteAverage: Double? = null,
+    @SerialName("vote_count") val voteCount: Int? = null,
+    val popularity: Double? = null,
 )

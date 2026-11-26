@@ -14,6 +14,11 @@ enum class LibraryLayoutMode {
     VERTICAL,
 }
 
+enum class LibraryCategoryNavPosition {
+    TOP,
+    BOTTOM,
+}
+
 enum class LibrarySortOption {
     DEFAULT,
     ADDED_DESC,
@@ -32,6 +37,7 @@ enum class LibraryWatchedFilter {
 
 data class LibraryDisplaySettingsUiState(
     val layoutMode: LibraryLayoutMode = LibraryLayoutMode.HORIZONTAL,
+    val categoryNavPosition: LibraryCategoryNavPosition = LibraryCategoryNavPosition.TOP,
     val sortOption: LibrarySortOption = LibrarySortOption.DEFAULT,
     val viewMode: LibraryViewMode = LibraryViewMode.Saved,
     val selectedSectionKey: String? = null,
@@ -74,6 +80,13 @@ object LibraryDisplaySettingsRepository {
         ensureLoaded()
         if (_uiState.value.layoutMode == layoutMode) return
         _uiState.value = _uiState.value.copy(layoutMode = layoutMode)
+        persist()
+    }
+
+    fun setCategoryNavPosition(position: LibraryCategoryNavPosition) {
+        ensureLoaded()
+        if (_uiState.value.categoryNavPosition == position) return
+        _uiState.value = _uiState.value.copy(categoryNavPosition = position)
         persist()
     }
 
@@ -225,19 +238,43 @@ internal fun buildLibraryVerticalProjection(
     selectedGenre: String? = null,
     selectedYear: String? = null,
     watchedFilter: LibraryWatchedFilter = LibraryWatchedFilter.ALL,
+    searchQuery: String = "",
     isWatched: (LibraryItem) -> Boolean = { false },
 ): LibraryVerticalProjection {
+    val isFilteredLocalTab = !sourceMode.isRemoteTrackingSource &&
+        !selectedSectionKey.isNullOrBlank() &&
+        selectedSectionKey != LOCAL_LIBRARY_ALL_TAB_KEY
     val availableSections = if (sourceMode.isRemoteTrackingSource) sections else emptyList()
-    val selectedSection = if (sourceMode.isRemoteTrackingSource) {
-        sections.firstOrNull { it.type == selectedSectionKey } ?: sections.firstOrNull()
-    } else {
-        null
+    val selectedSection = when {
+        sourceMode.isRemoteTrackingSource -> {
+            sections.firstOrNull { it.type == selectedSectionKey } ?: sections.firstOrNull()
+        }
+        isFilteredLocalTab -> {
+            val category = LocalLibraryCategory.fromKey(selectedSectionKey)
+            sections.firstOrNull { it.type == selectedSectionKey }
+                ?: LibrarySection(
+                    type = selectedSectionKey.orEmpty(),
+                    displayTitle = category?.label ?: selectedSectionKey.orEmpty(),
+                    items = emptyList(),
+                )
+        }
+        else -> null
     }
-    val baseEntries = if (selectedSection != null) {
+    val trimmedQuery = searchQuery.trim()
+    val rawEntries = if (selectedSection != null) {
         selectedSection.items.map { item -> LibraryVerticalEntry(item, selectedSection) }
     } else {
         sections.flatMap { section ->
             section.items.map { item -> LibraryVerticalEntry(item, section) }
+        }
+    }
+    val baseEntries = if (trimmedQuery.isEmpty()) {
+        rawEntries
+    } else {
+        rawEntries.filter { entry ->
+            entry.item.name.contains(trimmedQuery, ignoreCase = true) ||
+                entry.item.genres.any { it.contains(trimmedQuery, ignoreCase = true) } ||
+                entry.item.releaseInfo?.contains(trimmedQuery, ignoreCase = true) == true
         }
     }
     val deduplicatedEntries = LinkedHashMap<String, LibraryVerticalEntry>()
@@ -329,6 +366,7 @@ internal fun encodeLibraryDisplaySettings(state: LibraryDisplaySettingsUiState):
     LibraryDisplaySettingsJson.encodeToString(
         StoredLibraryDisplaySettings(
             layoutMode = state.layoutMode.name,
+            categoryNavPosition = state.categoryNavPosition.name,
             sortOption = state.sortOption.name,
             viewMode = state.viewMode.name,
             selectedSectionKey = state.selectedSectionKey,
@@ -348,6 +386,9 @@ internal fun decodeLibraryDisplaySettings(payload: String?): LibraryDisplaySetti
         layoutMode = stored?.layoutMode
             ?.let { value -> LibraryLayoutMode.entries.firstOrNull { it.name == value } }
             ?: LibraryLayoutMode.HORIZONTAL,
+        categoryNavPosition = stored?.categoryNavPosition
+            ?.let { value -> LibraryCategoryNavPosition.entries.firstOrNull { it.name == value } }
+            ?: LibraryCategoryNavPosition.TOP,
         sortOption = stored?.sortOption
             ?.let { value -> LibrarySortOption.entries.firstOrNull { it.name == value } }
             ?: LibrarySortOption.DEFAULT,
@@ -392,6 +433,7 @@ internal val LibrarySourceMode.isRemoteTrackingSource: Boolean
 @Serializable
 private data class StoredLibraryDisplaySettings(
     @SerialName("layout_mode") val layoutMode: String = LibraryLayoutMode.HORIZONTAL.name,
+    @SerialName("category_nav_position") val categoryNavPosition: String = LibraryCategoryNavPosition.TOP.name,
     @SerialName("sort_option") val sortOption: String = LibrarySortOption.DEFAULT.name,
     @SerialName("view_mode") val viewMode: String? = null,
     @SerialName("selected_section_key") val selectedSectionKey: String? = null,

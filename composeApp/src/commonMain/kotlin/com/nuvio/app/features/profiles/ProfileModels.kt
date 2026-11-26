@@ -78,6 +78,30 @@ fun parseHexColor(hex: String): Color {
     }.getOrDefault(Color(0xFF1E88E5))
 }
 
+/**
+ * Built-in offline avatar palette (Nuvio Enhanced): color-circle avatars that render
+ * without any network catalog, so profile editing works fully offline.
+ */
+fun builtInAvatarCatalog(): List<AvatarCatalogItem> = listOf(
+    "builtin-aurora" to "#00ACC1",
+    "builtin-flame" to "#F4511E",
+    "builtin-forest" to "#43A047",
+    "builtin-violet" to "#8E24AA",
+    "builtin-sun" to "#FB8C00",
+    "builtin-rose" to "#D81B60",
+    "builtin-ocean" to "#3949AB",
+    "builtin-lime" to "#C0CA33",
+).mapIndexed { index, (id, color) ->
+    AvatarCatalogItem(
+        id = id,
+        displayName = id.substringAfter("builtin-").replaceFirstChar { it.uppercase() },
+        storagePath = "",
+        category = "builtin",
+        sortOrder = index,
+        bgColor = color,
+    )
+}
+
 val PROFILE_COLORS = listOf(
     "#1E88E5", "#E53935", "#43A047", "#FB8C00",
     "#8E24AA", "#00ACC1", "#F4511E", "#3949AB",
@@ -103,7 +127,7 @@ fun String.isValidAvatarUrl(): Boolean {
     val value = trim()
     return value.length <= 2048 &&
         !value.any { it.isWhitespace() } &&
-        (value.startsWith("https://") || value.startsWith("http://"))
+        (value.startsWith("https://") || value.startsWith("http://") || value.startsWith("file://"))
 }
 
 fun profileAvatarImageUrl(profile: NuvioProfile, avatar: AvatarCatalogItem?): String? =

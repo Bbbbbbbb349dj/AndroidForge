@@ -319,20 +319,30 @@ internal fun buildHomeReleaseRadarItems(
         val libraryItemsByRadarKey = libraryItems.associateBy(::libraryItemKeyForHomeRadar)
         resolvedLibraryDetails.forEach { (radarKey, details) ->
             val libraryItem = libraryItemsByRadarKey[radarKey] ?: return@forEach
+            val isSubscribed = "local:subscribed" in libraryItem.listKeys
+            val itemEarliestDay = if (isSubscribed) minOf(earliestReleaseDay, -7) else earliestReleaseDay
             details.videos
                 .asSequence()
                 .mapNotNull { video ->
                     val releaseIso = video.released.releaseIsoDateOrNull() ?: return@mapNotNull null
                     val days = daysBetweenIsoDates(todayIsoDate, releaseIso) ?: return@mapNotNull null
-                    if (days !in earliestReleaseDay..HomeReleaseRadarUpcomingWindowDays) {
+                    if (days !in itemEarliestDay..HomeReleaseRadarUpcomingWindowDays) {
                         return@mapNotNull null
                     }
-                    details.toReleaseRadarItem(
+                    val base = details.toReleaseRadarItem(
                         video = video,
                         libraryItem = libraryItem,
                         releaseIsoDate = releaseIso,
                         daysFromToday = days,
                     )
+                    if (isSubscribed) {
+                        base.copy(
+                            subtitle = listOfNotNull("🔔 Subscribed", base.subtitle?.takeIf { it.isNotBlank() })
+                                .joinToString(" · "),
+                        )
+                    } else {
+                        base
+                    }
                 }
                 .forEach(::add)
         }
@@ -368,10 +378,14 @@ internal fun buildHomeReleaseRadarItems(
             .forEach(::add)
     }
 
+    val subscribedIds = libraryItems
+        .filter { "local:subscribed" in it.listKeys }
+        .mapTo(hashSetOf()) { it.id }
     return releaseItems
         .distinctBy { item -> item.key }
         .sortedWith(
-            compareBy<HomeReleaseRadarItem> { item -> item.daysFromToday?.releaseRadarSortWeight() ?: Int.MAX_VALUE }
+            compareByDescending<HomeReleaseRadarItem> { item -> item.preview.id in subscribedIds }
+                .thenBy { item -> item.daysFromToday?.releaseRadarSortWeight() ?: Int.MAX_VALUE }
                 .thenByDescending { item -> item.releaseRadarSignalWeight() }
                 .thenBy { item -> item.title.lowercase() }
         )

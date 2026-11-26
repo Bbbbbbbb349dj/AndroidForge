@@ -196,13 +196,19 @@ actual fun PlatformPlayerSurface(
         if (castBridge != null) castBridge::onLocalControllerReady else onControllerReady
     val surfaceOnSnapshot: (PlayerPlaybackSnapshot) -> Unit =
         if (castBridge != null) castBridge::onLocalSnapshot else onSnapshot
-    val surfaceOnError: (String?) -> Unit = { message ->
-        if (message == null || castBridge?.isCasting != true) onError(message)
-    }
-
     val requestedEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
-    val activeEngine by remember(playerSourceKey, requestedEngine) {
+    var activeEngine by remember(playerSourceKey, requestedEngine) {
         mutableStateOf(requestedEngine.initialAndroidEngine())
+    }
+    var engineAutoEscalated by remember(playerSourceKey, requestedEngine) { mutableStateOf(false) }
+    val surfaceOnError: (String?) -> Unit = { message ->
+        // Nuvio Enhanced Player Core v2: the surface only REPORTS. All recovery runs once
+        // in PlayerScreenRuntimeUi.onError — expired-link refresh -> source fallback ->
+        // codec-gated engine switch (position preserved) -> error. A surface-side engine
+        // flip here would skip source fallback and could lose the playback position.
+        if (message == null || castBridge?.isCasting != true) {
+            onError(message)
+        }
     }
 
     LaunchedEffect(activeEngine, playerSourceKey, requestedEngine) {
@@ -358,6 +364,8 @@ private fun ExoPlayerSurface(
     var sidecarControllerRef by remember { mutableStateOf<SidecarSubtitleController?>(null) }
     val subtitleStyleGuard = remember { SubtitleStyleGuard() }
     var decoderPriorityOverride by remember(playerSourceKey) { mutableStateOf<Int?>(null) }
+    // Player Core v2: finite decoder ladder — one re-prepare per rung, per source.
+    var decoderRetryCount by remember(playerSourceKey) { mutableStateOf(0) }
     var fallbackStartPositionMs by remember(playerSourceKey) { mutableStateOf<Long?>(null) }
     var initializedVideoDecoderName by remember(playerSourceKey) { mutableStateOf<String?>(null) }
     var initializedAudioDecoderName by remember(playerSourceKey) { mutableStateOf<String?>(null) }
@@ -742,23 +750,39 @@ private fun ExoPlayerSurface(
         }
 
         fun reportPlayerError(error: PlaybackException) {
-            if (
-                playerSettings.decoderPriority == DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON &&
-                effectiveDecoderPriority != DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER &&
-                error.isDecoderFailure()
-            ) {
+            // Nuvio Enhanced Player Core v2: finite decoder ladder for LOCAL/offline files
+            // (streams switch source first at the runtime layer instead). Every decoder-class
+            // failure re-creates ExoPlayer with the next decoder configuration, position
+            // preserved, before any engine switch or user-visible error:
+            //   ON -> OFF  (hardware / framework-software MediaCodec path)
+            //   OFF -> PREFER (extension decoders first, e.g. libgav1)
+            //   two rungs exhausted -> codec-gated engine switch (runtime) -> clear error.
+            val decoderClassFailure = error.isDecoderFailure() ||
+                (error.localizedMessage ?: error.message)?.contains(
+                    Regex(
+                        "decod|codec|renderer|MediaCodec|OMX|c2\\.|libgav1|unsupported (video|audio|mime)|video format|format not supported",
+                        RegexOption.IGNORE_CASE,
+                    ),
+                ) == true
+            if (isLocalFileSource && decoderRetryCount < 2 && decoderClassFailure) {
+                val nextMode = if (effectiveDecoderPriority == DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF) {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                } else {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                }
+                decoderRetryCount++
                 Log.w(
                     TAG,
-                    "Decoder failure (${error.errorCodeName}); retrying with app decoders",
+                    "Decoder failure (${error.errorCodeName}); decoder ladder -> mode=$nextMode (attempt $decoderRetryCount)",
                     error,
                 )
                 InAppLogger.warn(
                     "ExoPlayer/Android",
-                    "Decoder failure ${error.errorCodeName}; retrying with preferred app decoders. " +
+                    "Decoder ladder ${error.errorCodeName} -> mode=$nextMode attempt=$decoderRetryCount. " +
                         "cause=${error.cause?.let(InAppLogger::throwableSummary) ?: InAppLogger.throwableSummary(error)}",
                 )
                 fallbackStartPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-                decoderPriorityOverride = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                decoderPriorityOverride = nextMode
                 latestOnError.value(null)
                 return
             }
@@ -1055,6 +1079,8 @@ private fun ExoPlayerSurface(
         aiostreamsAss?.setSubtitleDelayMs(subtitleDelayMs)
     }
 
+    BindExoNightMode(exoPlayer, playerSettings.nightModeActive && !playerSettings.androidAudioPassthroughEnabled && !playerSettings.tunnelingEnabled)
+
     LaunchedEffect(exoPlayer, playWhenReady) {
         exoPlayer.playWhenReady = latestPlayWhenReady.value
         syncPlayerViewKeepScreenOn()
@@ -1065,6 +1091,7 @@ private fun ExoPlayerSurface(
         onControllerReady(
             autoSyncCoordinator.wrap(object : PlayerEngineController { // AutoSync hook
                 override val playbackEngine = AndroidPlaybackEngine.ExoPlayer
+                override val supportsNightMode: Boolean get() = android.os.Build.VERSION.SDK_INT >= 28
 
                 private var lastAppliedVolume: Float? = null
 

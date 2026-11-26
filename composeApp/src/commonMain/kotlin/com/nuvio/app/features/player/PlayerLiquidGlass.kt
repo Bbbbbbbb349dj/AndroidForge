@@ -60,6 +60,9 @@ internal val PlayerGlassRim = Color.White.copy(alpha = 0.22f)
 /** False when "Glass Backgrounds on Controls" is off: player buttons and pills draw no backing. */
 internal val LocalPlayerControlGlassEnabled = staticCompositionLocalOf { true }
 
+/** Theme accent tint for the glass sheen so player chrome follows the active theme. */
+internal val LocalPlayerThemeGlassTint = staticCompositionLocalOf { Color.White.copy(alpha = 0.05f) }
+
 /**
  * The one glass recipe every player control uses: Kyant backdrop with vibrancy, a light blur, lens
  * refraction and edge highlight, sampled from the live video frame provided by
@@ -71,7 +74,7 @@ internal fun Modifier.playerLiquidGlass(
     blurRadius: Dp = PlayerGlassBlur,
     refractionHeight: Dp = 8.dp,
     refractionAmount: Dp = 12.dp,
-    tint: Color = PlayerGlassSurfaceTint,
+    tint: Color = LocalPlayerThemeGlassTint.current,
     fallback: Color = PlayerGlassFallback,
     backdropOpacity: Float = PlayerGlassBackdropOpacity,
     rim: Boolean = true,

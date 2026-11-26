@@ -25,7 +25,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -154,14 +157,21 @@ private fun CommentsHeader() {
         val isTablet = maxWidth >= 720.dp
         val titleSize = if (isTablet) 22.sp else 20.sp
 
-        Text(
-            text = stringResource(Res.string.detail_comments_title),
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = titleSize,
-                fontWeight = FontWeight.SemiBold,
-            ),
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "Reviews & Community Comments",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = titleSize,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = "Public reviews from TMDB & Trakt • No sign-in required",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -171,6 +181,7 @@ private fun CommentCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val uriHandler = LocalUriHandler.current
     val colorScheme = MaterialTheme.colorScheme
     val isAmoled = colorScheme.background == Color.Black && colorScheme.surface == Color(0xFF050505)
     val bodyText = if (review.hasSpoilerContent) {
@@ -208,8 +219,16 @@ private fun CommentCard(
                     fontWeight = FontWeight.SemiBold,
                 )
 
-                if (review.review) {
-                    CommentChip(text = stringResource(Res.string.detail_comments_badge_review))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CommentChip(text = review.sourceName, highlight = true)
+                    if (review.review) {
+                        CommentChip(text = stringResource(Res.string.detail_comments_badge_review))
+                    } else {
+                        CommentChip(text = "Comment")
+                    }
                 }
 
                 Text(
@@ -225,22 +244,45 @@ private fun CommentCard(
                     modifier = Modifier.weight(1f, fill = false),
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    review.rating?.let { rating ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        review.rating?.let { rating ->
+                            Text(
+                                text = stringResource(Res.string.detail_comments_badge_rating, rating),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                maxLines = 1,
+                            )
+                        }
+                        if (review.sourceName == "Trakt" || review.likes > 0) {
+                            Text(
+                                text = stringResource(Res.string.detail_comments_likes, review.likes),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    review.sourceUrl?.let { url ->
                         Text(
-                            text = stringResource(Res.string.detail_comments_badge_rating, rating),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            maxLines = 1,
+                            text = "Source ↗",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { runCatching { uriHandler.openUri(url) } }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
                         )
                     }
-                    Text(
-                        text = stringResource(Res.string.detail_comments_likes, review.likes),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
             }
         }
@@ -248,11 +290,18 @@ private fun CommentCard(
 }
 
 @Composable
-private fun CommentChip(text: String) {
+private fun CommentChip(
+    text: String,
+    highlight: Boolean = false,
+) {
     Box(
         modifier = Modifier
             .background(
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = if (highlight) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
                 shape = RoundedCornerShape(999.dp),
             )
             .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -260,7 +309,12 @@ private fun CommentChip(text: String) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (highlight) FontWeight.Bold else FontWeight.Medium,
+            color = if (highlight) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             maxLines = 1,
         )
     }

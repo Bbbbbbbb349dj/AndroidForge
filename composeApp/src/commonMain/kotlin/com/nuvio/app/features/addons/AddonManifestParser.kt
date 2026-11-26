@@ -71,7 +71,7 @@ internal object AddonManifestParser {
                 type = catalog.requiredString("type"),
                 id = catalog.requiredString("id"),
                 name = catalog.optionalString("name").orEmpty().ifBlank { catalog.requiredString("id") },
-                extra = catalog.array("extra").mapNotNull { extraElement ->
+                extra = (catalog.array("extra").mapNotNull { extraElement ->
                     extraElement.jsonObject.optionalString("name")?.takeIf { it.isNotBlank() }?.let { name ->
                         AddonExtraProperty(
                             name = name,
@@ -80,7 +80,9 @@ internal object AddonManifestParser {
                             optionsLimit = extraElement.jsonObject.int("optionsLimit"),
                         )
                     }
-                },
+                } + catalog.stringList("extraSupported").map { name ->
+                    AddonExtraProperty(name = name, isRequired = name in catalog.stringList("extraRequired"))
+                }).distinctBy { it.name },
             )
         }
 

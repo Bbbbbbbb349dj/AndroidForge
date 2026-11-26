@@ -23,6 +23,7 @@ internal data class LibraryLocalSnapshot(
     val deltaInitialized: Boolean,
     val pendingUpsertKeys: List<LibrarySyncKey>,
     val pendingDeleteKeys: List<LibrarySyncKey>,
+    val localCategoryOverridesByKey: Map<String, List<String>> = emptyMap(),
 ) {
     val hasPendingPush: Boolean
         get() = pendingUpsertKeys.isNotEmpty() || pendingDeleteKeys.isNotEmpty()
@@ -73,6 +74,7 @@ internal class LibraryLocalState {
     private var deltaInitialized = false
     private var pendingUpsertKeysByKey: MutableMap<String, LibrarySyncKey> = mutableMapOf()
     private var pendingDeleteKeysByKey: MutableMap<String, LibrarySyncKey> = mutableMapOf()
+    private var localCategoryOverridesByKey: MutableMap<String, List<String>> = mutableMapOf()
     private var pushJob: Job? = null
 
     fun snapshot(): LibraryLocalSnapshot = synchronized(lock) {
@@ -140,6 +142,7 @@ internal class LibraryLocalState {
         deltaInitialized = false
         pendingUpsertKeysByKey = mutableMapOf()
         pendingDeleteKeysByKey = mutableMapOf()
+        localCategoryOverridesByKey = mutableMapOf()
         LibraryStateTransition(
             snapshot = snapshotLocked(),
             detachedPushJob = detachedPushJob,
@@ -154,11 +157,24 @@ internal class LibraryLocalState {
         deltaInitialized: Boolean = false,
         pendingUpsertKeys: Collection<LibrarySyncKey> = emptyList(),
         pendingDeleteKeys: Collection<LibrarySyncKey> = emptyList(),
+        categoryOverridesByKey: Map<String, List<String>> = emptyMap(),
     ): LibraryLocalSnapshot? = synchronized(lock) {
         if (activeProfileId != token.profileId || !isCurrentLocked(token)) {
             return@synchronized null
         }
-        itemsById = items.associateByTo(mutableMapOf()) { libraryItemKey(it.id, it.type) }
+        localCategoryOverridesByKey = categoryOverridesByKey.toMutableMap()
+        itemsById = LinkedHashMap<String, LibraryItem>().apply {
+            items.forEach { raw ->
+                val key = libraryItemKey(raw.id, raw.type)
+                val merged = mergeLibraryItemPreservingLocalMetadata(
+                    existing = null,
+                    incoming = raw,
+                    fallbackCategoryKeys = localCategoryOverridesByKey[key],
+                )
+                put(key, merged)
+                localCategoryOverridesByKey[key] = normalizeLocalCategoryKeys(merged.listKeys).toList()
+            }
+        }
         this.deltaCursorEventId = deltaCursorEventId.coerceAtLeast(0L)
         this.deltaInitialized = deltaInitialized
         pendingUpsertKeysByKey = pendingUpsertKeys
@@ -189,6 +205,7 @@ internal class LibraryLocalState {
         deltaInitialized = false
         pendingUpsertKeysByKey = mutableMapOf()
         pendingDeleteKeysByKey = mutableMapOf()
+        localCategoryOverridesByKey = mutableMapOf()
         LibraryStateTransition(
             snapshot = snapshotLocked(),
             detachedPushJob = detachedPushJob,
@@ -212,6 +229,7 @@ internal class LibraryLocalState {
             localItemsByKey = itemsById,
             pendingUpsertKeysByKey = pendingUpsertKeysByKey,
             pendingDeleteKeysByKey = pendingDeleteKeysByKey,
+            localCategoryOverridesByKey = localCategoryOverridesByKey,
         )
         if (itemsById != reconciliation.itemsByKey) {
             contentRevision += 1L
@@ -242,6 +260,7 @@ internal class LibraryLocalState {
             pendingUpsertKeysByKey = pendingUpsertKeysByKey,
             pendingDeleteKeysByKey = pendingDeleteKeysByKey,
             currentCursorEventId = deltaCursorEventId,
+            localCategoryOverridesByKey = localCategoryOverridesByKey,
         )
         if (reconciliation.changed) {
             itemsById = reconciliation.itemsByKey
@@ -255,8 +274,16 @@ internal class LibraryLocalState {
 
     fun upsert(item: LibraryItem): LibraryLocalSnapshot = synchronized(lock) {
         val key = libraryItemKey(item.id, item.type)
-        itemsById[key] = item
-        pendingUpsertKeysByKey[key] = item.toLibrarySyncKey()
+        val existing = itemsById[key]
+        val merged = mergeLibraryItemPreservingLocalMetadata(
+            existing = existing,
+            incoming = item,
+            explicitListKeys = item.listKeys.takeIf { it.isNotEmpty() },
+            fallbackCategoryKeys = localCategoryOverridesByKey[key],
+        )
+        itemsById[key] = merged
+        localCategoryOverridesByKey[key] = normalizeLocalCategoryKeys(merged.listKeys).toList()
+        pendingUpsertKeysByKey[key] = merged.toLibrarySyncKey()
         pendingDeleteKeysByKey.remove(key)
         revision += 1L
         contentRevision += 1L
@@ -289,6 +316,7 @@ internal class LibraryLocalState {
             .filterValues { item -> item.id == id }
         removedEntries.forEach { (key, item) ->
             itemsById.remove(key)
+            localCategoryOverridesByKey.remove(key)
             pendingUpsertKeysByKey.remove(key)
             pendingDeleteKeysByKey[key] = item.toLibrarySyncKey()
         }
@@ -308,6 +336,7 @@ internal class LibraryLocalState {
         val removedItem = itemsById.remove(key)
         val affectedCount = if (removedItem != null) 1 else 0
         if (removedItem != null) {
+            localCategoryOverridesByKey.remove(key)
             pendingUpsertKeysByKey.remove(key)
             pendingDeleteKeysByKey[key] = removedItem.toLibrarySyncKey()
             revision += 1L
@@ -325,6 +354,10 @@ internal class LibraryLocalState {
 
     fun containsId(id: String): Boolean = synchronized(lock) {
         itemsById.values.any { it.id == id }
+    }
+
+    fun find(id: String, type: String): LibraryItem? = synchronized(lock) {
+        itemsById[libraryItemKey(id, type)]
     }
 
     fun findById(id: String): LibraryItem? = synchronized(lock) {
@@ -379,6 +412,7 @@ internal class LibraryLocalState {
             deltaInitialized = deltaInitialized,
             pendingUpsertKeys = pendingUpsertKeysByKey.values.toList(),
             pendingDeleteKeys = pendingDeleteKeysByKey.values.toList(),
+            localCategoryOverridesByKey = localCategoryOverridesByKey.toMap(),
         )
 
     private fun isCurrentLocked(token: LibraryProfileToken): Boolean =

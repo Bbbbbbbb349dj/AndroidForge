@@ -2,7 +2,7 @@
 
   <img src="https://nuvio.tv/assets/nuvio-app-logo-wordmark.webp" alt="Nuvio Enhanced" width="320" />
 
-  <h1>Nuvio Enhanced 2.0</h1> 
+  <h1>Nuvio Enhanced</h1>
 
   <p>
     An advanced, feature-packed fork of <a href="https://github.com/NuvioMedia/NuvioMobile">Nuvio Mobile</a> that keeps pace with upstream while introducing a pure <b>CloudStream 3 (CS3)</b> & <b>Stremio</b> engine, out-of-the-box tracking integrations, hardware volume boost, and deep platform polish.
@@ -138,13 +138,13 @@ env NUVIO_IOS_DISTRIBUTION=full xcodebuild \
 
 ---
 
-## ☕ Support Nuvio Enhanced 2.0
+## ☕ Support Nuvio Enhanced
 
-Every update of Nuvio Enhanced 2.0 comes from one person's free time — no team, no sponsors, no ads.
+Every update of Nuvio Enhanced comes from one person's free time — no team, no sponsors, no ads.
 
 If this app made your movie nights better, a small coffee from you means it stays free and keeps getting better.
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-raja__ji-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/raja_ji)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Development-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com)
 
 ---
 

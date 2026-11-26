@@ -58,12 +58,13 @@ actual object CloudStreamRepository {
     private val loadLinksCacheMutex = Mutex()
     private val loadResultCache = linkedMapOf<String, CachedCloudStreamLoadItem>()
     private val loadResultCacheMutex = Mutex()
-    private const val LOAD_LINKS_CACHE_MAX_ENTRIES = 16
-    private const val LOAD_LINKS_CACHE_TTL_MS = 120_000L
-    private const val LOAD_RESULT_CACHE_MAX_ENTRIES = 16
-    private const val LOAD_RESULT_CACHE_TTL_MS = 600_000L
+    private const val LOAD_LINKS_CACHE_MAX_ENTRIES = 32
+    private const val LOAD_LINKS_CACHE_TTL_MS = 600_000L
+    private const val LOAD_RESULT_CACHE_MAX_ENTRIES = 32
+    private const val LOAD_RESULT_CACHE_TTL_MS = 900_000L
     private const val REPOSITORY_DISCOVERY_CONCURRENCY = 6
-    private const val PROVIDER_REQUEST_CONCURRENCY = 4
+    private const val PROVIDER_REQUEST_CONCURRENCY = 8
+    private var playbackStopObserverStarted = false
     // A single slow/blocked extension must not hold the complete search open.
     private const val PROVIDER_SEARCH_TIMEOUT_MS = 28_000L
 
@@ -73,8 +74,29 @@ actual object CloudStreamRepository {
         currentProfileId = profileId
         CloudStreamPlatformStorage.setActiveProfile(profileId)
         initialized = true
-        _uiState.value = restoreState(profileId)
-
+        val restored = restoreState(profileId)
+        _uiState.value = restored
+        if (!playbackStopObserverStarted) {
+            playbackStopObserverStarted = true
+            scope.launch {
+                var lastToken = CloudStreamLiveLinkHub.playbackStartedSignals.value
+                CloudStreamLiveLinkHub.playbackStartedSignals.collect { token ->
+                    if (token != lastToken) {
+                        lastToken = token
+                        if (!CloudStreamLiveLinkHub.isPlayerLoadingActive()) {
+                            cancelInFlightLoadLinksRequests()
+                        }
+                    }
+                }
+            }
+        }
+        scope.launch {
+            restored.plugins
+                .filter(CloudStreamPluginItem::isRunnable)
+                .forEach { plugin ->
+                    runCatching { CloudStreamPlatformRuntime.provider(plugin) }
+                }
+        }
     }
 
     actual fun onProfileChanged(profileId: Int) {
@@ -92,6 +114,7 @@ actual object CloudStreamRepository {
                 try { loadResultCache.clear() } finally { loadResultCacheMutex.unlock() }
             }
         }
+        CloudStreamLiveLinkHub.clearAll()
         CloudStreamPlatformRuntime.clear()
         currentProfileId = profileId.coerceAtLeast(1)
         CloudStreamPlatformStorage.setActiveProfile(currentProfileId)
@@ -117,6 +140,7 @@ actual object CloudStreamRepository {
                 try { loadResultCache.clear() } finally { loadResultCacheMutex.unlock() }
             }
         }
+        CloudStreamLiveLinkHub.clearAll()
         CloudStreamPlatformRuntime.clear()
         CloudStreamPlatformStorage.clearPackages()
         CloudStreamPlatformStorage.clearAllState()
@@ -437,6 +461,9 @@ actual object CloudStreamRepository {
         } else {
             val enabledPlugin = _uiState.value.plugins.firstOrNull { it.metadata.id.value == pluginId }
             if (enabledPlugin?.isRunnable == true) {
+                scope.launch {
+                    runCatching { CloudStreamPlatformRuntime.provider(enabledPlugin) }
+                }
             }
         }
         persist()
@@ -547,7 +574,7 @@ actual object CloudStreamRepository {
                         RuntimeDiagnostics.recordLog("cs-search-provider-start id=$id")
                         val providerResult = withTimeoutOrNull(PROVIDER_SEARCH_TIMEOUT_MS) {
                             providerResult(id) { search(query.trim()) }
-                        } ?: Result.failure(
+                        } ?: Result.failure<List<CloudStreamSearchItem>>(
                             IllegalStateException("CloudStream provider search timed out after ${PROVIDER_SEARCH_TIMEOUT_MS}ms"),
                         ).also {
                             RuntimeDiagnostics.recordLog("cs-search-provider-timeout id=$id timeoutMs=$PROVIDER_SEARCH_TIMEOUT_MS")
@@ -565,7 +592,7 @@ actual object CloudStreamRepository {
 
     actual suspend fun load(providerId: String, data: String): Result<CloudStreamLoadItem> {
         initialize()
-        val cacheKey = "$providerId\\u0000$data"
+        val cacheKey = "$providerId|cs|$data"
         val now = currentEpochMillis()
         loadResultCacheMutex.withLock {
             val entry = loadResultCache[cacheKey]
@@ -601,7 +628,7 @@ actual object CloudStreamRepository {
                         expiresAtEpochMs = currentEpochMillis() + LOAD_RESULT_CACHE_TTL_MS,
                     )
                     loadResultCache[cacheKey] = entry
-                    loadResultCache["$providerId\\u0000${item.data}"] = entry
+                    loadResultCache["$providerId|cs|${item.data}"] = entry
                     while (loadResultCache.size > LOAD_RESULT_CACHE_MAX_ENTRIES) {
                         loadResultCache.remove(loadResultCache.entries.first().key)
                     }
@@ -622,7 +649,11 @@ actual object CloudStreamRepository {
 
     actual suspend fun loadLinks(providerId: String, data: String): Result<List<CloudStreamPlaybackSource>> {
         initialize()
-        val requestKey = "$providerId\\u0000$data"
+        val requestKey = "$providerId|cs|$data"
+        val bypassCache = CloudStreamLiveLinkHub.consumeForceRefresh(providerId, data)
+        if (bypassCache) {
+            loadLinksCacheMutex.withLock { loadLinksCache.remove(requestKey) }
+        }
         val now = currentEpochMillis()
         loadLinksCacheMutex.withLock {
             val entry = loadLinksCache[requestKey]
@@ -635,6 +666,12 @@ actual object CloudStreamRepository {
                 null
             }
         }?.let { cached ->
+            CloudStreamLiveLinkHub.publish(
+                providerId = providerId,
+                routeData = data,
+                sources = cached,
+                isComplete = true,
+            )
             RuntimeDiagnostics.recordLog("cs-load-links-cache-hit provider=$providerId links=${cached.size}")
             return Result.success(cached)
         }

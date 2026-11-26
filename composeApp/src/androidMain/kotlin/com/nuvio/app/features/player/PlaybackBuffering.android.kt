@@ -50,8 +50,8 @@ internal fun PlayerSettingsUiState.buildPlaybackLoadControl(
             .setBufferDurationsMs(
                 LOCAL_FILE_MIN_BUFFER_MS,
                 LOCAL_FILE_MAX_BUFFER_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                if (localFileSource) 250 else 1_000,
+                if (localFileSource) 250 else 1_000,
             )
             .setTargetBufferBytes(minOf(LOCAL_FILE_TARGET_BUFFER_MB * MB, heapLimitBytes).toInt())
             .setPrioritizeTimeOverSizeThresholds(false)
@@ -64,8 +64,8 @@ internal fun PlayerSettingsUiState.buildPlaybackLoadControl(
             .setBufferDurationsMs(
                 MEMORY_SAFE_MIN_BUFFER_MS,
                 MEMORY_SAFE_MAX_BUFFER_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+                if (localFileSource) 250 else 1_000,
+                2_500,
             )
             .setTargetBufferBytes(minOf(MEMORY_SAFE_TARGET_BUFFER_MB * MB, heapLimitBytes).toInt())
             .setPrioritizeTimeOverSizeThresholds(false)
@@ -84,8 +84,8 @@ internal fun PlayerSettingsUiState.buildPlaybackLoadControl(
             .setBufferDurationsMs(
                 120_000,
                 600_000,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+                if (localFileSource) 250 else 1_000,
+                2_500,
             )
             .setTargetBufferBytes(heapLimitBytes.toInt())
         else -> builder
@@ -93,8 +93,8 @@ internal fun PlayerSettingsUiState.buildPlaybackLoadControl(
             .setBufferDurationsMs(
                 DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
                 50_000,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+                if (localFileSource) 250 else 1_000,
+                2_500,
             )
     }
     return builder.build()

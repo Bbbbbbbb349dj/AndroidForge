@@ -7,6 +7,9 @@ import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.fetchAddonResponseText
+import com.nuvio.app.features.cloudstream.CloudStreamRepository
+import com.nuvio.app.features.cloudstream.parseCloudStreamRouteId
+import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.debrid.DebridSettings
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamPresentation
@@ -252,6 +255,12 @@ internal object StreamSourceLoader {
      * Loads every source's streams for one title and returns them in display order. Sources that
      * haven't answered within [timeoutMs] are left out.
      */
+    private data class SourceEmission(
+        val index: Int,
+        val group: AddonStreamGroup,
+        val isFinal: Boolean,
+    )
+
     suspend fun loadStreams(
         type: String,
         videoId: String,
@@ -259,6 +268,8 @@ internal object StreamSourceLoader {
         episode: Int?,
         embeddedStreams: List<StreamItem>,
         timeoutMs: Long,
+        meta: MetaDetails? = null,
+        onProgress: ((List<StreamItem>) -> Unit)? = null,
     ): List<StreamItem> {
         val streamBadgeRules = StreamBadgeSettingsRepository.snapshot()
         val debridSettings = DebridSettingsRepository.snapshot()
@@ -270,23 +281,169 @@ internal object StreamSourceLoader {
         }
 
         val targets = resolveTargets(type = type, videoId = videoId, season = season, episode = episode)
-        val sources =
-            targets.streamAddons.map { addon ->
-                StreamSource(addon.addonName, addon.addonId) {
-                    val group = fetchAddonGroup(addon, type, videoId, forceRefresh = false)
-                    checkDebridCache(group, targets.streamAddonIds)
-                }
-            } + targets.pluginProviderGroups.map { providerGroup ->
-                StreamSource(providerGroup.addonName, providerGroup.addonId) {
-                    loadPluginProviderGroup(providerGroup, type, videoId, season, episode)
-                }
-            } + targets.serverSources.map { source ->
-                StreamSource(source.addonName, source.addonId) { source.load() }
+        val directCloudRoute = parseCloudStreamRouteId(videoId)
+            ?: meta?.id?.takeIf { type.equals("movie", ignoreCase = true) }?.let(::parseCloudStreamRouteId)
+        val cloudStreamSearchRequest = if (AppFeaturePolicy.pluginsEnabled) {
+            val fallbackReq = buildCloudStreamSearchRequest(
+                type = type,
+                videoId = videoId,
+                parentMetaId = meta?.id,
+                parentMetaType = meta?.type ?: type,
+                season = season,
+                episode = episode,
+                searchTitle = meta?.name,
+            )
+            if (fallbackReq != null) {
+                fallbackReq.copy(
+                    year = fallbackReq.year ?: meta?.releaseInfo.cloudStreamReleaseYear(),
+                    genres = fallbackReq.genres.ifEmpty { meta?.genres.orEmpty() },
+                )
+            } else if (meta != null && meta.name.isNotBlank()) {
+                CloudStreamSearchRequest(
+                    title = meta.name,
+                    type = type,
+                    year = meta.releaseInfo.cloudStreamReleaseYear(),
+                    season = season,
+                    episode = episode,
+                    episodeTitle = meta.videos.firstOrNull {
+                        (season == null || it.season == season) && (episode == null || it.episode == episode)
+                    }?.title,
+                    externalId = sequenceOf(videoId, meta.id)
+                        .map(String::trim)
+                        .firstOrNull { it.matches(Regex("^tt\\d{5,12}$", RegexOption.IGNORE_CASE)) },
+                    genres = meta.genres,
+                )
+            } else {
+                null
             }
+        } else {
+            null
+        }
+        val cloudStreamGroups = if (AppFeaturePolicy.pluginsEnabled) {
+            cloudStreamProviderGroupsForRequest(type = type, request = cloudStreamSearchRequest)
+        } else {
+            emptyList()
+        }
+        // Fast 0ms seed if StreamsRepository already resolved this exact episode/movie in session
+        val tokenPrefix = "$type::$videoId::$season::$episode::"
+        val cachedState = StreamsRepository.uiState.value
+        if (onProgress != null && cachedState.requestToken?.startsWith(tokenPrefix) == true) {
+            val preloaded = cachedState.groups.flatMap { it.streams }
+            if (preloaded.isNotEmpty()) {
+                onProgress(preloaded)
+                if (!cachedState.isAnyLoading) {
+                    return preloaded
+                }
+            }
+        }
+
+        val emissions = Channel<SourceEmission>(Channel.UNLIMITED)
+        var nextSourceIndex = 0
+
+        val directCloudSources = if (directCloudRoute != null && AppFeaturePolicy.pluginsEnabled) {
+            CloudStreamRepository.initialize()
+            val pluginItem = CloudStreamRepository.uiState.value.plugins
+                .firstOrNull { it.metadata.id.value == directCloudRoute.providerId }
+            val directName = pluginItem?.metadata?.name ?: "CloudStream"
+            val directAddonId = cloudStreamAddonId(directCloudRoute.providerId)
+            val myIndex = nextSourceIndex++
+            listOf(
+                StreamSource(directName, directAddonId) {
+                    val items = loadCloudStreamRouteProgressive(
+                        providerId = directCloudRoute.providerId,
+                        providerName = directName,
+                        linkData = directCloudRoute.data,
+                        onProgress = { partialItems ->
+                            if (partialItems.isNotEmpty()) {
+                                emissions.trySend(
+                                    SourceEmission(
+                                        index = myIndex,
+                                        group = present(
+                                            AddonStreamGroup(
+                                                addonName = directName,
+                                                addonId = directAddonId,
+                                                streams = partialItems.sortedForGroupedDisplay(),
+                                                isLoading = true,
+                                            ),
+                                        ),
+                                        isFinal = false,
+                                    ),
+                                )
+                            }
+                        },
+                    ).getOrThrow()
+                    AddonStreamGroup(
+                        addonName = directName,
+                        addonId = directAddonId,
+                        streams = items.sortedForGroupedDisplay(),
+                        isLoading = false,
+                    )
+                },
+            )
+        } else {
+            emptyList()
+        }
+        val addonSources = targets.streamAddons.map { addon ->
+            nextSourceIndex++
+            StreamSource(addon.addonName, addon.addonId) {
+                val group = fetchAddonGroup(addon, type, videoId, forceRefresh = false)
+                checkDebridCache(group, targets.streamAddonIds)
+            }
+        }
+        val pluginSources = targets.pluginProviderGroups.map { providerGroup ->
+            nextSourceIndex++
+            StreamSource(providerGroup.addonName, providerGroup.addonId) {
+                loadPluginProviderGroup(providerGroup, type, videoId, season, episode)
+            }
+        }
+        val csSources = cloudStreamGroups
+            .filterNot { it.providerId == directCloudRoute?.providerId }
+            .map { csGroup ->
+                val myIndex = nextSourceIndex++
+                StreamSource(csGroup.addonName, csGroup.addonId) {
+                    resolveCloudStreamProviderStreams(
+                        providerGroup = csGroup,
+                        request = cloudStreamSearchRequest,
+                        onProgress = { partialItems ->
+                            if (partialItems.isNotEmpty()) {
+                                emissions.trySend(
+                                    SourceEmission(
+                                        index = myIndex,
+                                        group = present(
+                                            AddonStreamGroup(
+                                                addonName = csGroup.addonName,
+                                                addonId = csGroup.addonId,
+                                                streams = partialItems.sortedForGroupedDisplay(),
+                                                isLoading = true,
+                                            ),
+                                        ),
+                                        isFinal = false,
+                                    ),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        val serverSources = targets.serverSources.map { source ->
+            nextSourceIndex++
+            StreamSource(source.addonName, source.addonId) { source.load() }
+        }
+        val sources = directCloudSources + addonSources + pluginSources + csSources + serverSources
         if (sources.isEmpty()) return emptyList()
 
-        val results = Channel<Pair<Int, AddonStreamGroup>>(Channel.UNLIMITED)
         val arrivedByIndex = mutableMapOf<Int, AddonStreamGroup>()
+        var lastEmittedCount = 0
+
+        fun buildOrderedStreams(): List<StreamItem> {
+            val arrivedGroups = sources.indices.mapNotNull { arrivedByIndex[it] }
+            return StreamAutoPlaySelector.orderAddonStreams(
+                groups = arrivedGroups,
+                installedOrder = targets.installedAddonOrder,
+                preferredGroupIds = targets.preferredGroupIds,
+            ).flatMap { it.streams }
+        }
+
         val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             sources.forEachIndexed { index, source ->
@@ -298,13 +455,28 @@ internal object StreamSourceLoader {
                     } catch (e: Throwable) {
                         failedGroup(source.addonName, source.addonId, e)
                     }
-                    results.send(index to group)
+                    emissions.send(SourceEmission(index = index, group = group, isFinal = true))
                 }
             }
+            var completedFinals = 0
             withTimeoutOrNull(timeoutMs) {
-                repeat(sources.size) {
-                    val (index, group) = results.receive()
-                    arrivedByIndex[index] = group
+                while (completedFinals < sources.size) {
+                    val emission = emissions.receive()
+                    val existing = arrivedByIndex[emission.index]
+                    // Never overwrite a non-empty partial group with a timed-out empty group
+                    if (emission.group.streams.isNotEmpty() || existing == null) {
+                        arrivedByIndex[emission.index] = emission.group
+                    }
+                    if (emission.isFinal) {
+                        completedFinals += 1
+                    }
+                    if (onProgress != null && emission.group.streams.isNotEmpty()) {
+                        val orderedNow = buildOrderedStreams()
+                        if (orderedNow.isNotEmpty() && orderedNow.size != lastEmittedCount) {
+                            lastEmittedCount = orderedNow.size
+                            onProgress(orderedNow)
+                        }
+                    }
                 }
             }
         } catch (e: CancellationException) {
@@ -315,12 +487,7 @@ internal object StreamSourceLoader {
             loadScope.cancel()
         }
 
-        val arrivedGroups = sources.indices.mapNotNull { arrivedByIndex[it] }
-        return StreamAutoPlaySelector.orderAddonStreams(
-            groups = arrivedGroups,
-            installedOrder = targets.installedAddonOrder,
-            preferredGroupIds = targets.preferredGroupIds,
-        ).flatMap { it.streams }
+        return buildOrderedStreams()
     }
 
     /** Runs every scraper of [providerGroup] and merges their streams into one group. */

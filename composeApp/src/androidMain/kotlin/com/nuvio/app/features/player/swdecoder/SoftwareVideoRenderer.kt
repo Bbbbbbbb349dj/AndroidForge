@@ -25,7 +25,7 @@ internal class SoftwareVideoRenderer(
     override fun getName(): String = TAG
 
     override fun supportsFormat(format: Format): Int {
-        if (SoftwareVideoDecoder.codecNameFor(format.sampleMimeType) == null) {
+        if (SoftwareVideoDecoder.codecNamesFor(format.sampleMimeType).isEmpty()) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         }
         if (format.cryptoType != C.CRYPTO_TYPE_NONE) {

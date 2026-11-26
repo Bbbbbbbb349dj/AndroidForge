@@ -62,8 +62,6 @@ import nuvio.composeapp.generated.resources.action_play
 import nuvio.composeapp.generated.resources.details_download_action
 import nuvio.composeapp.generated.resources.details_actions_menu_label
 import nuvio.composeapp.generated.resources.hero_add_to_library
-import nuvio.composeapp.generated.resources.hero_mark_unwatched
-import nuvio.composeapp.generated.resources.hero_mark_watched
 import nuvio.composeapp.generated.resources.hero_remove_from_library
 import nuvio.composeapp.generated.resources.playback_unavailable
 import nuvio.composeapp.generated.resources.random_episode_title
@@ -71,8 +69,6 @@ import nuvio.composeapp.generated.resources.shuffle_stop
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.rounded.Replay
 import nuvio.composeapp.generated.resources.details_action_start_from_beginning
 import nuvio.composeapp.generated.resources.sidebar_library
@@ -372,9 +368,11 @@ fun DetailActions(
     iconActionRow: Boolean = false,
     userRating: Int? = null,
     onRateClick: (() -> Unit)? = null,
+    savedCategoryLabel: String? = null,
 ) {
     val actionSet = detailActionSet(
         isSaved = isSaved,
+        savedCategoryLabel = savedCategoryLabel,
         isWatched = isWatched,
         shuffleEnabled = shuffleEnabled,
         onShuffleClick = onShuffleClick,
@@ -386,7 +384,6 @@ fun DetailActions(
         onPlayExternallyClick = onPlayExternallyClick,
     )
     val shuffleAction = actionSet.shuffle
-    val watchedAction = actionSet.watched
     val saveAction = actionSet.save
     val iconActions = actionSet.icons
     DetailActionButtons(
@@ -397,7 +394,6 @@ fun DetailActions(
         iconActions = iconActions,
         secondaryActions = buildList {
             if (!shuffleEnabled) shuffleAction?.let(::add)
-            add(watchedAction)
             add(saveAction)
         },
         isTablet = isTablet,
@@ -411,7 +407,6 @@ fun DetailActions(
 
 private class DetailActionSet(
     val shuffle: DetailSecondaryAction?,
-    val watched: DetailSecondaryAction,
     val save: DetailSecondaryAction,
     val icons: List<DetailSecondaryAction>,
 )
@@ -419,6 +414,7 @@ private class DetailActionSet(
 @Composable
 private fun detailActionSet(
     isSaved: Boolean,
+    savedCategoryLabel: String? = null,
     isWatched: Boolean,
     shuffleEnabled: Boolean,
     onShuffleClick: (() -> Unit)?,
@@ -437,14 +433,12 @@ private fun detailActionSet(
             onClick = onClick,
         )
     }
-    val watchedAction = DetailSecondaryAction(
-        label = stringResource(if (isWatched) Res.string.hero_mark_unwatched else Res.string.hero_mark_watched),
-        icon = if (isWatched) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-        isActive = isWatched,
-        onClick = onWatchedClick,
-    )
     val saveAction = DetailSecondaryAction(
-        label = stringResource(if (isSaved) Res.string.hero_remove_from_library else Res.string.hero_add_to_library),
+        label = if (isSaved && !savedCategoryLabel.isNullOrBlank()) {
+            savedCategoryLabel
+        } else {
+            stringResource(if (isSaved) Res.string.hero_remove_from_library else Res.string.hero_add_to_library)
+        },
         icon = Icons.Default.Add,
         drawable = Res.drawable.sidebar_library.takeIf { isSaved },
         isActive = isSaved,
@@ -471,10 +465,9 @@ private fun detailActionSet(
                 ),
             )
         }
-        add(watchedAction)
         add(saveAction)
     }
-    return DetailActionSet(shuffleAction, watchedAction, saveAction, iconActions)
+    return DetailActionSet(shuffleAction, saveAction, iconActions)
 }
 
 @Composable
@@ -497,9 +490,11 @@ fun TabletDetailHeroActions(
     onPlayExternallyClick: (() -> Unit)? = null,
     userRating: Int? = null,
     onRateClick: (() -> Unit)? = null,
+    savedCategoryLabel: String? = null,
 ) {
     val actionSet = detailActionSet(
         isSaved = isSaved,
+        savedCategoryLabel = savedCategoryLabel,
         isWatched = isWatched,
         shuffleEnabled = shuffleEnabled,
         onShuffleClick = onShuffleClick,

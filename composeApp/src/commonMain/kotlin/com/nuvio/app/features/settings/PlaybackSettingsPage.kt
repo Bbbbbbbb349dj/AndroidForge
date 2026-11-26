@@ -318,6 +318,15 @@ private fun PlaybackSettingsSection(
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_control_glass),
+                    description = stringResource(Res.string.settings_playback_control_glass_description),
+                    checked = autoPlayPlayerSettings.playerControlGlassEnabled,
+                    enabled = !autoPlayPlayerSettings.externalPlayerEnabled,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setPlayerControlGlassEnabled,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_pause_overlay),
                     description = stringResource(Res.string.settings_playback_pause_overlay_description),
                     checked = autoPlayPlayerSettings.pauseOverlayEnabled,

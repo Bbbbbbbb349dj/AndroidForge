@@ -177,9 +177,11 @@ private fun ConcurrencyLimitRow(
     if (showDialog) {
         SettingsChoiceDialog(
             title = title,
-            options = (1..DownloadConcurrencyLimit.MAX_VALUE).toList(),
+            options = (1..DownloadConcurrencyLimit.MAX_VALUE).toList() + DownloadConcurrencyLimit.UNLIMITED,
             selected = value,
-            label = formatCount,
+            label = { count ->
+                if (count == DownloadConcurrencyLimit.UNLIMITED) "Unlimited" else formatCount(count)
+            },
             onSelect = {
                 DownloadsSettingsRepository.setConcurrencyLimit(limit, it)
                 showDialog = false

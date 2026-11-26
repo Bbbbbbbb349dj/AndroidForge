@@ -267,6 +267,14 @@ object TraktAuthRepository : TrackingAuthProvider {
         )
     }
 
+    suspend fun publicOrAuthorizedHeaders(profileId: Int = currentProfileId): Map<String, String> {
+        authorizedHeaders(profileId)?.let { return it }
+        return mapOf(
+            "trakt-api-version" to API_VERSION,
+            "trakt-api-key" to TraktConfig.CLIENT_ID,
+        )
+    }
+
     suspend fun refreshUserSettings(profileId: Int = currentProfileId): String? {
         ensureLoaded(profileId)
         val headers = authorizedHeaders(profileId) ?: return null

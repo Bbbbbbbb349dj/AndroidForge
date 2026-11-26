@@ -65,10 +65,6 @@ fun BoxScope.NuvioPosterWatchedOverlay(
     modifier: Modifier = Modifier,
     padding: Dp = NuvioTokens.Space.s6,
 ) {
-    NuvioAnimatedWatchedBadge(
-        isVisible = isWatched,
-        modifier = modifier
-            .align(Alignment.TopEnd)
-            .padding(padding),
-    )
+    // v1.21: poster artwork stays unobstructed. Watched state remains available
+    // in title actions and Library categories; no replacement badge is drawn.
 }

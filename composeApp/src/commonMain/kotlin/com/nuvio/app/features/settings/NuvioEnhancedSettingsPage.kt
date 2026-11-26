@@ -308,6 +308,18 @@ private fun NuvioEnhancedSettingsPageContent(
                         NuvioEnhancedSettingsRepository.setProfileStatsEnabled(it)
                     },
                 )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = "CloudStream Columns Grid Layout",
+                    description = "Display CloudStream extension discovery catalogs in a multi-column poster grid instead of horizontal rows",
+                    checked = settings.cloudStreamHomeLayout == CloudStreamHomeLayout.COLUMNS,
+                    isTablet = isTablet,
+                    onCheckedChange = { useColumns ->
+                        NuvioEnhancedSettingsRepository.setCloudStreamHomeLayout(
+                            if (useColumns) CloudStreamHomeLayout.COLUMNS else CloudStreamHomeLayout.ROWS,
+                        )
+                    },
+                )
             }
         }
 
@@ -958,19 +970,6 @@ private fun NuvioEnhancedSettingsPageContent(
                         onCheckedChange = {
                             markSeen(NuvioEnhancedFeature.StatusBarVisibility)
                             NuvioEnhancedSettingsRepository.setStatusBarVisible(it)
-                        },
-                    )
-                    SettingsGroupDivider(isTablet = isTablet)
-                    SettingsSwitchRow(
-                        title = stringResource(Res.string.nuvio_enhanced_live_tv_title),
-                        description = stringResource(Res.string.nuvio_enhanced_live_tv_desc),
-                        checked = liveTvUiState.showInNavigation,
-                        isTablet = isTablet,
-                        highlighted = isNew(NuvioEnhancedFeature.LiveTvControls),
-                        onCheckedChange = {
-                            markSeen(NuvioEnhancedFeature.LiveTvControls)
-                            LiveTvRepository.setNavigationEnabled(it)
-                            NuvioEnhancedSettingsRepository.setLiveTvEnabled(it)
                         },
                     )
                     SettingsGroupDivider(isTablet = isTablet)

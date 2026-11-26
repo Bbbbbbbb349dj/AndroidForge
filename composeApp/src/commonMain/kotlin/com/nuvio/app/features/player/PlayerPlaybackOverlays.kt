@@ -7,7 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +79,9 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     movieRecommendationStage: Int = 0,
     onOpenMovieRecommendation: (MetaPreview) -> Unit = {},
     onDismissMovieRecommendations: () -> Unit = {},
+    sourceFallbackStatus: String? = null,
+    subtitleDelayMs: Int = 0,
+    playerStatusOverlayEnabled: Boolean = false,
     errorMessage: String?,
     onDismissError: () -> Unit,
 ) {
@@ -138,6 +146,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
         useLegacyLayout = useLegacyLayout,
         horizontalSafePadding = horizontalSafePadding,
         horizontalPadding = metrics.horizontalPadding,
+        playerStatusOverlayEnabled = playerStatusOverlayEnabled,
     )
 
 
@@ -188,6 +197,50 @@ internal fun BoxScope.PlayerPlaybackOverlays(
                 },
                 onDismiss = onDismissSkipInterval,
             )
+        }
+    }
+
+    if (subtitleDelayMs != 0 && sourceFallbackStatus == null && errorMessage == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = if (playerStatusOverlayEnabled) 52.dp else 16.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.72f),
+            ) {
+                val sign = if (subtitleDelayMs >= 0) "+" else "\u2212"
+                Text(
+                    text = "Subtitle Sync  " + sign +
+                        kotlin.math.abs(subtitleDelayMs) + "ms",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+
+    if (sourceFallbackStatus != null && errorMessage == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = if (playerStatusOverlayEnabled) 96.dp else 58.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.72f),
+            ) {
+                Text(
+                    text = sourceFallbackStatus.orEmpty(),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 

@@ -89,7 +89,7 @@ object MiniPlayerController {
         if (topPlayerRoute != null) {
             return if (topPlayerRoute == owned || enabled) topPlayerRoute else null
         }
-        return if (minimized) owned else null
+        return if (minimized && enabled) owned else null
     }
 
     fun isHostedRoute(route: PlayerRoute, topPlayerRoute: PlayerRoute?, enabled: Boolean): Boolean =
@@ -136,7 +136,7 @@ object MiniPlayerController {
 }
 
 internal fun PlayerScreenRuntime.canHandOffToMiniPlayer(): Boolean =
-    MiniPlayerController.hostedRuntime === this && !isMiniPresentation
+    playerSettingsUiState.miniPlayerEnabled && MiniPlayerController.hostedRuntime === this && !isMiniPresentation
 
 internal fun PlayerScreenRuntime.handOffToMiniPlayer(): Boolean {
     if (!canHandOffToMiniPlayer()) return false

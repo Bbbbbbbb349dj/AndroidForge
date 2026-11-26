@@ -51,10 +51,14 @@ enum class DownloadConcurrencyLimit(
     EpisodesPerShow("max_series_episode_concurrency", 1),
     ConcurrentShows("max_concurrent_shows", 1);
 
-    fun clamp(value: Int): Int = value.coerceIn(1, MAX_VALUE)
+    fun clamp(value: Int): Int =
+        if (value == UNLIMITED) UNLIMITED else value.coerceIn(1, MAX_VALUE)
 
     companion object {
-        const val MAX_VALUE = 5
+        const val MAX_VALUE = 16
+
+        /** Sentinel accepted by [clamp] meaning "no cap". */
+        const val UNLIMITED = Int.MAX_VALUE
     }
 }
 
@@ -82,6 +86,8 @@ data class DownloadItem(
     val sourceResponseHeaders: Map<String, String> = emptyMap(),
     val subtitleRequests: List<SubtitleAddonRequest> = emptyList(),
     val sourceSubtitles: List<StreamSubtitle> = emptyList(),
+    /** "SUB", "DUB" or "DUAL" when known — part of the logical content identity. */
+    val audioVariant: String? = null,
     val localFileUri: String? = null,
     val fileName: String,
     val status: DownloadStatus,
@@ -110,6 +116,24 @@ data class DownloadItem(
     val displaySubtitle: String
         get() = episodeTitle.orEmpty()
 
+    /** Provider / quality / audio-variant descriptor used by download notifications. */
+    val sourceInfoLine: String
+        get() {
+            val parts = mutableListOf<String>()
+            if (providerName.isNotBlank()) parts += "Source: $providerName"
+            qualityLabel?.let { parts += it }
+            audioVariant?.takeIf { it.isNotBlank() }?.let { parts += it }
+            return parts.joinToString(" | ")
+        }
+
+    private val qualityLabel: String?
+        get() {
+            val pattern = Regex("\\b(\\d{3,4}p)\\b", RegexOption.IGNORE_CASE)
+            return pattern.find(streamTitle)?.value
+                ?: streamSubtitle?.let { pattern.find(it)?.value }
+                ?: pattern.find(fileName)?.value
+        }
+
     val progressFraction: Float
         get() {
             val total = totalBytes?.takeIf { it > 0L } ?: return 0f
@@ -119,10 +143,13 @@ data class DownloadItem(
         }
 
     val logicalContentKey: String
-        get() = if (isEpisode) {
-            "${parentMetaId.trim()}|${seasonNumber ?: -1}|${episodeNumber ?: -1}"
-        } else {
-            "${parentMetaId.trim()}|movie"
+        get() {
+            val base = if (isEpisode) {
+                "${parentMetaId.trim()}|${seasonNumber ?: -1}|${episodeNumber ?: -1}"
+            } else {
+                "${parentMetaId.trim()}|movie"
+            }
+            return audioVariant?.takeIf { it.isNotBlank() }?.let { "$base|$it" } ?: base
         }
 }
 

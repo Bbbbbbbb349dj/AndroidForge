@@ -33,8 +33,8 @@ internal data class GitHubAssetDto(
 internal class NoChannelReleaseException : IllegalStateException()
 
 internal const val GITHUB_API_BASE = "https://api.github.com"
-internal const val GITHUB_OWNER = "techforfriend"
-internal const val GITHUB_REPO = "Nuvio-enhanced-2"
+internal const val GITHUB_OWNER = "Bbbbbbbb349dj"
+internal const val GITHUB_REPO = "AndroidForge"
 
 internal object AppUpdaterRepository {
     private val json = Json {
@@ -77,8 +77,7 @@ internal object AppUpdaterRepository {
         }
         return ReleaseSelector.eligibleReleases(releases, channel).firstNotNullOfOrNull { release ->
             val asset = chooseBestApkAsset(release.assets, supportedAbis) ?: return@firstNotNullOfOrNull null
-            val tag = release.tagName?.takeIf { VersionUtils.parse(it) != null }
-                ?: release.name.orEmpty()
+            val tag = ReleaseSelector.versionName(release) ?: return@firstNotNullOfOrNull null
             AppUpdate(
                 tag = tag,
                 title = release.name?.takeIf { it.isNotBlank() } ?: tag,

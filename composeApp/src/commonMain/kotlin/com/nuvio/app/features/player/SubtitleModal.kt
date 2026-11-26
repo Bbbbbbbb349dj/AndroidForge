@@ -34,6 +34,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.nuvio.app.features.autosync.AutoSyncedChip
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.FilterChip
+import nuvio.composeapp.generated.resources.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -127,8 +131,11 @@ fun SubtitleModal(
         )
     }
     var pendingOptionId by remember(visible) { mutableStateOf<String?>(playbackOptionId) }
-    val options = remember(activeLanguageKey, subtitleStructureKey, addonStructureKey) {
+    var trackKind by remember(visible) { mutableStateOf(SubtitleTrackKind.All) }
+    val subtitleError by SubtitleRepository.error.collectAsState()
+    val options = remember(activeLanguageKey, subtitleStructureKey, addonStructureKey, trackKind) {
         buildSubtitleSelectionOptions(activeLanguageKey, subtitleTracks, addonSubtitles)
+            .filter { it.matchesKind(trackKind) }
     }
     val keyedOptions = remember(options) { options.withDuplicateSafeLazyKeys { it.id } }
     val selectedOptionId = pendingOptionId ?: playbackOptionId
@@ -185,6 +192,31 @@ fun SubtitleModal(
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
 
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onFetchAddonSubtitles, enabled = !isLoadingAddonSubtitles) {
+                        Text(stringResource(if (isLoadingAddonSubtitles) Res.string.v121_subtitles_fetching else Res.string.v121_subtitles_fetch))
+                    }
+                    SubtitleTrackKind.entries.forEach { kind ->
+                        FilterChip(
+                            selected = kind == trackKind,
+                            onClick = { trackKind = kind },
+                            label = { Text(stringResource(kind.labelResource)) },
+                        )
+                    }
+                }
+                Text(
+                    stringResource(Res.string.v121_subtitles_offline_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                subtitleError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+                }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),

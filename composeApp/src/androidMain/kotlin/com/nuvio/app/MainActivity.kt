@@ -33,6 +33,7 @@ import com.nuvio.app.features.debrid.DebridSettingsStorage
 import com.nuvio.app.features.discord.DiscordRpcStorage
 import com.nuvio.app.features.downloads.DownloadNetworkGuard
 import com.nuvio.app.features.downloads.DownloadsExternalFolderPlatform
+import com.nuvio.app.features.downloads.LocalFolderVideosPlatform
 import com.nuvio.app.features.downloads.DownloadsLiveStatusPlatform
 import com.nuvio.app.features.downloads.DownloadsPlatformDownloader
 import com.nuvio.app.features.downloads.DownloadsSettingsStorage
@@ -107,6 +108,11 @@ import kotlinx.coroutines.launch
 open class MainActivity : AppCompatActivity() {
     private val startupScope = MainScope()
     protected var contentReady = false
+
+    override fun onStart() {
+        super.onStart()
+        com.nuvio.app.features.cloudstream.CloudStreamPlatformRuntime.initialize(this)
+    }
 
     override fun onResume() {
         super.onResume()
@@ -209,6 +215,8 @@ open class MainActivity : AppCompatActivity() {
         DownloadNetworkGuard.initialize(applicationContext)
         DownloadsExternalFolderPlatform.initialize(applicationContext)
         DownloadsExternalFolderPlatform.bindActivity(this)
+        LocalFolderVideosPlatform.initialize(applicationContext)
+        LocalFolderVideosPlatform.bindActivity(this)
         NuvioEnhancedBackupFileBridge.bindActivity(this)
         LiveTvStorage.initialize(applicationContext)
         DnsOverHttpsSettingsStorage.initialize(applicationContext)
@@ -263,6 +271,7 @@ open class MainActivity : AppCompatActivity() {
         AppSystemUiController.unbind(this)
         EpisodeReleaseNotificationPlatform.unbindActivity(this)
         DownloadsExternalFolderPlatform.unbindActivity(this)
+        LocalFolderVideosPlatform.unbindActivity(this)
         NuvioEnhancedBackupFileBridge.unbindActivity(this)
         super.onDestroy()
     }
@@ -273,6 +282,9 @@ open class MainActivity : AppCompatActivity() {
             return
         }
         if (DownloadsExternalFolderPlatform.handleActivityResult(requestCode, resultCode, data)) {
+            return
+        }
+        if (LocalFolderVideosPlatform.onActivityResult(requestCode, resultCode, data)) {
             return
         }
         super.onActivityResult(requestCode, resultCode, data)

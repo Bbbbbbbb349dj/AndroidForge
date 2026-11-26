@@ -61,6 +61,7 @@ internal fun PlayerGestureOverlay(
     useLegacyLayout: Boolean,
     horizontalSafePadding: Dp,
     horizontalPadding: Dp,
+    playerStatusOverlayEnabled: Boolean = false,
 ) {
     AnimatedVisibility(
         visible = currentFeedback != null,
@@ -76,7 +77,8 @@ internal fun PlayerGestureOverlay(
                             .align(Alignment.TopCenter)
                             .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
                             .padding(horizontal = horizontalSafePadding)
-                            .padding(top = 40.dp),
+                            // Stagger below the centered status overlay when it is shown.
+                            .padding(top = if (playerStatusOverlayEnabled) 84.dp else 40.dp),
                     )
                 }
             } else {

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="v121_night_mode_on">Night audio compression on; tap to turn off</string>
+    <string name="v121_night_mode_off">Night audio compression off; tap to turn on</string>
+    <string name="v121_night_mode_unsupported">Night audio compression is unavailable for this engine or device</string>
+    <string name="v121_recommendations">More like this</string>
+    <string name="v121_recommendations_empty">No unwatched recommendations are available yet. Check your connection and try again after title metadata loads.</string>
+    <string name="v121_subtitles_fetch">Fetch / refresh subtitles</string>
+    <string name="v121_subtitles_fetching">Fetching subtitles…</string>
+    <string name="v121_subtitles_all">All tracks</string>
+    <string name="v121_subtitles_sdh">SDH / CC</string>
+    <string name="v121_subtitles_forced">Forced</string>
+    <string name="v121_subtitles_srt">SRT</string>
+    <string name="v121_subtitles_offline_hint">Fetch uses your installed subtitle add-ons. Select a result while online to save it for later playback of this download. SDH and forced tracks depend on provider availability.</string>
+    <string name="v121_subtitle_save_failed">Could not save this subtitle for offline use. Check storage access and try again.</string>
+    <string name="v121_profile_eyebrow">YOUR WATCHING SPACE</string>
+    <string name="v121_profile_greeting">Welcome back, %1$s</string>
+    <string name="v121_profile_subtitle">Your stories, your pace. Pick up where you left off or explore your watching history.</string>
+    <string name="v121_profile_activity">Activity overview</string>
+    <string name="v121_profile_activity_hint">Based on this profile’s saved library and recorded watching activity. Imported history can affect totals.</string>
+    <string name="v121_profile_recent">Activity entries in the last 7 days</string>
+    <string name="v121_profile_library_hint">Saved titles</string>
+    <string name="v121_profile_continue_hint">Ready to continue</string>
+    <string name="v121_profile_completed_hint">Completed titles</string>
+    <string name="v121_profile_upcoming_hint">Episodes in the next 7 days</string>
+    <string name="v121_profile_empty">Nothing here yet. Save a title to your Library or start watching to build your personal dashboard.</string>
+    <string name="v121_profile_collection_empty">No titles in this collection yet.</string>
+    <string name="v121_profile_watchtime">Time with your stories</string>
+    <string name="v121_profile_taste">Your taste, discovered</string>
+</resources>

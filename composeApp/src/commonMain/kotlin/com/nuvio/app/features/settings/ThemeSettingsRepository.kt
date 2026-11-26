@@ -475,6 +475,10 @@ object ThemeSettingsRepository {
         }
     }
 
+    fun refreshActiveThemePalette() {
+        if (hasLoaded) applyEffectiveTheme()
+    }
+
     private fun applyEffectiveTheme() {
         val access = MemberAccessRepository.access.value
         val effective = resolveAppTheme(

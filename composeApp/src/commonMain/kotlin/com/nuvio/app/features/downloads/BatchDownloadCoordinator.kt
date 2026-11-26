@@ -8,6 +8,8 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.findEmbeddedStreams
 import com.nuvio.app.features.details.normalizeSeasonNumber
 import com.nuvio.app.features.details.seasonSortKey
+import com.nuvio.app.features.streams.StreamBadgePresentation
+import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamSourceLoader
 import com.nuvio.app.features.streams.StreamSourcePrefillSelector
@@ -28,6 +30,43 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+enum class BatchSourceFilter {
+    All,
+    Nuvio,
+    CloudStream,
+}
+
+fun StreamItem.isCloudStreamBatchSource(): Boolean =
+    addonId.startsWith("cloudstream:", ignoreCase = true)
+
+fun StreamItem.matchesBatchSourceFilter(filter: BatchSourceFilter): Boolean = when (filter) {
+    BatchSourceFilter.All -> true
+    BatchSourceFilter.Nuvio -> !isCloudStreamBatchSource()
+    BatchSourceFilter.CloudStream -> isCloudStreamBatchSource()
+}
+
+fun StreamItem.matchesBatchSearchQuery(query: String): Boolean {
+    val terms = query.trim().lowercase().split(' ').filter { it.isNotEmpty() }
+    if (terms.isEmpty()) return true
+    val raw = buildString {
+        name?.let { append(it).append(' ') }
+        title?.let { append(it).append(' ') }
+        description?.let { append(it).append(' ') }
+        sourceName?.let { append(it).append(' ') }
+        append(streamLabel).append(' ')
+        append(addonName).append(' ')
+        if (isCloudStreamBatchSource()) append("cloudstream cs3 ")
+        behaviorHints.filename?.let { append(it).append(' ') }
+        badges.forEach { b -> append(b.name).append(' ') }
+    }.lowercase()
+    val haystack = buildString {
+        append(raw)
+        if (raw.contains("2160p") || raw.contains("uhd") || raw.contains("4k")) append(" 4k 2160p uhd")
+        if (raw.contains("hevc") || raw.contains("x265") || raw.contains("h265")) append(" hevc x265 h265")
+    }
+    return terms.all { haystack.contains(it) }
+}
+
 enum class EpisodePlanStatus {
     AlreadyDownloaded,
     AlreadyInProgress,
@@ -43,6 +82,8 @@ data class PlannedEpisodeItem(
     val allAvailableStreams: List<StreamItem> = emptyList(),
     val resolutionLabel: String? = null,
     val sizeBytes: Long? = null,
+    val isScanningMore: Boolean = false,
+    val userOverridden: Boolean = false,
 )
 
 sealed interface BatchDialogStep {
@@ -71,6 +112,8 @@ data class BatchDownloadPlan(
     val visibleSeason: Int = availableSeasons.firstOrNull() ?: 0,
     val seasonPlans: Map<Int, PlannedSeasonEpisodes> = emptyMap(),
     val isSingleTitle: Boolean = false,
+    val sourceFilter: BatchSourceFilter = BatchSourceFilter.All,
+    val searchQuery: String = "",
 ) {
     val totalSelectedCount: Int
         get() = selectedEpisodeKeys.size
@@ -92,7 +135,11 @@ fun MetaVideo.batchKey(season: Int): String = batchEpisodeKey(season, episode)
 
 /** Returns the existing non-failed download for this logical episode. */
 private fun List<DownloadItem>.downloadFor(logicalKey: String): DownloadItem? =
-    firstOrNull { it.logicalContentKey == logicalKey && it.status != DownloadStatus.Failed }
+    firstOrNull { item ->
+        // Matches the base key plus any audio-variant suffix (SUB/DUB/DUAL).
+        (item.logicalContentKey == logicalKey || item.logicalContentKey.startsWith("$logicalKey|")) &&
+            item.status != DownloadStatus.Failed
+    }
 
 private fun findEpisodeDownload(downloads: List<DownloadItem>, metaId: String, episode: MetaVideo, season: Int): DownloadItem? =
     downloads.downloadFor(buildLogicalKey(
@@ -156,8 +203,8 @@ internal fun MetaDetails.batchTargetFor(video: MetaVideo, planSeason: Int): Batc
  */
 object BatchDownloadCoordinator {
     /** How many episodes may look up sources at once, across all seasons of the open plan. */
-    private const val SOURCE_LOAD_PARALLELISM = 2
-    private const val SOURCE_LOAD_TIMEOUT_MS = 30_000L
+    private const val SOURCE_LOAD_PARALLELISM = 5
+    private const val SOURCE_LOAD_TIMEOUT_MS = 25_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -172,6 +219,7 @@ object BatchDownloadCoordinator {
 
     /** Parent of the open plan's source loading; cancelled when the plan closes. */
     private var planJob: Job? = null
+    private var activeScanJob: Job? = null
 
 
     fun openPlan(
@@ -263,6 +311,89 @@ object BatchDownloadCoordinator {
         }
     }
 
+    fun selectNextUnwatchedForSeason(
+        season: Int,
+        limit: Int,
+        isEpisodeWatched: (MetaVideo) -> Boolean,
+    ) {
+        if (limit <= 0) return
+        DownloadsRepository.ensureLoaded()
+        val currentDownloads = DownloadsRepository.uiState.value.items
+        _activePlan.update { current ->
+            if (current == null) return@update null
+            val keys = current.selectedEpisodeKeys.toMutableSet()
+            val seasonEpisodes = current.episodesBySeason[season].orEmpty()
+            // Clear current season keys first, then pick next N unwatched & available
+            for (ep in seasonEpisodes) {
+                val epNo = ep.episode ?: continue
+                keys -= batchEpisodeKey(season, epNo)
+            }
+            var picked = 0
+            for (ep in seasonEpisodes) {
+                if (picked >= limit) break
+                val epNo = ep.episode ?: continue
+                val unavailable = isBatchEpisodeUnavailable(currentDownloads, current.meta.id, ep, season)
+                if (!unavailable && !isEpisodeWatched(ep)) {
+                    keys += batchEpisodeKey(season, epNo)
+                    picked += 1
+                }
+            }
+            current.copy(selectedEpisodeKeys = keys)
+        }
+    }
+
+    fun stopActiveScan() {
+        activeScanJob?.cancel()
+        activeScanJob = null
+        _activePlan.update { current ->
+            if (current == null) return@update null
+            val settledPlans = current.seasonPlans.mapValues { (_, sp) ->
+                sp.copy(
+                    isPlanning = false,
+                    episodes = sp.episodes.map { ep ->
+                        when {
+                            ep.status == EpisodePlanStatus.Loading && ep.streamCandidate != null ->
+                                ep.copy(status = EpisodePlanStatus.Ready, isScanningMore = false)
+                            ep.status == EpisodePlanStatus.Loading ->
+                                ep.copy(status = EpisodePlanStatus.NoSourceFound, isScanningMore = false)
+                            else -> ep.copy(isScanningMore = false)
+                        }
+                    },
+                )
+            }
+            current.copy(seasonPlans = settledPlans)
+        }
+    }
+
+    fun applyAddonProviderToSeason(season: Int, preferredAddonName: String) {
+        if (preferredAddonName.isBlank()) return
+        val preferredResolution = DownloadsSettingsRepository.preferredResolution.value
+        val plan = _activePlan.value ?: return
+        updateSeasonPlan(plan.meta.id, season) { seasonPlan ->
+            seasonPlan?.copy(
+                episodes = seasonPlan.episodes.map { item ->
+                    val matchingProviderStreams = item.allAvailableStreams.filter {
+                        it.addonName.equals(preferredAddonName, ignoreCase = true)
+                    }
+                    if (matchingProviderStreams.isEmpty()) {
+                        item
+                    } else {
+                        val picked = StreamSourcePrefillSelector.selectForBatch(
+                            matchingProviderStreams,
+                            preferredResolution,
+                        )
+                        if (picked != null) {
+                            item.withSelectedStream(picked.stream, picked.facts, picked.sizeBytes)
+                                .copy(userOverridden = true)
+                        } else {
+                            item
+                        }
+                    }
+                },
+            )
+        }
+    }
+
     fun deselectAllForSeason(season: Int) {
         updateSeasonSelection(season) { _, _ -> false }
     }
@@ -339,20 +470,79 @@ object BatchDownloadCoordinator {
             }
         }
 
+    private fun applyStreamListToEpisode(
+        metaId: String,
+        season: Int,
+        episode: MetaVideo,
+        streams: List<StreamItem>,
+        preferredResolution: DownloadPreferredResolution,
+        isFinal: Boolean,
+    ) {
+        val presentedStreams = StreamBadgePresentation.applyToStreams(
+            streams,
+            StreamBadgeSettingsRepository.snapshot(),
+        )
+        val currentPlan = _activePlan.value
+        val activeFilter = currentPlan?.sourceFilter ?: BatchSourceFilter.All
+        val activeQuery = currentPlan?.searchQuery.orEmpty()
+        val filteredStreams = presentedStreams.filter {
+            it.matchesBatchSourceFilter(activeFilter) && it.matchesBatchSearchQuery(activeQuery)
+        }
+        val selection = StreamSourcePrefillSelector.selectForBatch(filteredStreams, preferredResolution)
+
+        updateEpisode(metaId, season, episode) { item ->
+            when {
+                item.status == EpisodePlanStatus.AlreadyDownloaded ||
+                    item.status == EpisodePlanStatus.AlreadyInProgress -> item
+                item.userOverridden && item.streamCandidate != null -> {
+                    item.copy(
+                        allAvailableStreams = presentedStreams,
+                        isScanningMore = !isFinal,
+                        status = EpisodePlanStatus.Ready,
+                    )
+                }
+                selection != null -> {
+                    item.withSelectedStream(selection.stream, selection.facts, selection.sizeBytes)
+                        .copy(
+                            allAvailableStreams = presentedStreams,
+                            isScanningMore = !isFinal,
+                        )
+                }
+                !isFinal -> {
+                    item.copy(
+                        allAvailableStreams = presentedStreams,
+                        isScanningMore = true,
+                    )
+                }
+                else -> {
+                    item.copy(
+                        streamCandidate = null,
+                        resolutionLabel = null,
+                        sizeBytes = null,
+                        allAvailableStreams = presentedStreams,
+                        isScanningMore = false,
+                        status = EpisodePlanStatus.NoSourceFound,
+                    )
+                }
+            }
+        }
+    }
+
     private fun launchSourceLoading(
         plan: BatchDownloadPlan,
         parentJob: Job,
         season: Int,
         episodesToLoad: List<MetaVideo>,
     ) {
-        scope.launch(parentJob) {
+        activeScanJob?.cancel()
+        activeScanJob = scope.launch(parentJob) {
             val preferredResolution = DownloadsSettingsRepository.preferredResolution.value
             episodesToLoad.map { episode ->
                 launch(Dispatchers.Default) {
                     sourceLoadPermits.withPermit {
                         try {
                             val target = plan.meta.batchTargetFor(episode, season)
-                            val streams = runCatchingUnlessCancelled {
+                            val finalStreams = runCatchingUnlessCancelled {
                                 StreamSourceLoader.loadStreams(
                                     type = plan.meta.type,
                                     videoId = target.streamVideoId,
@@ -360,22 +550,36 @@ object BatchDownloadCoordinator {
                                     episode = target.episode,
                                     embeddedStreams = plan.meta.findEmbeddedStreams(target.streamVideoId),
                                     timeoutMs = SOURCE_LOAD_TIMEOUT_MS,
+                                    meta = plan.meta,
+                                    onProgress = { partialStreams ->
+                                        if (partialStreams.isNotEmpty()) {
+                                            applyStreamListToEpisode(
+                                                metaId = plan.meta.id,
+                                                season = season,
+                                                episode = episode,
+                                                streams = partialStreams,
+                                                preferredResolution = preferredResolution,
+                                                isFinal = false,
+                                            )
+                                        }
+                                    },
                                 )
                             }.getOrElse { emptyList() }
-                            val selection = StreamSourcePrefillSelector.selectForBatch(streams, preferredResolution)
-
-                            updateEpisode(plan.meta.id, season, episode) { item ->
-                                if (item.status == EpisodePlanStatus.AlreadyDownloaded) item
-                                else if (selection == null) {
-                                    item.copy(allAvailableStreams = streams, status = EpisodePlanStatus.NoSourceFound)
-                                } else {
-                                    item.withSelectedStream(selection.stream, selection.facts, selection.sizeBytes)
-                                        .copy(allAvailableStreams = streams)
-                                }
-                            }
+                            applyStreamListToEpisode(
+                                metaId = plan.meta.id,
+                                season = season,
+                                episode = episode,
+                                streams = finalStreams,
+                                preferredResolution = preferredResolution,
+                                isFinal = true,
+                            )
                         } finally {
                             updateEpisode(plan.meta.id, season, episode) { item ->
-                                if (item.status == EpisodePlanStatus.Loading) item.copy(status = EpisodePlanStatus.NoSourceFound) else item
+                                if (item.status == EpisodePlanStatus.Loading) {
+                                    item.copy(status = EpisodePlanStatus.NoSourceFound, isScanningMore = false)
+                                } else {
+                                    item.copy(isScanningMore = false)
+                                }
                             }
                         }
                     }
@@ -387,11 +591,59 @@ object BatchDownloadCoordinator {
         }
     }
 
+    private fun applyFilterAndQuery(filter: BatchSourceFilter, query: String) {
+        val preferredResolution = DownloadsSettingsRepository.preferredResolution.value
+        _activePlan.update { current ->
+            if (current == null || (current.sourceFilter == filter && current.searchQuery == query)) {
+                return@update current
+            }
+            val updatedPlans = current.seasonPlans.mapValues { (_, seasonPlan) ->
+                seasonPlan.copy(
+                    episodes = seasonPlan.episodes.map { item ->
+                        if (item.status == EpisodePlanStatus.AlreadyDownloaded ||
+                            item.status == EpisodePlanStatus.AlreadyInProgress ||
+                            (item.status == EpisodePlanStatus.Loading && item.allAvailableStreams.isEmpty())
+                        ) {
+                            item
+                        } else {
+                            val filtered = item.allAvailableStreams.filter {
+                                it.matchesBatchSourceFilter(filter) && it.matchesBatchSearchQuery(query)
+                            }
+                            val selection = StreamSourcePrefillSelector.selectForBatch(filtered, preferredResolution)
+                            if (selection == null) {
+                                item.copy(
+                                    streamCandidate = null,
+                                    resolutionLabel = null,
+                                    sizeBytes = null,
+                                    status = EpisodePlanStatus.NoSourceFound,
+                                )
+                            } else {
+                                item.withSelectedStream(selection.stream, selection.facts, selection.sizeBytes)
+                            }
+                        }
+                    },
+                )
+            }
+            current.copy(sourceFilter = filter, searchQuery = query, seasonPlans = updatedPlans)
+        }
+    }
+
+    fun setSourceFilter(filter: BatchSourceFilter) {
+        val currentQuery = _activePlan.value?.searchQuery.orEmpty()
+        applyFilterAndQuery(filter, currentQuery)
+    }
+
+    fun setSearchQuery(query: String) {
+        val currentFilter = _activePlan.value?.sourceFilter ?: BatchSourceFilter.All
+        applyFilterAndQuery(currentFilter, query)
+    }
+
     fun overrideEpisodeStream(season: Int, episode: MetaVideo, stream: StreamItem) {
         val plan = _activePlan.value ?: return
         val facts = DebridStreamMetadata.facts(stream, DebridStreamPreferences())
         updateEpisode(plan.meta.id, season, episode) {
             it.withSelectedStream(stream, facts, StreamSourcePrefillSelector.sizeBytes(stream))
+                .copy(userOverridden = true)
         }
     }
 
@@ -464,6 +716,8 @@ object BatchDownloadCoordinator {
     }
 
     fun closePlan() {
+        activeScanJob?.cancel()
+        activeScanJob = null
         planJob?.cancel()
         planJob = null
         _activePlan.value = null
