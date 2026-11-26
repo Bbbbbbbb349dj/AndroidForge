@@ -29,6 +29,11 @@ on:
         required: true
         type: string
         default: "nuvio-enhanced-v1.21-apk"
+      fresh_install_apk:
+        description: "Publish a separately labelled fresh-install APK even when its signer differs from v1.20 (not an in-place upgrade)"
+        required: false
+        type: boolean
+        default: false
       export_source_only:
         description: "Export sanitized Nuvio Enhanced v1.21 source archive without compiling APK"
         required: false
@@ -448,6 +453,7 @@ jobs:
       - name: Collect & verify signed v1.21 APK (V1+V2+V3 + Package Identity)
         id: collect
         env:
+          FRESH_INSTALL_APK: ${{ inputs.fresh_install_apk || false }}
           PROJECT_ROOT: ${{ steps.source.outputs.project_root }}
         run: |
           python3 - <<'PY'
@@ -468,7 +474,11 @@ jobs:
           if not apks:
               raise SystemExit("::error::No APK found under androidApp/build/outputs/apk")
 
-          final_name = "Nuvio-Enhanced-v1.21-full-arm64-v8a-release.apk"
+          final_name = (
+              "Nuvio-Enhanced-v1.21-full-arm64-v8a-fresh-install.apk"
+              if os.environ.get("FRESH_INSTALL_APK") == "true"
+              else "Nuvio-Enhanced-v1.21-full-arm64-v8a-release.apk"
+          )
           final_apk = out_dir / final_name
           shutil.copy2(apks[0], final_apk)
           print(f"Collected APK: {final_apk} ({final_apk.stat().st_size:,} bytes)")
@@ -529,6 +539,7 @@ jobs:
           PY
 
       - name: Verify signing continuity with installed v1.20 app
+        continue-on-error: ${{ inputs.fresh_install_apk == true }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_APK: ${{ steps.collect.outputs.apk_path }}
@@ -559,6 +570,7 @@ jobs:
           APK_NAME: ${{ steps.collect.outputs.apk_name }}
           CERT_SHA256: ${{ steps.collect.outputs.cert_sha256 }}
           CERT_DN: ${{ steps.collect.outputs.cert_dn }}
+          FRESH_INSTALL_APK: ${{ inputs.fresh_install_apk || false }}
           OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.21-apk' }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
@@ -581,6 +593,11 @@ jobs:
           cert_sha256 = os.environ.get("CERT_SHA256", "")
           cert_dn = os.environ.get("CERT_DN", "")
           out_tag = os.environ["OUT_TAG"]
+          fresh_install = os.environ.get("FRESH_INSTALL_APK") == "true"
+          if fresh_install:
+              # Never replace the normal upgrade release or make this the updater's latest release.
+              out_tag = "nuvio-enhanced-v1.21-fresh-install"
+          release_name = "Nuvio Enhanced v1.21 — Fresh-install APK (not a v1.20 upgrade)" if fresh_install else "Nuvio Enhanced v1.21 APK"
           run_id = os.environ["RUN_ID"]
 
           apk_bytes = apk_path.read_bytes()
@@ -616,6 +633,13 @@ jobs:
               f"- **Workflow Run**: `{run_id}`\n"
           )
 
+          if fresh_install:
+              release_body = (
+                  "> **FRESH-INSTALL BUILD — NOT AN IN-PLACE UPDATE.** This APK uses a different signing "
+                  "certificate from v1.20 and cannot be installed over it. Keep your existing app and data; "
+                  "do not uninstall it to bypass the mismatch. Use a separate device/user profile without "
+                  "the existing app if you want to test this APK.\n\n"
+              ) + release_body
           release_body += "\n" + Path("docs/releases/1.21.md").read_text(encoding="utf-8")
 
           try:
@@ -625,10 +649,11 @@ jobs:
                   f"https://api.github.com/repos/{repo}/releases/{rel_id}",
                   method="PATCH",
                   data=json.dumps({
-                      "name": "Nuvio Enhanced v1.21 APK",
+                      "name": release_name,
                       "body": release_body,
                       "draft": False,
-                      "prerelease": False,
+                      "prerelease": fresh_install,
+                      "make_latest": "false" if fresh_install else "true",
                   }).encode("utf-8"),
               )
           except urllib.error.HTTPError as e:
@@ -639,11 +664,12 @@ jobs:
                   method="POST",
                   data=json.dumps({
                       "tag_name": out_tag,
-                      "target_commitish": "main",
-                      "name": "Nuvio Enhanced v1.21 APK",
+                      "target_commitish": os.environ["HEAD_SHA"],
+                      "name": release_name,
                       "body": release_body,
                       "draft": False,
-                      "prerelease": False,
+                      "prerelease": fresh_install,
+                      "make_latest": "false" if fresh_install else "true",
                   }).encode("utf-8"),
               )
               rel_id = rel["id"]
