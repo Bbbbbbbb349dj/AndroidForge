@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   install-published-apk:
@@ -52,6 +53,32 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash scripts/verify_android_install.sh
+      - name: Publish public installation result as a check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root = Path('install-diagnostics')
+          result = root / 'install-result.txt'
+          text = result.read_text() if result.exists() else 'Installation did not run; inspect earlier job steps.'
+          props = root / 'emulator-properties.txt'
+          if props.exists():
+              text += '\n\n' + '\n'.join(line for line in props.read_text().splitlines()
+                                           if any(key in line for key in ('cpu.abi', 'version.sdk', 'native.bridge')))
+          logcat = root / 'package-manager-logcat.txt'
+          if logcat.exists():
+              text += '\n\n' + '\n'.join(line for line in logcat.read_text().splitlines()
+                                           if any(key in line.lower() for key in ('failed', 'invalid', 'parse', 'install_failed')))[-40000:]
+          payload = {'name': 'android16-install-result', 'head_sha': os.environ['HEAD_SHA'],
+                     'status': 'completed', 'conclusion': 'success' if 'Success' in text[:1000] else 'failure',
+                     'output': {'title': 'Published APK: Android 16 install result', 'summary': text[:60000]}}
+          subprocess.run(['gh', 'api', '--method', 'POST', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/check-runs', '--input', '-'],
+                         input=json.dumps(payload), text=True, check=True)
+          PY
       - name: Preserve public APK installation diagnostics
         if: always()
         uses: actions/upload-artifact@v4
