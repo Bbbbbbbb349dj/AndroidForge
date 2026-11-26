@@ -1105,7 +1105,7 @@ index 4f3c234..e8535a4 100644
  
  enum class AndroidLibmpvVideoOutput(
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
-index 13c6d6c..e4cda60 100644
+index 13c6d6c..a4d037a 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
 @@ -79,6 +79,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
@@ -1134,7 +1134,7 @@ index 13c6d6c..e4cda60 100644
 -            modifier = Modifier
 -                .align(Alignment.BottomEnd)
 -                .padding(end = stackEnd, bottom = cardBottom),
-+            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = sliderEdgePadding, bottom = cardBottom),
++            modifier = Modifier.align(Alignment.BottomCenter).padding(start = sliderEdgePadding, end = sliderEdgePadding, bottom = cardBottom),
          )
      }
  

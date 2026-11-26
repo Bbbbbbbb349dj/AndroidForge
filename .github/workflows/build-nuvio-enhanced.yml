@@ -517,6 +517,8 @@ jobs:
 
           sys.path.insert(0, str(workspace / "scripts"))
           from verify_apk_signer import certificate_fingerprints
+          from verify_vlc_native import verify_apk
+          verify_apk(str(final_apk))
           cert_sha256 = ",".join(sorted(certificate_fingerprints(sign_out)))
           cert_dn = next((line.split("certificate DN:", 1)[1].strip()
                           for line in sign_out.splitlines() if "certificate DN:" in line), "")
