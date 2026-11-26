@@ -543,7 +543,7 @@ index 45ad9d1..9edde54 100644
 +    val tint: Color? = null,
  )
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
-index de7057e..45a2628 100644
+index de7057e..71175e1 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
 @@ -197,34 +197,10 @@ internal fun PlayerControlsShell(
@@ -807,7 +807,21 @@ index de7057e..45a2628 100644
                  modifier = Modifier.size(metrics.playIconSize),
              )
          }
-@@ -1345,9 +1326,9 @@ private fun PlayerProgressTrack(
+@@ -1308,9 +1289,11 @@ internal fun playerBufferedFraction(bufferedPositionMs: Long, durationMs: Long):
+         0f
+     }
+ 
+-internal val PlayerBaseTrackColor = Color.White.copy(alpha = 0.20f)
++internal val PlayerBaseTrackColor: Color
++    @Composable get() = playerControlForeground.copy(alpha = 0.20f)
+ 
+-internal val PlayerBufferedTrackColor = Color.White.copy(alpha = 0.40f)
++internal val PlayerBufferedTrackColor: Color
++    @Composable get() = playerControlForeground.copy(alpha = 0.40f)
+ 
+ @Composable
+ private fun PlayerBufferedTrack(bufferedFraction: Float, enabled: Boolean = true) {
+@@ -1345,9 +1328,9 @@ private fun PlayerProgressTrack(
          disabledInactiveTrackColor = PlayerBaseTrackColor,
      )
      val activeTrackColors = SliderDefaults.colors(
@@ -819,7 +833,7 @@ index de7057e..45a2628 100644
          disabledInactiveTrackColor = Color.Transparent,
      )
  
-@@ -1394,12 +1375,12 @@ internal fun LockedPlayerOverlay(
+@@ -1394,12 +1377,12 @@ internal fun LockedPlayerOverlay(
  ) {
      val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
      val sliderColors = SliderDefaults.colors(
@@ -838,7 +852,7 @@ index de7057e..45a2628 100644
      )
  
      Box(modifier = modifier.fillMaxSize()) {
-@@ -1440,7 +1421,7 @@ internal fun LockedPlayerOverlay(
+@@ -1440,7 +1423,7 @@ internal fun LockedPlayerOverlay(
                  Icon(
                      imageVector = Icons.Rounded.Lock,
                      contentDescription = stringResource(Res.string.compose_player_unlock_controls),
@@ -847,7 +861,7 @@ index de7057e..45a2628 100644
                      modifier = Modifier.size(34.dp),
                  )
              }
-@@ -1448,7 +1429,7 @@ internal fun LockedPlayerOverlay(
+@@ -1448,7 +1431,7 @@ internal fun LockedPlayerOverlay(
              Text(
                  text = stringResource(Res.string.compose_player_tap_to_unlock),
                  style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontWeight = FontWeight.SemiBold),
@@ -856,7 +870,7 @@ index de7057e..45a2628 100644
              )
          }
  
-@@ -1496,7 +1477,7 @@ internal fun LockedPlayerOverlay(
+@@ -1496,7 +1479,7 @@ internal fun LockedPlayerOverlay(
                                  sliderState = sliderState,
                                  enabled = false,
                                  colors = SliderDefaults.colors(
@@ -865,7 +879,7 @@ index de7057e..45a2628 100644
                                      disabledInactiveTrackColor = Color.Transparent,
                                  ),
                              )
-@@ -1525,7 +1506,7 @@ internal fun LockedPlayerOverlay(
+@@ -1525,7 +1508,7 @@ internal fun LockedPlayerOverlay(
                  Text(
                      text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
                      style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
@@ -874,7 +888,7 @@ index de7057e..45a2628 100644
                      modifier = Modifier.align(Alignment.End),
                  )
              }
-@@ -1559,7 +1540,7 @@ private fun TimePill(
+@@ -1559,7 +1542,7 @@ private fun TimePill(
                  lineHeight = fontSize * 1.25f,
                  fontWeight = FontWeight.Medium,
              ),
@@ -883,7 +897,7 @@ index de7057e..45a2628 100644
          )
      }
  }
-@@ -1570,7 +1551,7 @@ private fun PlayerActionPillButton(
+@@ -1570,7 +1553,7 @@ private fun PlayerActionPillButton(
      onClick: () -> Unit,
      icon: ImageVector? = null,
      painter: Painter? = null,
@@ -892,7 +906,7 @@ index de7057e..45a2628 100644
  ) {
      Row(
          modifier = Modifier
-@@ -1620,7 +1601,7 @@ private fun PlayerDeviceStatusOverlay(
+@@ -1620,7 +1603,7 @@ private fun PlayerDeviceStatusOverlay(
          modifier = modifier,
          shape = RoundedCornerShape(999.dp),
          color = Color.Black.copy(alpha = 0.42f),
@@ -901,7 +915,7 @@ index de7057e..45a2628 100644
          tonalElevation = 0.dp,
          shadowElevation = 0.dp,
      ) {
-@@ -1651,7 +1632,7 @@ private fun PlayerDeviceStatusOverlay(
+@@ -1651,7 +1634,7 @@ private fun PlayerDeviceStatusOverlay(
                      lineHeight = 12.sp,
                      fontWeight = FontWeight.SemiBold,
                  ),
@@ -910,7 +924,7 @@ index de7057e..45a2628 100644
                  maxLines = 1,
              )
              PlayerBatteryStatusItem(
-@@ -1721,7 +1702,7 @@ private fun PlayerDeviceStatusItem(
+@@ -1721,7 +1704,7 @@ private fun PlayerDeviceStatusItem(
          Icon(
              imageVector = icon,
              contentDescription = null,
@@ -919,7 +933,7 @@ index de7057e..45a2628 100644
              modifier = Modifier.size(11.dp),
          )
          Text(
-@@ -1731,7 +1712,7 @@ private fun PlayerDeviceStatusItem(
+@@ -1731,7 +1714,7 @@ private fun PlayerDeviceStatusItem(
                  lineHeight = 12.sp,
                  fontWeight = FontWeight.SemiBold,
              ),
@@ -928,7 +942,7 @@ index de7057e..45a2628 100644
              maxLines = 1,
          )
      }
-@@ -1760,7 +1741,7 @@ private fun PlayerBatteryStatusItem(
+@@ -1760,7 +1743,7 @@ private fun PlayerBatteryStatusItem(
                  lineHeight = 12.sp,
                  fontWeight = FontWeight.SemiBold,
              ),
@@ -937,7 +951,7 @@ index de7057e..45a2628 100644
              maxLines = 1,
          )
      }
-@@ -1777,9 +1758,9 @@ private fun PlayerBatteryGlyph(
+@@ -1777,9 +1760,9 @@ private fun PlayerBatteryGlyph(
      val activeColor = if (charging) {
          Color(0xFF8CFFB3)
      } else {
@@ -950,7 +964,7 @@ index de7057e..45a2628 100644
      val bodyHeight = 7.dp
      val capWidth = 1.2.dp
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
-index abcb927..e2f0e6f 100644
+index abcb927..f11d40a 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
 @@ -1,23 +1,34 @@
@@ -991,7 +1005,7 @@ index abcb927..e2f0e6f 100644
  @Composable
  internal fun PlayerFeatureActions(
      nightModeVisible: Boolean,
-@@ -28,41 +39,29 @@ internal fun PlayerFeatureActions(
+@@ -28,41 +39,35 @@ internal fun PlayerFeatureActions(
      recommendationsVisible: Boolean,
      onRecommendations: () -> Unit,
  ) {
@@ -1034,6 +1048,11 @@ index abcb927..e2f0e6f 100644
 +        if (nightModeVisible) {
 +            FilterChip(
 +                selected = nightModeEnabled, enabled = nightModeSupported,
++                colors = FilterChipDefaults.filterChipColors(
++                    labelColor = playerControlForeground, iconColor = playerControlForeground,
++                    disabledLabelColor = playerControlForeground.copy(alpha = 0.38f),
++                    disabledLeadingIconColor = playerControlForeground.copy(alpha = 0.38f),
++                ),
 +                onClick = onNightModeToggle,
 +                label = { Text(if (nightModeSupported) "Night mode" else "Night mode unavailable") },
 +                leadingIcon = { Icon(Icons.Rounded.NightsStay, null, Modifier.size(18.dp)) },
@@ -1041,6 +1060,7 @@ index abcb927..e2f0e6f 100644
          }
 +        if (recommendationsVisible) AssistChip(
 +            onClick = onRecommendations,
++            colors = AssistChipDefaults.assistChipColors(labelColor = playerControlForeground, leadingIconContentColor = playerControlForeground),
 +            label = { Text(stringResource(Res.string.v121_recommendations)) },
 +            leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp)) },
 +        )
@@ -1052,7 +1072,7 @@ index abcb927..e2f0e6f 100644
  @Composable
  internal fun PlayerRecommendationsDialog(
      visible: Boolean,
-@@ -71,24 +70,67 @@ internal fun PlayerRecommendationsDialog(
+@@ -71,24 +76,67 @@ internal fun PlayerRecommendationsDialog(
      onDismiss: () -> Unit,
  ) {
      if (!visible) return
@@ -1137,7 +1157,7 @@ index abcb927..e2f0e6f 100644
 +    }
  }
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
-index da56e45..517c47d 100644
+index da56e45..84c116c 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
 @@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateOf
@@ -1176,8 +1196,8 @@ index da56e45..517c47d 100644
 +    }
 +    // A static tint is deliberate: no blur/refraction or decoded-frame readback in controls.
 +    if (isControl) return clip(shape)
-+        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
-+        .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
++        .background(PlayerGlassTint.copy(alpha = 0.82f))
++        .border(0.75.dp, Color.White.copy(alpha = 0.18f), shape)
      val glass = clip(shape).ambientLiquidGlass(
          shape = shape,
          tint = tint,
@@ -1323,7 +1343,7 @@ index 250da7b..200f13d 100644
              movieRecommendationDismissedStage = PlayerNextEpisodeRules.movieRecommendationStage(
                  positionMs = playbackSnapshot.positionMs,
 diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
-index deeda6f..db57536 100644
+index deeda6f..2eb0a15 100644
 --- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
 +++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
 @@ -113,7 +113,7 @@ internal fun PlayerTimelineDetails(
@@ -1374,7 +1394,32 @@ index deeda6f..db57536 100644
                  maxLines = 1,
                  overflow = TextOverflow.Ellipsis,
              )
-@@ -312,7 +312,7 @@ internal fun PlayerChapterTitle(
+@@ -196,6 +196,8 @@ internal fun PlayerTimeline(
+     onTouchChange: (Boolean) -> Unit = {},
+     chapters: List<PlayerChapter> = emptyList(),
+ ) {
++    val baseTrackColor = PlayerBaseTrackColor
++    val bufferedTrackColor = PlayerBufferedTrackColor
+     val durationMs = snapshot.durationMs.coerceAtLeast(0L)
+     val rangeEnd = durationMs.coerceAtLeast(1L).toFloat()
+     val bufferedFraction = playerBufferedFraction(snapshot.bufferedPositionMs, durationMs)
+@@ -246,13 +248,13 @@ internal fun PlayerTimeline(
+                                 val trackOrigin = Offset(0f, 35.dp.toPx() - trackHeight / 2)
+                                 val radius = CornerRadius(trackHeight / 2)
+                                 drawRoundRect(
+-                                    color = PlayerBaseTrackColor,
++                                    color = baseTrackColor,
+                                     topLeft = trackOrigin,
+                                     size = Size(size.width, trackHeight),
+                                     cornerRadius = radius,
+                                 )
+                                 drawRoundRect(
+-                                    color = PlayerBufferedTrackColor,
++                                    color = bufferedTrackColor,
+                                     topLeft = trackOrigin,
+                                     size = Size(size.width * bufferedFraction, trackHeight),
+                                     cornerRadius = radius,
+@@ -312,7 +314,7 @@ internal fun PlayerChapterTitle(
      Text(
          text = title,
          style = MaterialTheme.nuvioTypeScale.bodyMd,

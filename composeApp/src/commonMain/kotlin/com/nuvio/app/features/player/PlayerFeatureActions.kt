@@ -47,6 +47,11 @@ internal fun PlayerFeatureActions(
         if (nightModeVisible) {
             FilterChip(
                 selected = nightModeEnabled, enabled = nightModeSupported,
+                colors = FilterChipDefaults.filterChipColors(
+                    labelColor = playerControlForeground, iconColor = playerControlForeground,
+                    disabledLabelColor = playerControlForeground.copy(alpha = 0.38f),
+                    disabledLeadingIconColor = playerControlForeground.copy(alpha = 0.38f),
+                ),
                 onClick = onNightModeToggle,
                 label = { Text(if (nightModeSupported) "Night mode" else "Night mode unavailable") },
                 leadingIcon = { Icon(Icons.Rounded.NightsStay, null, Modifier.size(18.dp)) },
@@ -54,6 +59,7 @@ internal fun PlayerFeatureActions(
         }
         if (recommendationsVisible) AssistChip(
             onClick = onRecommendations,
+            colors = AssistChipDefaults.assistChipColors(labelColor = playerControlForeground, leadingIconContentColor = playerControlForeground),
             label = { Text(stringResource(Res.string.v121_recommendations)) },
             leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp)) },
         )

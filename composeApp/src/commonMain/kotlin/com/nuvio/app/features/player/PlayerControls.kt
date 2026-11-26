@@ -1289,9 +1289,11 @@ internal fun playerBufferedFraction(bufferedPositionMs: Long, durationMs: Long):
         0f
     }
 
-internal val PlayerBaseTrackColor = Color.White.copy(alpha = 0.20f)
+internal val PlayerBaseTrackColor: Color
+    @Composable get() = playerControlForeground.copy(alpha = 0.20f)
 
-internal val PlayerBufferedTrackColor = Color.White.copy(alpha = 0.40f)
+internal val PlayerBufferedTrackColor: Color
+    @Composable get() = playerControlForeground.copy(alpha = 0.40f)
 
 @Composable
 private fun PlayerBufferedTrack(bufferedFraction: Float, enabled: Boolean = true) {

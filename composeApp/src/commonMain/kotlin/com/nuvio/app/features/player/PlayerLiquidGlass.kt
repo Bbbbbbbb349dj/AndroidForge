@@ -95,8 +95,8 @@ internal fun Modifier.playerLiquidGlass(
     }
     // A static tint is deliberate: no blur/refraction or decoded-frame readback in controls.
     if (isControl) return clip(shape)
-        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
-        .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
+        .background(PlayerGlassTint.copy(alpha = 0.82f))
+        .border(0.75.dp, Color.White.copy(alpha = 0.18f), shape)
     val glass = clip(shape).ambientLiquidGlass(
         shape = shape,
         tint = tint,

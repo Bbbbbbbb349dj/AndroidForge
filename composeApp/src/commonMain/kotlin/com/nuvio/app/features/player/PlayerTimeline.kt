@@ -196,6 +196,8 @@ internal fun PlayerTimeline(
     onTouchChange: (Boolean) -> Unit = {},
     chapters: List<PlayerChapter> = emptyList(),
 ) {
+    val baseTrackColor = PlayerBaseTrackColor
+    val bufferedTrackColor = PlayerBufferedTrackColor
     val durationMs = snapshot.durationMs.coerceAtLeast(0L)
     val rangeEnd = durationMs.coerceAtLeast(1L).toFloat()
     val bufferedFraction = playerBufferedFraction(snapshot.bufferedPositionMs, durationMs)
@@ -246,13 +248,13 @@ internal fun PlayerTimeline(
                                 val trackOrigin = Offset(0f, 35.dp.toPx() - trackHeight / 2)
                                 val radius = CornerRadius(trackHeight / 2)
                                 drawRoundRect(
-                                    color = PlayerBaseTrackColor,
+                                    color = baseTrackColor,
                                     topLeft = trackOrigin,
                                     size = Size(size.width, trackHeight),
                                     cornerRadius = radius,
                                 )
                                 drawRoundRect(
-                                    color = PlayerBufferedTrackColor,
+                                    color = bufferedTrackColor,
                                     topLeft = trackOrigin,
                                     size = Size(size.width * bufferedFraction, trackHeight),
                                     cornerRadius = radius,
