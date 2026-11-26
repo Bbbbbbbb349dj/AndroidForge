@@ -79,6 +79,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     movieRecommendationStage: Int = 0,
     onOpenMovieRecommendation: (MetaPreview) -> Unit = {},
     onDismissMovieRecommendations: () -> Unit = {},
+    onBrowseMovieRecommendations: () -> Unit = {},
     sourceFallbackStatus: String? = null,
     subtitleDelayMs: Int = 0,
     playerStatusOverlayEnabled: Boolean = false,
@@ -166,17 +167,11 @@ internal fun BoxScope.PlayerPlaybackOverlays(
         )
     }
 
-    if (!isSeries && !playerControlsLocked) {
-        MovieRecommendationCard(
-            recommendations = movieRecommendations,
-            stage = movieRecommendationStage,
-            dismissed = !showMovieRecommendationCard,
-            controlsVisible = controlsVisible,
-            onOpen = onOpenMovieRecommendation,
+    if (!isSeries && !playerControlsLocked && showMovieRecommendationCard && movieRecommendationStage > 0 && movieRecommendations.isNotEmpty()) {
+        PlayerRecommendationsPrompt(
+            onBrowse = onBrowseMovieRecommendations,
             onDismiss = onDismissMovieRecommendations,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = stackEnd, bottom = cardBottom),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = sliderEdgePadding, bottom = cardBottom),
         )
     }
 

@@ -3878,9 +3878,12 @@ def prepare_nuvio_source(
     # Applied outside the older marker block so an already-prepared v1.20 tree upgrades too.
     from nuvio_v121_patch import apply_v121_patch
     from nuvio_v122_patch import apply_v122_patch, v122_is_applied
-    if not v122_is_applied(root):
-        patched_files.extend(apply_v121_patch(root))
-        patched_files.extend(apply_v122_patch(root))
+    from nuvio_v123_patch import apply_v123_patch, v123_is_applied
+    if not v123_is_applied(root):
+        if not v122_is_applied(root):
+            patched_files.extend(apply_v121_patch(root))
+            patched_files.extend(apply_v122_patch(root))
+        patched_files.extend(apply_v123_patch(root))
 
     # Guard against `*/bin/*` archive exclusions breaking Cargo manifest checks
     thumbs_cargo = root / "native" / "thumbs" / "Cargo.toml"

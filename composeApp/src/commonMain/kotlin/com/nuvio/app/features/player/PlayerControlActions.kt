@@ -119,7 +119,7 @@ internal fun PlayerToolbar(
             modifier = Modifier.playerLiquidGlass(CircleShape, refractionHeight = 8.dp, refractionAmount = 12.dp),
             shape = CircleShape,
             containerColor = Color.Transparent,
-            contentColor = Color.White,
+            contentColor = playerControlForeground,
             buttonSize = 48.dp,
             iconSize = 24.dp,
             contentDescription = stringResource(Res.string.compose_player_close),
@@ -189,7 +189,7 @@ internal fun PlayerControlActions(
             PlayerToolbarButton.WATCH_PARTY to PlayerControlAction(
                 stringResource(Res.string.party_title), it,
                 icon = Icons.Rounded.Groups,
-                tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
+                tint = if (partyActive) MaterialTheme.colorScheme.primary else playerControlForeground,
             )
         },
         onPictureInPictureClick?.takeIf { !enhancedSettings.hidePlayerPip }?.let {
@@ -255,7 +255,7 @@ internal fun PlayerControlActions(
                 if (randomNextEpisodeMode) stringResource(Res.string.player_random_next_enabled)
                 else stringResource(Res.string.player_random_next_disabled), it,
                 icon = Icons.Rounded.Shuffle,
-                tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else Color.White,
+                tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else playerControlForeground,
             )
         },
         onOrientationToggleClick?.takeIf { !enhancedSettings.hidePlayerOrientation }?.let {
@@ -357,7 +357,7 @@ internal fun PlayerControlActions(
                                 icon = action.icon,
                                 painter = action.painter,
                                 iconSize = action.iconSize,
-                                tint = action.tint,
+                                tint = action.tint ?: playerControlForeground,
                             )
                             action.popup?.invoke()
                         }
@@ -401,7 +401,7 @@ internal fun PlayerControlActions(
                 Text(
                     text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
                     style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = playerControlForeground.copy(alpha = 0.9f),
                     maxLines = 1,
                 )
             }
@@ -416,7 +416,7 @@ private fun PlayerAction(
     icon: ImageVector? = null,
     painter: Painter? = null,
     iconSize: Dp = 24.dp,
-    tint: Color = Color.White,
+    tint: Color = playerControlForeground,
 ) {
     IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
         if (painter != null) {
@@ -520,5 +520,5 @@ internal data class PlayerControlAction(
     val painter: Painter? = null,
     val iconSize: Dp = 24.dp,
     val popup: (@Composable () -> Unit)? = null,
-    val tint: Color = Color.White,
+    val tint: Color? = null,
 )

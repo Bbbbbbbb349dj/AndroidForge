@@ -736,7 +736,7 @@ private fun PlaybackSettingsSection(
                         },
                     )
                 }
-                val showLibassSettings = !isIos && androidPlaybackEngine != AndroidPlaybackEngine.Libmpv
+                val showLibassSettings = !isIos && androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.ExoPlayer)
                 if (showLibassSettings) {
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsSwitchRow(
@@ -1001,8 +1001,8 @@ private fun PlaybackSettingsSection(
 
         if (!isIos) {
             val decoderEnabled = !autoPlayPlayerSettings.externalPlayerEnabled
-            val exoOptionsEnabled = decoderEnabled && androidPlaybackEngine != AndroidPlaybackEngine.Libmpv
-            val libmpvOptionsVisible = androidPlaybackEngine != AndroidPlaybackEngine.ExoPlayer
+            val exoOptionsEnabled = decoderEnabled && androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.ExoPlayer)
+            val libmpvOptionsVisible = androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.Libmpv)
             val libmpvOptionsEnabled = decoderEnabled && libmpvOptionsVisible
             SettingsSection(
                 title = stringResource(Res.string.settings_playback_section_decoder),
@@ -2189,6 +2189,7 @@ private fun PlaybackEngineDialog(
         AndroidPlaybackEngine.Auto to Res.string.settings_playback_engine_auto_description,
         AndroidPlaybackEngine.ExoPlayer to Res.string.settings_playback_engine_exoplayer_description,
         AndroidPlaybackEngine.Libmpv to Res.string.settings_playback_engine_libmpv_description,
+        AndroidPlaybackEngine.Vlc to Res.string.v123_vlc_description,
     )
 
     DialogSurface(

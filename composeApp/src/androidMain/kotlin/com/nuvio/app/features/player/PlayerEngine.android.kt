@@ -196,7 +196,15 @@ actual fun PlatformPlayerSurface(
         if (castBridge != null) castBridge::onLocalControllerReady else onControllerReady
     val surfaceOnSnapshot: (PlayerPlaybackSnapshot) -> Unit =
         if (castBridge != null) castBridge::onLocalSnapshot else onSnapshot
-    val requestedEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
+    val configuredEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
+    val vlcFallback = if (configuredEngine == AndroidPlaybackEngine.Vlc) vlcSourceFallbackReason(
+        sanitizePlaybackHeaders(sourceHeaders), sanitizePlaybackResponseHeaders(sourceResponseHeaders),
+        !sourceAudioUrl.isNullOrBlank(), useYoutubeChunkedPlayback,
+    ) else null
+    val requestedEngine = if (vlcFallback != null) AndroidPlaybackEngine.ExoPlayer else configuredEngine
+    LaunchedEffect(playerSourceKey, vlcFallback) {
+        vlcFallback?.let { com.nuvio.app.core.ui.NuvioToastController.show(it) }
+    }
     var activeEngine by remember(playerSourceKey, requestedEngine) {
         mutableStateOf(requestedEngine.initialAndroidEngine())
     }
@@ -240,6 +248,14 @@ actual fun PlatformPlayerSurface(
             onSnapshot = surfaceOnSnapshot,
             onError = surfaceOnError,
         )
+        ResolvedAndroidPlaybackEngine.Vlc -> VlcPlayerSurface(
+            sourceUrl = sourceUrl, sourceHeaders = sanitizePlaybackHeaders(sourceHeaders),
+            externalSubtitles = externalSubtitles, modifier = modifier,
+            playWhenReady = playWhenReady && castBridge?.isCasting != true,
+            initialPositionMs = initialPositionMs, initialPositionRequestKey = initialPositionRequestKey,
+            resizeMode = resizeMode, onInitialPositionHandled = onInitialPositionHandled,
+            onControllerReady = surfaceOnControllerReady, onSnapshot = surfaceOnSnapshot, onError = surfaceOnError,
+        )
         ResolvedAndroidPlaybackEngine.Libmpv -> {
             LaunchedEffect(initialPositionRequestKey) {
                 initialPositionRequestKey?.let { key ->
@@ -272,6 +288,7 @@ actual fun PlatformPlayerSurface(
 private enum class ResolvedAndroidPlaybackEngine {
     ExoPlayer,
     Libmpv,
+    Vlc,
 }
 
 private fun AndroidPlaybackEngine.initialAndroidEngine(): ResolvedAndroidPlaybackEngine =
@@ -279,6 +296,7 @@ private fun AndroidPlaybackEngine.initialAndroidEngine(): ResolvedAndroidPlaybac
         AndroidPlaybackEngine.Auto,
         AndroidPlaybackEngine.ExoPlayer -> ResolvedAndroidPlaybackEngine.ExoPlayer
         AndroidPlaybackEngine.Libmpv -> ResolvedAndroidPlaybackEngine.Libmpv
+        AndroidPlaybackEngine.Vlc -> ResolvedAndroidPlaybackEngine.Vlc
     }
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -1980,8 +1998,9 @@ private class NuvioLibmpvView(
         mpv.setOptionString("tls-verify", "yes")
         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
         mpv.setOptionString("demuxer-lavf-o", "protocol_whitelist=[file,crypto,data,http,https,tcp,tls]").logIfMpvError("demuxer-lavf-o")
-        // Keep read-ahead/rebuffer protection, but do not pause at open to fill the cache.
-        mpv.setOptionString("cache-pause-initial", "no").logIfMpvError("cache-pause-initial")
+        // Let MPV build a bounded initial cache instead of repeatedly starving the decoder.
+        mpv.setOptionString("cache-pause-initial", "yes").logIfMpvError("cache-pause-initial")
+        mpv.setOptionString("cache-pause-wait", "1").logIfMpvError("cache-pause-wait")
         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
         mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-back-bytes")
         mpv.setOptionString("vd-lavc-film-grain", "cpu")

@@ -507,7 +507,12 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
 }
 
 internal val AndroidPlaybackEngine.switchTarget: AndroidPlaybackEngine
-    get() = if (this == AndroidPlaybackEngine.Libmpv) AndroidPlaybackEngine.ExoPlayer else AndroidPlaybackEngine.Libmpv
+    get() = when (this) {
+        AndroidPlaybackEngine.Auto -> AndroidPlaybackEngine.ExoPlayer
+        AndroidPlaybackEngine.ExoPlayer -> AndroidPlaybackEngine.Libmpv
+        AndroidPlaybackEngine.Libmpv -> AndroidPlaybackEngine.Vlc
+        AndroidPlaybackEngine.Vlc -> AndroidPlaybackEngine.ExoPlayer
+    }
 
 internal fun PlayerScreenRuntime.switchPlaybackEngine() {
     val target = playerController?.playbackEngine?.switchTarget ?: return

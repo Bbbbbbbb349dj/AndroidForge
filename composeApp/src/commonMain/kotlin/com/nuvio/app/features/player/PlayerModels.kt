@@ -160,6 +160,7 @@ enum class AndroidPlaybackEngine(
     Auto("Auto"),
     ExoPlayer("ExoPlayer"),
     Libmpv("libmpv"),
+    Vlc("VLC (built-in)"),
 }
 
 enum class AndroidLibmpvVideoOutput(

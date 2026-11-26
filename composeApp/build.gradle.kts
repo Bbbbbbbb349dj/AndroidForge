@@ -492,6 +492,8 @@ kotlin {
                 implementation(libs.androidx.media3.container)
                 implementation(libs.androidx.media3.extractor)
                 implementation(libs.mpv.android.lib)
+                // Embedded VideoLAN engine: no external VLC application is required.
+                implementation("org.videolan.android:libvlc-all:3.7.8")
                 implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("lib-*.aar"))))
                 if (androidDistribution == "full") {
                     implementation(files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
@@ -569,12 +571,12 @@ kotlin {
         }
         // The pinned archive contains obsolete server tests that do not compile against
         // its own APIs. Keep the full suite available; opt into a focused release gate.
-        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122")) {
+        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122", "v123")) {
             named("commonTest") {
-                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/NuvioV119VerificationTest.kt")
+                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/*V123Test.kt", "**/NuvioV119VerificationTest.kt")
             }
             named("androidHostTest") {
-                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt")
+                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/*V123Test.kt")
             }
         }
         commonTest.dependencies {

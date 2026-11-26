@@ -1,0 +1,1437 @@
+diff --git a/androidApp/build.gradle.kts b/androidApp/build.gradle.kts
+index f5b32b6..f31e574 100644
+--- a/androidApp/build.gradle.kts
++++ b/androidApp/build.gradle.kts
+@@ -109,6 +109,13 @@ android {
+         jniLibs.directories.add("../composeApp/src/full/jniLibs")
+     }
+ 
++    if (providers.gradleProperty("nuvio.playerSmokeTest").orNull == "true") {
++        sourceSets.getByName("androidTest") {
++            java.setSrcDirs(listOf("src/v123AndroidTest/kotlin"))
++            assets.srcDir("../testFixtures")
++        }
++    }
++
+     packaging {
+         resources {
+             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+diff --git a/androidApp/src/debug/AndroidManifest.xml b/androidApp/src/debug/AndroidManifest.xml
+index d6c5cbc..35fd34c 100644
+--- a/androidApp/src/debug/AndroidManifest.xml
++++ b/androidApp/src/debug/AndroidManifest.xml
+@@ -1,6 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+     <application>
++        <activity android:name="androidx.activity.ComponentActivity" android:exported="true"
++            android:theme="@style/Theme.Nuvio" />
+         <activity
+             android:name="com.nuvio.android.BackgroundDownloadTestActivity"
+             android:exported="true"
+diff --git a/androidApp/src/v123AndroidTest/kotlin/com/nuvio/android/VlcPlaybackV123Test.kt b/androidApp/src/v123AndroidTest/kotlin/com/nuvio/android/VlcPlaybackV123Test.kt
+new file mode 100644
+index 0000000..16c1118
+--- /dev/null
++++ b/androidApp/src/v123AndroidTest/kotlin/com/nuvio/android/VlcPlaybackV123Test.kt
+@@ -0,0 +1,68 @@
++package com.nuvio.android
++
++import android.net.Uri
++import androidx.activity.ComponentActivity
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.test.junit4.createAndroidComposeRule
++import androidx.lifecycle.Lifecycle
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import androidx.test.platform.app.InstrumentationRegistry
++import com.nuvio.app.features.player.*
++import org.junit.Assert.*
++import org.junit.Rule
++import org.junit.Test
++import org.junit.runner.RunWith
++import java.io.File
++
++/** Real native decoder smoke test. Not a substitute for physical-device/network profiling. */
++@RunWith(AndroidJUnit4::class)
++class VlcPlaybackV123Test {
++    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
++
++    @Test fun embeddedVlcPlaysSeeksPausesAndRecreatesWithoutExternalApp() {
++        val instrumentation = InstrumentationRegistry.getInstrumentation()
++        val video = File(instrumentation.targetContext.cacheDir, "vlc-v123.mp4")
++        instrumentation.context.assets.open("subtitles/video.mp4").use { input -> video.outputStream().use(input::copyTo) }
++        val visible = mutableStateOf(true)
++        val play = mutableStateOf(true)
++        var controller: PlayerEngineController? = null
++        var snapshot = PlayerPlaybackSnapshot()
++        var error: String? = null
++        PlayerSettingsRepository.ensureLoaded()
++        try {
++            compose.setContent {
++                if (visible.value) PlatformPlayerSurface(
++                    sourceUrl = Uri.fromFile(video).toString(), modifier = Modifier.fillMaxSize(),
++                    playbackEngine = AndroidPlaybackEngine.Vlc, playWhenReady = play.value,
++                    onControllerReady = { controller = it }, onSnapshot = { snapshot = it }, onError = { error = it },
++                )
++            }
++            fun awaitPlayback() = compose.waitUntil(45_000) {
++                compose.runOnIdle { assertNull(error); snapshot.isPlaying && snapshot.positionMs > 500 && snapshot.videoWidth > 0 }
++            }
++            awaitPlayback()
++            compose.runOnIdle {
++                assertEquals(AndroidPlaybackEngine.Vlc, controller!!.playbackEngine)
++                assertFalse(controller!!.supportsNightMode)
++                controller!!.setPlaybackSpeed(1.25f)
++                controller!!.seekTo(4_000)
++            }
++            compose.waitUntil(15_000) { compose.runOnIdle { snapshot.positionMs >= 4_000 } }
++            compose.runOnIdle { play.value = false }
++            compose.waitUntil(10_000) { compose.runOnIdle { !snapshot.isPlaying } }
++            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
++            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
++            compose.runOnIdle { assertFalse(snapshot.isPlaying); play.value = true }
++            awaitPlayback()
++            compose.runOnIdle { visible.value = false }
++            compose.waitForIdle()
++            compose.runOnIdle { snapshot = PlayerPlaybackSnapshot(); controller = null; visible.value = true }
++            awaitPlayback()
++        } finally {
++            compose.runOnIdle { visible.value = false }
++            video.delete()
++        }
++    }
++}
+diff --git a/composeApp/build.gradle.kts b/composeApp/build.gradle.kts
+index 192d5c0..0e0d989 100644
+--- a/composeApp/build.gradle.kts
++++ b/composeApp/build.gradle.kts
+@@ -492,6 +492,8 @@ kotlin {
+                 implementation(libs.androidx.media3.container)
+                 implementation(libs.androidx.media3.extractor)
+                 implementation(libs.mpv.android.lib)
++                // Embedded VideoLAN engine: no external VLC application is required.
++                implementation("org.videolan.android:libvlc-all:3.7.8")
+                 implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("lib-*.aar"))))
+                 if (androidDistribution == "full") {
+                     implementation(files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
+@@ -569,12 +571,12 @@ kotlin {
+         }
+         // The pinned archive contains obsolete server tests that do not compile against
+         // its own APIs. Keep the full suite available; opt into a focused release gate.
+-        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122")) {
++        if (providers.gradleProperty("nuvio.testSuite").orNull in setOf("v121", "v122", "v123")) {
+             named("commonTest") {
+-                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/NuvioV119VerificationTest.kt")
++                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/*V123Test.kt", "**/NuvioV119VerificationTest.kt")
+             }
+             named("androidHostTest") {
+-                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt")
++                kotlin.include("**/*V121Test.kt", "**/*V122Test.kt", "**/*V123Test.kt")
+             }
+         }
+         commonTest.dependencies {
+diff --git a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt
+index 5be72d0..7a93f7d 100644
+--- a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt
++++ b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/PlayerEngine.android.kt
+@@ -196,7 +196,15 @@ actual fun PlatformPlayerSurface(
+         if (castBridge != null) castBridge::onLocalControllerReady else onControllerReady
+     val surfaceOnSnapshot: (PlayerPlaybackSnapshot) -> Unit =
+         if (castBridge != null) castBridge::onLocalSnapshot else onSnapshot
+-    val requestedEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
++    val configuredEngine = playbackEngine ?: playerSettings.androidPlaybackEngine
++    val vlcFallback = if (configuredEngine == AndroidPlaybackEngine.Vlc) vlcSourceFallbackReason(
++        sanitizePlaybackHeaders(sourceHeaders), sanitizePlaybackResponseHeaders(sourceResponseHeaders),
++        !sourceAudioUrl.isNullOrBlank(), useYoutubeChunkedPlayback,
++    ) else null
++    val requestedEngine = if (vlcFallback != null) AndroidPlaybackEngine.ExoPlayer else configuredEngine
++    LaunchedEffect(playerSourceKey, vlcFallback) {
++        vlcFallback?.let { com.nuvio.app.core.ui.NuvioToastController.show(it) }
++    }
+     var activeEngine by remember(playerSourceKey, requestedEngine) {
+         mutableStateOf(requestedEngine.initialAndroidEngine())
+     }
+@@ -240,6 +248,14 @@ actual fun PlatformPlayerSurface(
+             onSnapshot = surfaceOnSnapshot,
+             onError = surfaceOnError,
+         )
++        ResolvedAndroidPlaybackEngine.Vlc -> VlcPlayerSurface(
++            sourceUrl = sourceUrl, sourceHeaders = sanitizePlaybackHeaders(sourceHeaders),
++            externalSubtitles = externalSubtitles, modifier = modifier,
++            playWhenReady = playWhenReady && castBridge?.isCasting != true,
++            initialPositionMs = initialPositionMs, initialPositionRequestKey = initialPositionRequestKey,
++            resizeMode = resizeMode, onInitialPositionHandled = onInitialPositionHandled,
++            onControllerReady = surfaceOnControllerReady, onSnapshot = surfaceOnSnapshot, onError = surfaceOnError,
++        )
+         ResolvedAndroidPlaybackEngine.Libmpv -> {
+             LaunchedEffect(initialPositionRequestKey) {
+                 initialPositionRequestKey?.let { key ->
+@@ -272,6 +288,7 @@ actual fun PlatformPlayerSurface(
+ private enum class ResolvedAndroidPlaybackEngine {
+     ExoPlayer,
+     Libmpv,
++    Vlc,
+ }
+ 
+ private fun AndroidPlaybackEngine.initialAndroidEngine(): ResolvedAndroidPlaybackEngine =
+@@ -279,6 +296,7 @@ private fun AndroidPlaybackEngine.initialAndroidEngine(): ResolvedAndroidPlaybac
+         AndroidPlaybackEngine.Auto,
+         AndroidPlaybackEngine.ExoPlayer -> ResolvedAndroidPlaybackEngine.ExoPlayer
+         AndroidPlaybackEngine.Libmpv -> ResolvedAndroidPlaybackEngine.Libmpv
++        AndroidPlaybackEngine.Vlc -> ResolvedAndroidPlaybackEngine.Vlc
+     }
+ 
+ @androidx.annotation.OptIn(UnstableApi::class)
+@@ -1980,8 +1998,9 @@ private class NuvioLibmpvView(
+         mpv.setOptionString("tls-verify", "yes")
+         mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
+         mpv.setOptionString("demuxer-lavf-o", "protocol_whitelist=[file,crypto,data,http,https,tcp,tls]").logIfMpvError("demuxer-lavf-o")
+-        // Keep read-ahead/rebuffer protection, but do not pause at open to fill the cache.
+-        mpv.setOptionString("cache-pause-initial", "no").logIfMpvError("cache-pause-initial")
++        // Let MPV build a bounded initial cache instead of repeatedly starving the decoder.
++        mpv.setOptionString("cache-pause-initial", "yes").logIfMpvError("cache-pause-initial")
++        mpv.setOptionString("cache-pause-wait", "1").logIfMpvError("cache-pause-wait")
+         mpv.setOptionString("demuxer-max-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-bytes")
+         mpv.setOptionString("demuxer-max-back-bytes", "${libmpvCacheBytes()}").logIfMpvError("demuxer-max-back-bytes")
+         mpv.setOptionString("vd-lavc-film-grain", "cpu")
+diff --git a/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt
+new file mode 100644
+index 0000000..0f4fd34
+--- /dev/null
++++ b/composeApp/src/androidMain/kotlin/com/nuvio/app/features/player/VlcPlayerSurface.android.kt
+@@ -0,0 +1,240 @@
++package com.nuvio.app.features.player
++
++import android.content.Context
++import android.content.ContextWrapper
++import android.app.Activity
++import android.net.Uri
++import android.os.Build
++import android.os.ParcelFileDescriptor
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.runtime.*
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.viewinterop.AndroidView
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.LifecycleEventObserver
++import androidx.lifecycle.compose.LocalLifecycleOwner
++import com.nuvio.app.features.streams.StreamSubtitle
++import kotlinx.coroutines.*
++import org.videolan.libvlc.LibVLC
++import org.videolan.libvlc.Media
++import org.videolan.libvlc.MediaPlayer
++import org.videolan.libvlc.interfaces.IMedia
++import org.videolan.libvlc.util.VLCVideoLayout
++import java.util.concurrent.atomic.AtomicBoolean
++
++private val vlcReleaseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++
++/** Native LibVLC renders straight into its SurfaceView; Compose only receives 2 Hz snapshots. */
++@Composable
++internal fun VlcPlayerSurface(
++    sourceUrl: String,
++    sourceHeaders: Map<String, String>,
++    externalSubtitles: List<StreamSubtitle>,
++    modifier: Modifier,
++    playWhenReady: Boolean,
++    initialPositionMs: Long?,
++    initialPositionRequestKey: String?,
++    resizeMode: PlayerResizeMode,
++    onInitialPositionHandled: (String, Boolean) -> Unit,
++    onControllerReady: (PlayerEngineController) -> Unit,
++    onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
++    onError: (String?) -> Unit,
++) {
++    val context = LocalContext.current
++    val owner = LocalLifecycleOwner.current
++    val latestSnapshot = rememberUpdatedState(onSnapshot)
++    val latestError = rememberUpdatedState(onError)
++    val latestInitialHandled = rememberUpdatedState(onInitialPositionHandled)
++    val sessionResult = remember(sourceUrl, sourceHeaders, initialPositionRequestKey) {
++        runCatching { VlcSession(context.applicationContext, sourceUrl, sourceHeaders, externalSubtitles) }
++    }
++    val session = sessionResult.getOrNull()
++    if (session == null) {
++        LaunchedEffect(sessionResult) { latestError.value("VLC could not initialize. Try ExoPlayer or MPV.") }
++        return
++    }
++    var attached by remember(session) { mutableStateOf(false) }
++    var opening by remember(session) { mutableStateOf(true) }
++    var buffering by remember(session) { mutableStateOf(true) }
++    var ended by remember(session) { mutableStateOf(false) }
++    var resumePending by remember(session) { mutableStateOf(true) }
++    var stoppedForLifecycle by remember(session) { mutableStateOf(false) }
++
++    fun publish() {
++        if (session.closed.get()) return
++        val player = session.player
++        val video = player.currentVideoTrack
++        val position = player.time.coerceAtLeast(0L)
++        latestSnapshot.value(PlayerPlaybackSnapshot(
++            isLoading = opening || buffering, isOpening = opening,
++            isPlaying = player.isPlaying && !buffering, isEnded = ended,
++            durationMs = player.length.coerceAtLeast(0L), positionMs = position,
++            // LibVLC buffering percent is NOT a whole-file buffered position. Never invent it.
++            bufferedPositionMs = position, playbackSpeed = player.rate,
++            videoWidth = video?.width ?: 0, videoHeight = video?.height ?: 0,
++        ))
++    }
++
++    DisposableEffect(session, owner) {
++        session.player.setEventListener { event ->
++            if (!session.closed.get()) {
++                when (event.type) {
++                    MediaPlayer.Event.Opening -> { opening = true; buffering = true; ended = false }
++                    MediaPlayer.Event.Buffering -> buffering = event.buffering < 100f
++                    MediaPlayer.Event.Playing -> {
++                        opening = false; buffering = false; ended = false
++                        latestError.value(null)
++                        if (resumePending) {
++                            resumePending = false
++                            val requested = initialPositionMs?.takeIf { it > 0 }
++                            val handled = requested != null && session.player.isSeekable && session.player.setTime(requested) >= 0
++                            initialPositionRequestKey?.let { latestInitialHandled.value(it, handled) }
++                        }
++                        // FILE_LOADED/Playing can arrive after the user pauses or the activity stops.
++                        if (!session.wantsPlayback || stoppedForLifecycle) session.player.pause()
++                    }
++                    MediaPlayer.Event.EndReached -> { opening = false; buffering = false; ended = true }
++                    MediaPlayer.Event.EncounteredError -> {
++                        opening = false; buffering = false
++                        latestError.value("VLC could not play this source. Retry or switch playback engine.")
++                    }
++                }
++                // TimeChanged/PositionChanged arrive at native video cadence: the poller handles them.
++                if (event.type != MediaPlayer.Event.TimeChanged && event.type != MediaPlayer.Event.PositionChanged) publish()
++            }
++        }
++        val observer = LifecycleEventObserver { _, event ->
++            if (!session.closed.get()) when (event) {
++                Lifecycle.Event.ON_STOP -> {
++                    val activity = context.vlcActivity()
++                    val pip = Build.VERSION.SDK_INT >= 24 && activity?.isInPictureInPictureMode == true
++                    if (!pip && session.player.isPlaying) { stoppedForLifecycle = true; session.player.pause() }
++                }
++                Lifecycle.Event.ON_START -> if (stoppedForLifecycle) {
++                    stoppedForLifecycle = false
++                    if (session.wantsPlayback) session.player.play()
++                }
++                else -> Unit
++            }
++        }
++        owner.lifecycle.addObserver(observer)
++        onDispose {
++            owner.lifecycle.removeObserver(observer)
++            session.release()
++        }
++    }
++    LaunchedEffect(session, attached) {
++        if (!attached) return@LaunchedEffect
++        onControllerReady(session.controller)
++        session.player.play()
++        if (!session.wantsPlayback) session.player.pause()
++        while (isActive && !session.closed.get()) { publish(); delay(500) }
++    }
++    LaunchedEffect(session, playWhenReady) {
++        session.wantsPlayback = playWhenReady
++        if (attached && !session.closed.get()) {
++            if (playWhenReady && !stoppedForLifecycle) session.player.play() else session.player.pause()
++        }
++    }
++    LaunchedEffect(session, resizeMode, attached) {
++        if (attached && !session.closed.get()) session.player.setVideoScale(when (resizeMode) {
++            PlayerResizeMode.Fit -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
++            PlayerResizeMode.Fill -> MediaPlayer.ScaleType.SURFACE_FILL
++            PlayerResizeMode.Zoom -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
++        })
++    }
++    Box(modifier) {
++        AndroidView(modifier = Modifier.fillMaxSize(), factory = {
++            VLCVideoLayout(it).also { layout -> session.player.attachViews(layout, null, true, false); attached = true }
++        })
++    }
++}
++
++private class VlcSession(
++    context: Context,
++    sourceUrl: String,
++    headers: Map<String, String>,
++    subtitles: List<StreamSubtitle>,
++) {
++    val closed = AtomicBoolean(false)
++    var wantsPlayback = true
++    private val lib = LibVLC(context, arrayListOf("--no-video-title-show", "--network-caching=1500", "--file-caching=300"))
++    val player: MediaPlayer
++    private var descriptor: ParcelFileDescriptor? = null
++
++    init {
++        try {
++            player = MediaPlayer(lib)
++            try {
++                val uri = Uri.parse(sourceUrl)
++                val media = if (uri.scheme == "content") {
++                    descriptor = context.contentResolver.openFileDescriptor(uri, "r")
++                        ?: error("Could not open local video")
++                    Media(lib, descriptor!!.fileDescriptor)
++                } else Media(lib, uri)
++                try {
++                    media.setHWDecoderEnabled(true, false)
++                    val settings = PlayerSettingsRepository.uiState.value
++                    if (settings.customPlaybackBuffersEnabled) {
++                        media.addOption(":network-caching=${(settings.playbackStartBufferSeconds * 1000).coerceIn(500, 10000)}")
++                    }
++                    headers.forEach { (name, value) -> when {
++                        name.equals("User-Agent", true) -> media.addOption(":http-user-agent=$value")
++                        name.equals("Referer", true) || name.equals("Referrer", true) -> media.addOption(":http-referrer=$value")
++                    } }
++                    subtitles.forEach { media.addSlave(IMedia.Slave(IMedia.Slave.Type.Subtitle, 0, it.url)) }
++                    player.media = media
++                } finally { media.release() }
++            } catch (error: Throwable) { player.release(); throw error }
++        } catch (error: Throwable) { descriptor?.close(); lib.release(); throw error }
++    }
++
++    val controller = object : PlayerEngineController {
++        override val playbackEngine = AndroidPlaybackEngine.Vlc
++        override val supportsNightMode = false
++        override fun play() { wantsPlayback = true; if (!closed.get()) player.play() }
++        override fun pause() { wantsPlayback = false; if (!closed.get()) player.pause() }
++        override fun seekTo(positionMs: Long) { if (!closed.get() && player.isSeekable) player.setTime(positionMs.coerceAtLeast(0)) }
++        override fun seekBy(offsetMs: Long) { if (!closed.get()) seekTo(player.time + offsetMs) }
++        override fun retry() { if (!closed.get()) { player.stop(); player.play() } }
++        override fun setPlaybackSpeed(speed: Float) { if (!closed.get()) player.setRate(speed.coerceIn(0.25f, 4f)) }
++        override fun currentPlayerVolume() = if (closed.get()) PlayerAudioLevel(1f, false) else PlayerAudioLevel(player.volume.coerceIn(0, 100) / 100f, player.volume == 0)
++        override fun setPlayerVolume(level: Float): PlayerAudioLevel { if (!closed.get()) player.setVolume((level.coerceIn(0f, 1f) * 100).toInt()); return currentPlayerVolume() }
++        override fun setMuted(muted: Boolean) { if (!closed.get()) player.setVolume(if (muted) 0 else 100) }
++        override fun setVideoZoom(scale: Float) { if (!closed.get()) player.setScale(if (scale == 1f) 0f else scale.coerceIn(0.5f, 4f)) }
++        override fun getAudioTracks() = (if (closed.get()) null else player.audioTracks).orEmpty().filter { it.id >= 0 }.map { AudioTrack(it.id, "vlc-audio-${it.id}", it.name, isSelected = player.audioTrack == it.id) }
++        override fun getSubtitleTracks() = (if (closed.get()) null else player.spuTracks).orEmpty().filter { it.id >= 0 }.map { SubtitleTrack(it.id, "vlc-sub-${it.id}", it.name, isSelected = player.spuTrack == it.id) }
++        override fun applyAudioLanguagePreferences(languages: List<String>) {
++            val track = getAudioTracks().firstOrNull { entry -> languages.any { entry.label.contains(it, true) } }
++            track?.let { selectAudioTrack(it.index) }
++        }
++        override fun selectAudioTrack(index: Int) { if (!closed.get()) player.setAudioTrack(index) }
++        override fun selectSubtitleTrack(index: Int) { if (!closed.get()) player.setSpuTrack(index) }
++        override fun setSubtitleUri(url: String) { if (!closed.get()) player.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(url), true) }
++        override fun clearExternalSubtitle() { if (!closed.get()) player.setSpuTrack(-1) }
++        override fun clearExternalSubtitleAndSelect(trackIndex: Int) = selectSubtitleTrack(trackIndex)
++        override fun setSubtitleDelayMs(delayMs: Int) { if (!closed.get()) player.setSpuDelay(delayMs.toLong() * 1000) }
++        override val supportsAudioDelay = true
++        override fun setAudioDelayMs(delayMs: Int) { if (!closed.get()) player.setAudioDelay(delayMs.toLong() * 1000) }
++    }
++
++    fun release() {
++        if (!closed.compareAndSet(false, true)) return
++        player.setEventListener(null)
++        player.detachViews()
++        // Native stop/release can wait for network I/O; never block Compose/input dispatch.
++        vlcReleaseScope.launch {
++            try { player.stop() } finally {
++                try { player.release() } finally { descriptor?.close(); lib.release() }
++            }
++        }
++    }
++}
++
++private tailrec fun Context.vlcActivity(): Activity? = when (this) {
++    is Activity -> this
++    is ContextWrapper -> baseContext.vlcActivity()
++    else -> null
++}
+diff --git a/composeApp/src/commonMain/composeResources/values/v123.xml b/composeApp/src/commonMain/composeResources/values/v123.xml
+new file mode 100644
+index 0000000..fe94cf4
+--- /dev/null
++++ b/composeApp/src/commonMain/composeResources/values/v123.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="v123_vlc_description">Embedded VideoLAN LibVLC engine. No external VLC app required. Sources needing protected headers or split audio use ExoPlayer automatically.</string>
++    <string name="v123_vlc_title">VideoLAN LibVLC</string>
++    <string name="v123_vlc_notice">Built-in VLC playback powered by VideoLAN LibVLC 3.7.8. Copyright VideoLAN and VLC authors. Source and license information: code.videolan.org/videolan/libvlcjni</string>
++    <string name="v123_vlc_license">LibVLC JNI: LGPL 2.1 or later. Bundled VLC modules retain their own GPL/LGPL licenses. Nuvio Enhanced is distributed under GPL v3.</string>
++</resources>
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt
+index bba85b8..9f7c4b2 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt
+@@ -1,8 +1,8 @@
+ package com.nuvio.app.features.player
+ 
+-/** Start at the first decodable sample, without waiting to accumulate extra playback time. */
++/** Bounded startup buffering: avoid repeatedly entering playback with an empty queue. */
+ internal object PlaybackStartupPolicy {
+-    const val startBufferMs = 0
++    const val startBufferMs = 1_500
+     // Initial startup and recovery are separate: don't repeatedly resume into an empty buffer.
+     const val networkRebufferMs = 2_500
+     const val localRebufferMs = 250
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
+index 45ad9d1..9edde54 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
+@@ -119,7 +119,7 @@ internal fun PlayerToolbar(
+             modifier = Modifier.playerLiquidGlass(CircleShape, refractionHeight = 8.dp, refractionAmount = 12.dp),
+             shape = CircleShape,
+             containerColor = Color.Transparent,
+-            contentColor = Color.White,
++            contentColor = playerControlForeground,
+             buttonSize = 48.dp,
+             iconSize = 24.dp,
+             contentDescription = stringResource(Res.string.compose_player_close),
+@@ -189,7 +189,7 @@ internal fun PlayerControlActions(
+             PlayerToolbarButton.WATCH_PARTY to PlayerControlAction(
+                 stringResource(Res.string.party_title), it,
+                 icon = Icons.Rounded.Groups,
+-                tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
++                tint = if (partyActive) MaterialTheme.colorScheme.primary else playerControlForeground,
+             )
+         },
+         onPictureInPictureClick?.takeIf { !enhancedSettings.hidePlayerPip }?.let {
+@@ -255,7 +255,7 @@ internal fun PlayerControlActions(
+                 if (randomNextEpisodeMode) stringResource(Res.string.player_random_next_enabled)
+                 else stringResource(Res.string.player_random_next_disabled), it,
+                 icon = Icons.Rounded.Shuffle,
+-                tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else Color.White,
++                tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else playerControlForeground,
+             )
+         },
+         onOrientationToggleClick?.takeIf { !enhancedSettings.hidePlayerOrientation }?.let {
+@@ -357,7 +357,7 @@ internal fun PlayerControlActions(
+                                 icon = action.icon,
+                                 painter = action.painter,
+                                 iconSize = action.iconSize,
+-                                tint = action.tint,
++                                tint = action.tint ?: playerControlForeground,
+                             )
+                             action.popup?.invoke()
+                         }
+@@ -401,7 +401,7 @@ internal fun PlayerControlActions(
+                 Text(
+                     text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
+                     style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
+-                    color = Color.White.copy(alpha = 0.9f),
++                    color = playerControlForeground.copy(alpha = 0.9f),
+                     maxLines = 1,
+                 )
+             }
+@@ -416,7 +416,7 @@ private fun PlayerAction(
+     icon: ImageVector? = null,
+     painter: Painter? = null,
+     iconSize: Dp = 24.dp,
+-    tint: Color = Color.White,
++    tint: Color = playerControlForeground,
+ ) {
+     IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+         if (painter != null) {
+@@ -520,5 +520,5 @@ internal data class PlayerControlAction(
+     val painter: Painter? = null,
+     val iconSize: Dp = 24.dp,
+     val popup: (@Composable () -> Unit)? = null,
+-    val tint: Color = Color.White,
++    val tint: Color? = null,
+ )
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
+index de7057e..70f2fbe 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
+@@ -197,6 +197,7 @@ internal fun PlayerControlsShell(
+     onTimelineTouchChange: (Boolean) -> Unit = {},
+     titleLogo: String? = null,
+     showTitleLogo: Boolean = false,
++    bottomActions: @Composable () -> Unit = {},
+ ) {
+     val density = LocalDensity.current
+     var timelineHeight by remember { mutableStateOf(0.dp) }
+@@ -233,7 +234,7 @@ internal fun PlayerControlsShell(
+                 .background(
+                     Brush.verticalGradient(
+                         colors = listOf(
+-                            Color.Black.copy(alpha = if (glassActive) 0.35f else 0.7f),
++                            if (LocalPlayerControlGlassEnabled.current) Color.Black.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface,
+                             Color.Transparent,
+                         ),
+                     ),
+@@ -386,13 +387,18 @@ internal fun PlayerControlsShell(
+                             onTogglePlayback()
+                         },
+                         modifier = Modifier
+-                            .align(Alignment.Center)
+-                            .padding(bottom = centerBottomPadding),
++                            .align(Alignment.Center),
+                     )
+                 }
+             }
+ 
+             if (showPlaybackControls && useLegacyLayout) {
++                Column(
++                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
++                        .windowInsetsPadding(playerTimelineBottomInsets(metrics))
++                        .padding(horizontal = metrics.horizontalPadding)
++                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
++                ) {
+                 ProgressControls(
+                     playbackSnapshot = playbackSnapshot,
+                     displayedPositionMs = displayedPositionMs,
+@@ -419,12 +425,10 @@ internal fun PlayerControlsShell(
+                     seekPreview = seekPreview,
+                     onTimelineTouchChange = onTimelineTouchChange,
+                     onPictureInPictureClick = onPictureInPictureClick,
+-                    modifier = Modifier
+-                        .align(Alignment.BottomCenter)
+-                        .fillMaxWidth()
+-                        .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+-                        .padding(horizontal = metrics.horizontalPadding),
++                    modifier = Modifier.fillMaxWidth(),
+                 )
++                bottomActions()
++                }
+             }
+             if (showPlaybackControls && !useLegacyLayout) {
+                 Column(
+@@ -433,7 +437,8 @@ internal fun PlayerControlsShell(
+                         .align(Alignment.BottomCenter)
+                         .fillMaxWidth()
+                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+-                        .padding(horizontal = metrics.horizontalPadding),
++                        .padding(horizontal = metrics.horizontalPadding)
++                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
+                 ) {
+                     if (!hideDetails) {
+                         PlayerTimelineDetails(
+@@ -486,6 +491,7 @@ internal fun PlayerControlsShell(
+                         },
+                         onTouchChange = onTimelineTouchChange,
+                     )
++                    bottomActions()
+                     PlayerControlActions(
+                         playbackSnapshot = playbackSnapshot,
+                         displayedPositionMs = displayedPositionMs,
+@@ -601,7 +607,7 @@ private fun PlayerHeader(
+                             lineHeight = metrics.titleSize * 1.16f,
+                             fontWeight = FontWeight.Bold,
+                         ),
+-                        textColor = Color.White,
++                        textColor = playerControlForeground,
+                         maxLines = 2,
+                         maxLogoHeight = metrics.titleLogoMaxHeight,
+                         maxLogoWidth = metrics.logoMaxWidth,
+@@ -619,7 +625,7 @@ private fun PlayerHeader(
+                                 fontSize = metrics.episodeInfoSize,
+                                 lineHeight = metrics.episodeInfoSize * 1.3f,
+                             ),
+-                            color = Color.White.copy(alpha = 0.9f),
++                            color = playerControlForeground.copy(alpha = 0.9f),
+                             maxLines = 1,
+                             overflow = TextOverflow.Ellipsis,
+                         )
+@@ -634,7 +640,7 @@ private fun PlayerHeader(
+                                 fontSize = metrics.metadataSize,
+                                 lineHeight = metrics.metadataSize * 1.25f,
+                             ),
+-                            color = Color.White.copy(alpha = 0.7f),
++                            color = playerControlForeground.copy(alpha = 0.7f),
+                             maxLines = 1,
+                             overflow = TextOverflow.Ellipsis,
+                         )
+@@ -645,7 +651,7 @@ private fun PlayerHeader(
+                                 lineHeight = metrics.metadataSize * 1.25f,
+                                 fontStyle = FontStyle.Italic,
+                             ),
+-                            color = Color.White.copy(alpha = 0.7f),
++                            color = playerControlForeground.copy(alpha = 0.7f),
+                             maxLines = 1,
+                             overflow = TextOverflow.Ellipsis,
+                         )
+@@ -694,7 +700,7 @@ private fun PlayerHeader(
+                             buttonSize = metrics.headerIconSize + 16.dp,
+                             iconSize = metrics.headerIconSize,
+                             selected = randomNextEpisodeMode,
+-                            tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else Color.White,
++                            tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else playerControlForeground,
+                             onClick = onRandomNextEpisodeModeToggle,
+                         )
+                     }
+@@ -714,7 +720,7 @@ private fun PlayerHeader(
+                             buttonSize = metrics.headerIconSize + 16.dp,
+                             iconSize = metrics.headerIconSize,
+                             onClick = onPartyClick,
+-                            tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
++                            tint = if (partyActive) MaterialTheme.colorScheme.primary else playerControlForeground,
+                         )
+                     }
+                     if (onCastClick != null && !enhancedSettings.hidePlayerCast) {
+@@ -791,7 +797,7 @@ private fun PlayerHeader(
+                         modifier = Modifier.playerLiquidGlass(CircleShape, refractionHeight = 6.dp, refractionAmount = 8.dp),
+                         shape = CircleShape,
+                         containerColor = Color.Transparent,
+-                        contentColor = Color.White,
++                        contentColor = playerControlForeground,
+                         buttonSize = metrics.headerIconSize + 16.dp,
+                         iconSize = metrics.headerIconSize,
+                         contentDescription = stringResource(Res.string.compose_player_close),
+@@ -811,7 +817,7 @@ internal fun PlayerHeaderIconButton(
+     iconSize: androidx.compose.ui.unit.Dp,
+     selected: Boolean = false,
+     onClick: () -> Unit,
+-    tint: Color = Color.White,
++    tint: Color = playerControlForeground,
+ ) {
+     Box(
+         modifier = Modifier
+@@ -902,14 +908,14 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
+         else -> null
+     }
+     if (numbered != null) {
+-        Icon(numbered, contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
++        Icon(numbered, contentDescription = null, tint = playerControlForeground, modifier = Modifier.size(size))
+         return
+     }
+     Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
+         Icon(
+             imageVector = Icons.Rounded.Replay,
+             contentDescription = null,
+-            tint = Color.White,
++            tint = playerControlForeground,
+             modifier = Modifier
+                 .fillMaxSize()
+                 .graphicsLayer { if (forward) scaleX = -1f },
+@@ -917,7 +923,7 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
+         val density = LocalDensity.current
+         Text(
+             text = seconds.toString(),
+-            color = Color.White,
++            color = playerControlForeground,
+             style = MaterialTheme.nuvioTypeScale.labelSm.copy(
+                 fontSize = with(density) { (size * 0.26f).toSp() },
+                 lineHeight = with(density) { (size * 0.26f).toSp() },
+@@ -962,7 +968,7 @@ internal fun PlayPauseControlButton(
+                 } else {
+                     stringResource(Res.string.detail_btn_play)
+                 },
+-                tint = Color.White,
++                tint = playerControlForeground,
+                 modifier = Modifier.size(metrics.playIconSize),
+             )
+         }
+@@ -1345,9 +1351,9 @@ private fun PlayerProgressTrack(
+         disabledInactiveTrackColor = PlayerBaseTrackColor,
+     )
+     val activeTrackColors = SliderDefaults.colors(
+-        activeTrackColor = Color.White,
++        activeTrackColor = playerControlForeground,
+         inactiveTrackColor = Color.Transparent,
+-        disabledActiveTrackColor = Color.White,
++        disabledActiveTrackColor = playerControlForeground,
+         disabledInactiveTrackColor = Color.Transparent,
+     )
+ 
+@@ -1394,12 +1400,12 @@ internal fun LockedPlayerOverlay(
+ ) {
+     val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
+     val sliderColors = SliderDefaults.colors(
+-        thumbColor = Color.White,
+-        activeTrackColor = Color.White,
+-        inactiveTrackColor = Color.White.copy(alpha = 0.28f),
+-        disabledThumbColor = Color.White,
+-        disabledActiveTrackColor = Color.White,
+-        disabledInactiveTrackColor = Color.White.copy(alpha = 0.28f),
++        thumbColor = playerControlForeground,
++        activeTrackColor = playerControlForeground,
++        inactiveTrackColor = playerControlForeground.copy(alpha = 0.28f),
++        disabledThumbColor = playerControlForeground,
++        disabledActiveTrackColor = playerControlForeground,
++        disabledInactiveTrackColor = playerControlForeground.copy(alpha = 0.28f),
+     )
+ 
+     Box(modifier = modifier.fillMaxSize()) {
+@@ -1440,7 +1446,7 @@ internal fun LockedPlayerOverlay(
+                 Icon(
+                     imageVector = Icons.Rounded.Lock,
+                     contentDescription = stringResource(Res.string.compose_player_unlock_controls),
+-                    tint = Color.White,
++                    tint = playerControlForeground,
+                     modifier = Modifier.size(34.dp),
+                 )
+             }
+@@ -1448,7 +1454,7 @@ internal fun LockedPlayerOverlay(
+             Text(
+                 text = stringResource(Res.string.compose_player_tap_to_unlock),
+                 style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontWeight = FontWeight.SemiBold),
+-                color = Color.White.copy(alpha = 0.95f),
++                color = playerControlForeground.copy(alpha = 0.95f),
+             )
+         }
+ 
+@@ -1496,7 +1502,7 @@ internal fun LockedPlayerOverlay(
+                                 sliderState = sliderState,
+                                 enabled = false,
+                                 colors = SliderDefaults.colors(
+-                                    disabledActiveTrackColor = Color.White,
++                                    disabledActiveTrackColor = playerControlForeground,
+                                     disabledInactiveTrackColor = Color.Transparent,
+                                 ),
+                             )
+@@ -1525,7 +1531,7 @@ internal fun LockedPlayerOverlay(
+                 Text(
+                     text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
+                     style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
+-                    color = Color.White.copy(alpha = 0.9f),
++                    color = playerControlForeground.copy(alpha = 0.9f),
+                     modifier = Modifier.align(Alignment.End),
+                 )
+             }
+@@ -1559,7 +1565,7 @@ private fun TimePill(
+                 lineHeight = fontSize * 1.25f,
+                 fontWeight = FontWeight.Medium,
+             ),
+-            color = Color.White,
++            color = playerControlForeground,
+         )
+     }
+ }
+@@ -1570,7 +1576,7 @@ private fun PlayerActionPillButton(
+     onClick: () -> Unit,
+     icon: ImageVector? = null,
+     painter: Painter? = null,
+-    tint: Color = Color.White,
++    tint: Color = playerControlForeground,
+ ) {
+     Row(
+         modifier = Modifier
+@@ -1620,7 +1626,7 @@ private fun PlayerDeviceStatusOverlay(
+         modifier = modifier,
+         shape = RoundedCornerShape(999.dp),
+         color = Color.Black.copy(alpha = 0.42f),
+-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
++        border = BorderStroke(1.dp, playerControlForeground.copy(alpha = 0.14f)),
+         tonalElevation = 0.dp,
+         shadowElevation = 0.dp,
+     ) {
+@@ -1651,7 +1657,7 @@ private fun PlayerDeviceStatusOverlay(
+                     lineHeight = 12.sp,
+                     fontWeight = FontWeight.SemiBold,
+                 ),
+-                color = Color.White.copy(alpha = 0.92f),
++                color = playerControlForeground.copy(alpha = 0.92f),
+                 maxLines = 1,
+             )
+             PlayerBatteryStatusItem(
+@@ -1721,7 +1727,7 @@ private fun PlayerDeviceStatusItem(
+         Icon(
+             imageVector = icon,
+             contentDescription = null,
+-            tint = Color.White.copy(alpha = 0.88f),
++            tint = playerControlForeground.copy(alpha = 0.88f),
+             modifier = Modifier.size(11.dp),
+         )
+         Text(
+@@ -1731,7 +1737,7 @@ private fun PlayerDeviceStatusItem(
+                 lineHeight = 12.sp,
+                 fontWeight = FontWeight.SemiBold,
+             ),
+-            color = Color.White.copy(alpha = 0.9f),
++            color = playerControlForeground.copy(alpha = 0.9f),
+             maxLines = 1,
+         )
+     }
+@@ -1760,7 +1766,7 @@ private fun PlayerBatteryStatusItem(
+                 lineHeight = 12.sp,
+                 fontWeight = FontWeight.SemiBold,
+             ),
+-            color = Color.White.copy(alpha = 0.9f),
++            color = playerControlForeground.copy(alpha = 0.9f),
+             maxLines = 1,
+         )
+     }
+@@ -1777,9 +1783,9 @@ private fun PlayerBatteryGlyph(
+     val activeColor = if (charging) {
+         Color(0xFF8CFFB3)
+     } else {
+-        Color.White.copy(alpha = 0.9f)
++        playerControlForeground.copy(alpha = 0.9f)
+     }
+-    val outlineColor = Color.White.copy(alpha = 0.72f)
++    val outlineColor = playerControlForeground.copy(alpha = 0.72f)
+     val bodyWidth = 13.dp
+     val bodyHeight = 7.dp
+     val capWidth = 1.2.dp
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
+index abcb927..e2f0e6f 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
+@@ -1,23 +1,34 @@
+ package com.nuvio.app.features.player
+ 
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
++import androidx.compose.foundation.horizontalScroll
+ import androidx.compose.foundation.layout.*
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material.icons.Icons
+-import androidx.compose.material.icons.rounded.NightsStay
+ import androidx.compose.material.icons.rounded.AutoAwesome
++import androidx.compose.material.icons.rounded.Close
++import androidx.compose.material.icons.rounded.Movie
++import androidx.compose.material.icons.rounded.NightsStay
+ import androidx.compose.material3.*
+ import androidx.compose.runtime.Composable
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+-import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
++import coil3.compose.AsyncImage
+ import com.nuvio.app.features.home.MetaPreview
+ import nuvio.composeapp.generated.resources.*
+ import org.jetbrains.compose.resources.stringResource
+ 
+-/** Shared by modern and legacy layouts; these actions must not depend on toolbar presets. */
++/** Part of the measured bottom controls, never a full-screen overlay or side rail. */
+ @Composable
+ internal fun PlayerFeatureActions(
+     nightModeVisible: Boolean,
+@@ -28,41 +39,29 @@ internal fun PlayerFeatureActions(
+     recommendationsVisible: Boolean,
+     onRecommendations: () -> Unit,
+ ) {
+-    Box(Modifier.fillMaxSize()) {
+-        Column(
+-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 24.dp),
+-            verticalArrangement = Arrangement.spacedBy(8.dp),
+-        ) {
+-            if (nightModeVisible) {
+-                FilledTonalIconButton(
+-                    onClick = onNightModeToggle,
+-                    enabled = nightModeSupported,
+-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+-                        containerColor = if (glassEnabled) Color.Black.copy(alpha = 0.6f) else Color.Transparent,
+-                        contentColor = if (nightModeEnabled) MaterialTheme.colorScheme.primary else Color.White,
+-                    ),
+-                ) {
+-                    Icon(Icons.Rounded.NightsStay, stringResource(
+-                        if (nightModeSupported) {
+-                            if (nightModeEnabled) Res.string.v121_night_mode_on else Res.string.v121_night_mode_off
+-                        } else Res.string.v121_night_mode_unsupported,
+-                    ))
+-                }
+-            }
+-            if (recommendationsVisible) {
+-                FilledTonalIconButton(onClick = onRecommendations,
+-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+-                        containerColor = if (glassEnabled) Color.Black.copy(alpha = 0.6f) else Color.Transparent,
+-                        contentColor = Color.White,
+-                    ),
+-                ) {
+-                    Icon(Icons.Rounded.AutoAwesome, stringResource(Res.string.v121_recommendations))
+-                }
+-            }
++    if (!nightModeVisible && !recommendationsVisible) return
++    Row(
++        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
++        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
++    ) {
++        if (nightModeVisible) {
++            FilterChip(
++                selected = nightModeEnabled, enabled = nightModeSupported,
++                onClick = onNightModeToggle,
++                label = { Text(if (nightModeSupported) "Night mode" else "Night mode unavailable") },
++                leadingIcon = { Icon(Icons.Rounded.NightsStay, null, Modifier.size(18.dp)) },
++            )
+         }
++        if (recommendationsVisible) AssistChip(
++            onClick = onRecommendations,
++            label = { Text(stringResource(Res.string.v121_recommendations)) },
++            leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp)) },
++        )
+     }
+ }
+ 
++/** Always a bottom sheet on phones AND landscape; no adaptive side-panel substitution. */
++@OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ internal fun PlayerRecommendationsDialog(
+     visible: Boolean,
+@@ -71,24 +70,67 @@ internal fun PlayerRecommendationsDialog(
+     onDismiss: () -> Unit,
+ ) {
+     if (!visible) return
+-    AlertDialog(
++    ModalBottomSheet(
+         onDismissRequest = onDismiss,
+-        title = { Text(stringResource(Res.string.v121_recommendations)) },
+-        text = {
+-            if (items.isEmpty()) {
+-                Text(stringResource(Res.string.v121_recommendations_empty))
+-            } else {
+-                LazyColumn(Modifier.heightIn(max = 280.dp)) {
+-                    items(items, key = { "${it.type}:${it.id}" }) { item ->
+-                        ListItem(
+-                            headlineContent = { Text(item.name) },
+-                            supportingContent = { Text(item.releaseInfo.orEmpty()) },
+-                            modifier = Modifier.clickable { onOpen(item) },
+-                        )
++        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
++        sheetMaxWidth = 760.dp,
++        containerColor = MaterialTheme.colorScheme.surface,
++        contentColor = MaterialTheme.colorScheme.onSurface,
++    ) {
++        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
++            Column(Modifier.weight(1f)) {
++                Text(stringResource(Res.string.v121_recommendations), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
++                Text("Find your next watch", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
++            }
++            IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, stringResource(Res.string.action_close)) }
++        }
++        LazyColumn(
++            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
++            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
++        ) {
++            if (items.isEmpty()) item {
++                Text(stringResource(Res.string.v121_recommendations_empty), Modifier.padding(16.dp))
++            }
++            items(items, key = { "${it.type}:${it.id}" }) { preview ->
++                Surface(
++                    modifier = Modifier.fillMaxWidth().clickable { onOpen(preview) },
++                    shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer,
++                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
++                ) {
++                    Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
++                        Box(Modifier.width(84.dp).height(126.dp).clip(RoundedCornerShape(10.dp))
++                            .background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
++                            Icon(Icons.Rounded.Movie, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
++                            AsyncImage(preview.poster ?: preview.rawPosterUrl, preview.name,
++                                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
++                        }
++                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
++                            Text(preview.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
++                            Text(listOfNotNull(preview.releaseInfo?.takeIf { it.isNotBlank() }, preview.imdbRating?.let { "★ $it" }, preview.runtime)
++                                .joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
++                            if (preview.genres.isNotEmpty()) Text(preview.genres.take(3).joinToString(" · "),
++                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                            Text(preview.description?.takeIf { it.isNotBlank() } ?: "No synopsis available from this provider.",
++                                style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
++                                color = MaterialTheme.colorScheme.onSurfaceVariant)
++                            Text("View details →", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
++                        }
+                     }
+                 }
+             }
+-        },
+-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.action_close)) } },
+-    )
++        }
++    }
++}
++
++/** A dismissible end-of-movie prompt; the full collection only opens by deliberate interaction. */
++@Composable
++internal fun PlayerRecommendationsPrompt(onBrowse: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
++    Surface(modifier.widthIn(max = 560.dp).fillMaxWidth(), shape = RoundedCornerShape(16.dp),
++        color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
++        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
++            Text("What to watch next", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
++            TextButton(onClick = onBrowse) { Text("Browse movies") }
++            IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "Dismiss recommendations") }
++        }
++    }
+ }
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
+index da56e45..517c47d 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerLiquidGlass.kt
+@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.neverEqualPolicy
+ import androidx.compose.runtime.setValue
+ import androidx.compose.runtime.staticCompositionLocalOf
++import androidx.compose.foundation.background
++import androidx.compose.material3.MaterialTheme
+ import androidx.compose.foundation.border
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+@@ -57,9 +59,13 @@ internal val PlayerGlassFallback = Color.White.copy(alpha = 0.08f)
+ /** Hairline rim that sells the glass edge on top of Kyant's highlight. */
+ internal val PlayerGlassRim = Color.White.copy(alpha = 0.22f)
+ 
+-/** False when "Glass Backgrounds on Controls" is off: player buttons and pills draw no backing. */
++/** Glass off means opaque theme surfaces and visible separation, never missing backings. */
+ internal val LocalPlayerControlGlassEnabled = staticCompositionLocalOf { true }
+ 
++internal val playerControlForeground: Color
++    @Composable get() = if (LocalPlayerControlGlassEnabled.current) Color.White else MaterialTheme.colorScheme.onSurface
++
++
+ /** Theme accent tint for the glass sheen so player chrome follows the active theme. */
+ internal val LocalPlayerThemeGlassTint = staticCompositionLocalOf { Color.White.copy(alpha = 0.05f) }
+ 
+@@ -82,7 +88,15 @@ internal fun Modifier.playerLiquidGlass(
+     // text needs a backing to stay readable over the video.
+     isControl: Boolean = true,
+ ): Modifier {
+-    if (isControl && !LocalPlayerControlGlassEnabled.current) return this
++    if (isControl && !LocalPlayerControlGlassEnabled.current) {
++        return clip(shape)
++            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
++            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
++    }
++    // A static tint is deliberate: no blur/refraction or decoded-frame readback in controls.
++    if (isControl) return clip(shape)
++        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
++        .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
+     val glass = clip(shape).ambientLiquidGlass(
+         shape = shape,
+         tint = tint,
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerModels.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerModels.kt
+index 4f3c234..e8535a4 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerModels.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerModels.kt
+@@ -160,6 +160,7 @@ enum class AndroidPlaybackEngine(
+     Auto("Auto"),
+     ExoPlayer("ExoPlayer"),
+     Libmpv("libmpv"),
++    Vlc("VLC (built-in)"),
+ }
+ 
+ enum class AndroidLibmpvVideoOutput(
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
+index 13c6d6c..e4cda60 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerPlaybackOverlays.kt
+@@ -79,6 +79,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
+     movieRecommendationStage: Int = 0,
+     onOpenMovieRecommendation: (MetaPreview) -> Unit = {},
+     onDismissMovieRecommendations: () -> Unit = {},
++    onBrowseMovieRecommendations: () -> Unit = {},
+     sourceFallbackStatus: String? = null,
+     subtitleDelayMs: Int = 0,
+     playerStatusOverlayEnabled: Boolean = false,
+@@ -166,17 +167,11 @@ internal fun BoxScope.PlayerPlaybackOverlays(
+         )
+     }
+ 
+-    if (!isSeries && !playerControlsLocked) {
+-        MovieRecommendationCard(
+-            recommendations = movieRecommendations,
+-            stage = movieRecommendationStage,
+-            dismissed = !showMovieRecommendationCard,
+-            controlsVisible = controlsVisible,
+-            onOpen = onOpenMovieRecommendation,
++    if (!isSeries && !playerControlsLocked && showMovieRecommendationCard && movieRecommendationStage > 0 && movieRecommendations.isNotEmpty()) {
++        PlayerRecommendationsPrompt(
++            onBrowse = onBrowseMovieRecommendations,
+             onDismiss = onDismissMovieRecommendations,
+-            modifier = Modifier
+-                .align(Alignment.BottomEnd)
+-                .padding(end = stackEnd, bottom = cardBottom),
++            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = sliderEdgePadding, bottom = cardBottom),
+         )
+     }
+ 
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenContent.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenContent.kt
+index 4e27b7a..4147c8d 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenContent.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenContent.kt
+@@ -211,7 +211,9 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
+         runtime.BindPlayerRuntimeEffects()
+         runtime.BindSourceFallbackStallWatchdog()
+         CompositionLocalProvider(
+-            LocalLiquidGlassBackdrop provides rememberVideoFrameBackdrop(enabled = !runtime.isMiniPresentation && playerSettingsUiState.playerControlGlassEnabled && isLiquidGlassSupported()),
++            // Never copy decoded video frames into Compose at 30 fps. Player chrome uses
++            // inexpensive tinted translucency; video rendering retains its own surface.
++            LocalLiquidGlassBackdrop provides null,
+             LocalPlayerControlGlassEnabled provides playerSettingsUiState.playerControlGlassEnabled,
+             LocalPlayerThemeGlassTint provides androidx.compose.material3.MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
+         ) {
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimePlaybackActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimePlaybackActions.kt
+index 9b4ea76..b011121 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimePlaybackActions.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimePlaybackActions.kt
+@@ -507,7 +507,12 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
+ }
+ 
+ internal val AndroidPlaybackEngine.switchTarget: AndroidPlaybackEngine
+-    get() = if (this == AndroidPlaybackEngine.Libmpv) AndroidPlaybackEngine.ExoPlayer else AndroidPlaybackEngine.Libmpv
++    get() = when (this) {
++        AndroidPlaybackEngine.Auto -> AndroidPlaybackEngine.ExoPlayer
++        AndroidPlaybackEngine.ExoPlayer -> AndroidPlaybackEngine.Libmpv
++        AndroidPlaybackEngine.Libmpv -> AndroidPlaybackEngine.Vlc
++        AndroidPlaybackEngine.Vlc -> AndroidPlaybackEngine.ExoPlayer
++    }
+ 
+ internal fun PlayerScreenRuntime.switchPlaybackEngine() {
+     val target = playerController?.playbackEngine?.switchTarget ?: return
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt
+index 250da7b..200f13d 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerScreenRuntimeUi.kt
+@@ -507,6 +507,16 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
+         NuvioEnhancedSettingsRepository.ensureLoaded()
+         NuvioEnhancedSettingsRepository.uiState
+     }.collectAsStateWithLifecycle()
++        PlayerRecommendationsDialog(
++            visible = showManualRecommendations,
++            items = movieRecommendationCandidates,
++            onOpen = { preview ->
++                showManualRecommendations = false
++                flushWatchProgress()
++                args.onOpenMetaDetails?.invoke(preview)
++            },
++            onDismiss = { showManualRecommendations = false },
++        )
+     AnimatedVisibility(
+         visible = (controlsVisible || showParentalGuide) && !playerControlsLocked && !isInPip,
+         enter = fadeIn(),
+@@ -521,6 +531,11 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
+         val portraitPlayback by PlayerOrientationPreference.portrait.collectAsStateWithLifecycle()
+         val pipAvailable = isIos && playerSettingsUiState.miniPlayerEnabled &&
+             playerController?.isPictureInPictureSupported() == true
++        // Live TV channel artwork is not a title logo; retain the program title text instead.
++        val playerTitleLogo = if (isLiveTvPlayback) null else logo
++        val showPlayerTitleLogo = playerSettingsUiState.showPlayerTitleLogo && !isLiveTvPlayback
++        PlayerControlsShell(
++            bottomActions = {
+         PlayerFeatureActions(
+             nightModeVisible = playerSettingsUiState.nightModeButtonEnabled,
+             nightModeEnabled = playerSettingsUiState.nightModeEnabled,
+@@ -531,20 +546,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
+             recommendationsVisible = isMoviePlayback && playerSettingsUiState.movieRecommendationsEnabled,
+             onRecommendations = { showManualRecommendations = true },
+         )
+-        PlayerRecommendationsDialog(
+-            visible = showManualRecommendations,
+-            items = movieRecommendationCandidates,
+-            onOpen = { preview ->
+-                showManualRecommendations = false
+-                flushWatchProgress()
+-                args.onOpenMetaDetails?.invoke(preview)
+             },
+-            onDismiss = { showManualRecommendations = false },
+-        )
+-        // Live TV channel artwork is not a title logo; retain the program title text instead.
+-        val playerTitleLogo = if (isLiveTvPlayback) null else logo
+-        val showPlayerTitleLogo = playerSettingsUiState.showPlayerTitleLogo && !isLiveTvPlayback
+-        PlayerControlsShell(
+             title = title,
+             titleLogo = playerTitleLogo,
+             showTitleLogo = showPlayerTitleLogo,
+@@ -918,6 +920,7 @@ private fun BoxScope.RenderPlaybackOverlays(
+             flushWatchProgress()
+             args.onOpenMetaDetails?.invoke(preview)
+         },
++        onBrowseMovieRecommendations = { showManualRecommendations = true },
+         onDismissMovieRecommendations = {
+             movieRecommendationDismissedStage = PlayerNextEpisodeRules.movieRecommendationStage(
+                 positionMs = playbackSnapshot.positionMs,
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/VlcPlaybackPolicy.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/VlcPlaybackPolicy.kt
+new file mode 100644
+index 0000000..2498d9d
+--- /dev/null
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/VlcPlaybackPolicy.kt
+@@ -0,0 +1,15 @@
++package com.nuvio.app.features.player
++
++/** LibVLC 3.x exposes UA/referrer options, not ExoPlayer's arbitrary request/response overrides. */
++internal fun vlcSourceFallbackReason(
++    headers: Map<String, String>,
++    responseHeaders: Map<String, String>,
++    separateAudio: Boolean,
++    youtubeChunked: Boolean,
++): String? = when {
++    separateAudio || youtubeChunked -> "This source needs split/chunked playback. Using ExoPlayer for this source."
++    responseHeaders.isNotEmpty() -> "This source needs response-header overrides. Using ExoPlayer for this source."
++    headers.keys.any { !it.equals("User-Agent", true) && !it.equals("Referer", true) && !it.equals("Referrer", true) } ->
++        "This source needs protected request headers. Using ExoPlayer to preserve them."
++    else -> null
++}
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/LicensesAttributionsPage.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/LicensesAttributionsPage.kt
+index d7ec178..876071c 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/LicensesAttributionsPage.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/LicensesAttributionsPage.kt
+@@ -134,6 +134,16 @@ private fun LicensesAttributionsBody(
+                 item = platformLicenseItem(),
+                 isTablet = isTablet,
+             )
++            if (!isIos) {
++                PlainStackDivider()
++                LicenseRow(
++                    item = LicenseItem(
++                        Res.string.v123_vlc_title, Res.string.v123_vlc_notice,
++                        Res.string.v123_vlc_license, "https://code.videolan.org/videolan/libvlcjni",
++                    ),
++                    isTablet = isTablet,
++                )
++            }
+         }
+ 
+         PlainSettingsStack(
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/PlaybackSettingsPage.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/PlaybackSettingsPage.kt
+index 97f1e31..8ec623d 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/PlaybackSettingsPage.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/PlaybackSettingsPage.kt
+@@ -736,7 +736,7 @@ private fun PlaybackSettingsSection(
+                         },
+                     )
+                 }
+-                val showLibassSettings = !isIos && androidPlaybackEngine != AndroidPlaybackEngine.Libmpv
++                val showLibassSettings = !isIos && androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.ExoPlayer)
+                 if (showLibassSettings) {
+                     SettingsGroupDivider(isTablet = isTablet)
+                     SettingsSwitchRow(
+@@ -1001,8 +1001,8 @@ private fun PlaybackSettingsSection(
+ 
+         if (!isIos) {
+             val decoderEnabled = !autoPlayPlayerSettings.externalPlayerEnabled
+-            val exoOptionsEnabled = decoderEnabled && androidPlaybackEngine != AndroidPlaybackEngine.Libmpv
+-            val libmpvOptionsVisible = androidPlaybackEngine != AndroidPlaybackEngine.ExoPlayer
++            val exoOptionsEnabled = decoderEnabled && androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.ExoPlayer)
++            val libmpvOptionsVisible = androidPlaybackEngine in setOf(AndroidPlaybackEngine.Auto, AndroidPlaybackEngine.Libmpv)
+             val libmpvOptionsEnabled = decoderEnabled && libmpvOptionsVisible
+             SettingsSection(
+                 title = stringResource(Res.string.settings_playback_section_decoder),
+@@ -2189,6 +2189,7 @@ private fun PlaybackEngineDialog(
+         AndroidPlaybackEngine.Auto to Res.string.settings_playback_engine_auto_description,
+         AndroidPlaybackEngine.ExoPlayer to Res.string.settings_playback_engine_exoplayer_description,
+         AndroidPlaybackEngine.Libmpv to Res.string.settings_playback_engine_libmpv_description,
++        AndroidPlaybackEngine.Vlc to Res.string.v123_vlc_description,
+     )
+ 
+     DialogSurface(
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
+index 11ad1a7..2d10f19 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
+@@ -44,8 +44,22 @@ internal object BundledReleaseNotes {
+         ),
+     )
+ 
++    val v123 = WhatsNewRelease(
++        version = "1.23",
++        title = "Nuvio Enhanced 1.23 — Player stability & built-in VLC",
++        publishedAt = null,
++        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.23-apk",
++        notes = listOf(
++            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "Removed decoded-video frame copying and live refraction from player controls. Restored bounded startup caching instead of zero-buffer startup. These changes target responsiveness; they are not a promise that every provider stream will be smooth.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Built-in VideoLAN VLC engine is selectable in Playback settings. The engine switch cycles ExoPlayer, MPV and VLC. Protected-header and split-audio sources use ExoPlayer with an explanation. VLC does not support this app's Night Mode audio effect.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Night Mode and recommendations now live in the bottom controls. Recommendations open a bottom sheet with posters, ratings, genres and provider descriptions instead of a side list. End-of-movie recommendations use a compact bottom prompt.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FIXES, "Glass off now uses opaque theme-colored control surfaces with separating borders and matching text. Center transport no longer shifts with title/control measurements.", null),
++            WhatsNewNote(WhatsNewNoteCategory.OTHER, "Preserved Downloads, unlimited downloads, Library categories, profile insights, search customization, subtitle caching and the repository-first extension browser.", null),
++        ),
++    )
++
+     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
+-        val releases = listOf(v122, v121) + content?.snapshot?.releases.orEmpty()
++        val releases = listOf(v123, v122, v121) + content?.snapshot?.releases.orEmpty()
+         return WhatsNewContent(
+             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
+             fromCache = content?.fromCache ?: true,
+diff --git a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlaybackStartupV122Test.kt b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlaybackStartupV122Test.kt
+index 1174827..ecc0039 100644
+--- a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlaybackStartupV122Test.kt
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlaybackStartupV122Test.kt
+@@ -3,8 +3,8 @@ package com.nuvio.app.features.player
+ import kotlin.test.*
+ 
+ class PlaybackStartupV122Test {
+-    @Test fun defaultStartupDoesNotWaitForAnExtraTimeBuffer() {
+-        assertEquals(0, PlaybackStartupPolicy.startBufferMs)
++    @Test fun defaultStartupUsesABoundedNonzeroSafetyBuffer() {
++        assertTrue(PlaybackStartupPolicy.startBufferMs in 500..2_000)
+     }
+ 
+     @Test fun recoveryStillHasBufferProtection() {
+diff --git a/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlayerStabilityV123Test.kt b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlayerStabilityV123Test.kt
+new file mode 100644
+index 0000000..5516f2d
+--- /dev/null
++++ b/composeApp/src/commonTest/kotlin/com/nuvio/app/features/player/PlayerStabilityV123Test.kt
+@@ -0,0 +1,27 @@
++package com.nuvio.app.features.player
++
++import kotlin.test.*
++
++class PlayerStabilityV123Test {
++    @Test fun embeddedVlcIsSelectableAndEngineCycleReachesEveryEngine() {
++        assertEquals(AndroidPlaybackEngine.Vlc, AndroidPlaybackEngine.entries.first { it.name == "Vlc" })
++        assertEquals(AndroidPlaybackEngine.Vlc, AndroidPlaybackEngine.Libmpv.switchTarget)
++        assertEquals(AndroidPlaybackEngine.ExoPlayer, AndroidPlaybackEngine.Vlc.switchTarget)
++        assertEquals(AndroidPlaybackEngine.Libmpv, AndroidPlaybackEngine.ExoPlayer.switchTarget)
++    }
++    @Test fun vlcPreservesSupportedHttpOptions() {
++        assertNull(vlcSourceFallbackReason(mapOf("user-agent" to "Nuvio", "REFERER" to "https://example.test"), emptyMap(), false, false))
++    }
++    @Test fun protectedAndSplitSourcesKeepWorkingThroughExo() {
++        for (header in listOf("Authorization", "Cookie", "Origin", "X-Token")) {
++            assertNotNull(vlcSourceFallbackReason(mapOf(header to "value"), emptyMap(), false, false))
++        }
++        assertNotNull(vlcSourceFallbackReason(emptyMap(), mapOf("Content-Type" to "video/mp4"), false, false))
++        assertNotNull(vlcSourceFallbackReason(emptyMap(), emptyMap(), true, false))
++        assertNotNull(vlcSourceFallbackReason(emptyMap(), emptyMap(), false, true))
++    }
++    @Test fun startupAndRecoveryRetainSafetyMargins() {
++        assertEquals(1500, PlaybackStartupPolicy.startBufferMs)
++        assertTrue(PlaybackStartupPolicy.networkRebufferMs >= PlaybackStartupPolicy.startBufferMs)
++    }
++}
+diff --git a/docs/releases/1.23.md b/docs/releases/1.23.md
+new file mode 100644
+index 0000000..89611ef
+--- /dev/null
++++ b/docs/releases/1.23.md
+@@ -0,0 +1,27 @@
++# Nuvio Enhanced 1.23 (230)
++
++## Player stability rework
++- Remove decoded-video PixelCopy capture from the player composition and live refraction/blur on control surfaces. No per-frame bitmap copies for player glass; use inexpensive tinted surfaces instead.
++- Restore a 1.5-second default startup buffer and MPV initial cache pausing. Explicit custom buffers remain supported. This prioritizes a viable decoding queue over zero-wait startup; network/provider problems can still stall playback.
++- Keep center transport fixed rather than moving it with measured title/control heights.
++
++## Bottom controls and recommendations
++- Night Mode and Recommendations are in the measured bottom controls in both modern and legacy layouts, not a side rail. Night Mode is disabled with an explanation on engines/configurations that cannot apply the effect.
++- Manual recommendations open a bottom sheet on phones and landscape layouts, with poster art, year, rating, runtime, genres, provider synopsis and a details action. Missing provider metadata is disclosed, not fabricated.
++- End-of-movie discovery uses a compact bottom-centered prompt; the full list opens only when requested.
++- Glass Backgrounds on Controls OFF means opaque theme-colored surfaces, outline separation and matching text/icon colors. ON uses static tinted translucency without decoded-frame readback.
++
++## Embedded VLC
++- Include VideoLAN `org.videolan.android:libvlc-all:3.7.8` as a native in-app engine. Select **Playback → Playback Engine → VLC (built-in)**; no external VLC installation is required. The player engine button cycles ExoPlayer → MPV → VLC → ExoPlayer.
++- Support native video rendering, play/pause, seek/resume, speed, volume, embedded/external subtitle selection, audio selection/delay, subtitle delay, resize and lifecycle cleanup. Native stop/release is dispatched off the UI thread.
++- LibVLC 3.x does not provide ExoPlayer's arbitrary HTTP request/response overrides. Protected-header, separate-audio and chunked YouTube sources fall back to ExoPlayer with an explanatory message, rather than dropping authentication.
++- VLC does **not** implement this app's Night Mode DynamicsProcessing effect, styled Compose subtitle renderer, disc-title UI or seek-preview extraction. Existing ExoPlayer/MPV choices remain available. VLC uses its own native subtitle appearance.
++- VideoLAN attribution is included in Settings → Licenses; this GPL v3 app includes GPL/LGPL components under their respective licenses. LibVLC JNI source: https://code.videolan.org/videolan/libvlcjni ; VLC source: https://code.videolan.org/videolan/vlc
++
++## Preserved
++Downloads navigation, unlimited downloads, rating position, Library categories, all-catalog search, removed type chip/spacing, download subtitle caching, profile insights, StreamPlay/CineStream and repository-first CloudStream browser remain intact.
++
++## Validation requirements
++The workflow blocks publication until focused v1.19/v1.21/v1.22/v1.23 tests, full Android release compilation, APK/native alignment, signing continuity, exact signed APK Android 16 installation and a **separate debug-build native VLC playback/lifecycle smoke test** pass. The native test exercises local decode, advancing position, seek/speed, pause, lifecycle return and surface recreation.
++
++These checks are not physical Moto G85 performance validation, network-stream acceptance, or a claim that all lag is fixed. Runtime testing on the user's device is still required. Keep the installed app/data; the release must retain the delivered v1.21/v1.22 signer and package ID.
+diff --git a/gradle.properties b/gradle.properties
+index 867afb1..b45f58b 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -13,4 +13,4 @@ org.gradle.caching=true
+ #Android
+ android.nonTransitiveRClass=true
+ android.useAndroidX=true
+-nuvio.app.versionName=1.22
++nuvio.app.versionName=1.23
+diff --git a/iosApp/Configuration/Version.xcconfig b/iosApp/Configuration/Version.xcconfig
+index 70bff9d..c54b94d 100644
+--- a/iosApp/Configuration/Version.xcconfig
++++ b/iosApp/Configuration/Version.xcconfig
+@@ -1,2 +1,2 @@
+-CURRENT_PROJECT_VERSION=220
+-MARKETING_VERSION=1.22
++CURRENT_PROJECT_VERSION=230
++MARKETING_VERSION=1.23

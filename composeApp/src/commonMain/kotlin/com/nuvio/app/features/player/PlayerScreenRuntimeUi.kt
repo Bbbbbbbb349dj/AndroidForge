@@ -507,6 +507,16 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
         NuvioEnhancedSettingsRepository.ensureLoaded()
         NuvioEnhancedSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+        PlayerRecommendationsDialog(
+            visible = showManualRecommendations,
+            items = movieRecommendationCandidates,
+            onOpen = { preview ->
+                showManualRecommendations = false
+                flushWatchProgress()
+                args.onOpenMetaDetails?.invoke(preview)
+            },
+            onDismiss = { showManualRecommendations = false },
+        )
     AnimatedVisibility(
         visible = (controlsVisible || showParentalGuide) && !playerControlsLocked && !isInPip,
         enter = fadeIn(),
@@ -521,6 +531,11 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
         val portraitPlayback by PlayerOrientationPreference.portrait.collectAsStateWithLifecycle()
         val pipAvailable = isIos && playerSettingsUiState.miniPlayerEnabled &&
             playerController?.isPictureInPictureSupported() == true
+        // Live TV channel artwork is not a title logo; retain the program title text instead.
+        val playerTitleLogo = if (isLiveTvPlayback) null else logo
+        val showPlayerTitleLogo = playerSettingsUiState.showPlayerTitleLogo && !isLiveTvPlayback
+        PlayerControlsShell(
+            bottomActions = {
         PlayerFeatureActions(
             nightModeVisible = playerSettingsUiState.nightModeButtonEnabled,
             nightModeEnabled = playerSettingsUiState.nightModeEnabled,
@@ -531,20 +546,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(isEpisode: Boolean) {
             recommendationsVisible = isMoviePlayback && playerSettingsUiState.movieRecommendationsEnabled,
             onRecommendations = { showManualRecommendations = true },
         )
-        PlayerRecommendationsDialog(
-            visible = showManualRecommendations,
-            items = movieRecommendationCandidates,
-            onOpen = { preview ->
-                showManualRecommendations = false
-                flushWatchProgress()
-                args.onOpenMetaDetails?.invoke(preview)
             },
-            onDismiss = { showManualRecommendations = false },
-        )
-        // Live TV channel artwork is not a title logo; retain the program title text instead.
-        val playerTitleLogo = if (isLiveTvPlayback) null else logo
-        val showPlayerTitleLogo = playerSettingsUiState.showPlayerTitleLogo && !isLiveTvPlayback
-        PlayerControlsShell(
             title = title,
             titleLogo = playerTitleLogo,
             showTitleLogo = showPlayerTitleLogo,
@@ -918,6 +920,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             flushWatchProgress()
             args.onOpenMetaDetails?.invoke(preview)
         },
+        onBrowseMovieRecommendations = { showManualRecommendations = true },
         onDismissMovieRecommendations = {
             movieRecommendationDismissedStage = PlayerNextEpisodeRules.movieRecommendationStage(
                 positionMs = playbackSnapshot.positionMs,

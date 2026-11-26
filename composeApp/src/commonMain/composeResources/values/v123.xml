@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="v123_vlc_description">Embedded VideoLAN LibVLC engine. No external VLC app required. Sources needing protected headers or split audio use ExoPlayer automatically.</string>
+    <string name="v123_vlc_title">VideoLAN LibVLC</string>
+    <string name="v123_vlc_notice">Built-in VLC playback powered by VideoLAN LibVLC 3.7.8. Copyright VideoLAN and VLC authors. Source and license information: code.videolan.org/videolan/libvlcjni</string>
+    <string name="v123_vlc_license">LibVLC JNI: LGPL 2.1 or later. Bundled VLC modules retain their own GPL/LGPL licenses. Nuvio Enhanced is distributed under GPL v3.</string>
+</resources>

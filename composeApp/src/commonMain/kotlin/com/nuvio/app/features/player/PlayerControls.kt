@@ -197,6 +197,7 @@ internal fun PlayerControlsShell(
     onTimelineTouchChange: (Boolean) -> Unit = {},
     titleLogo: String? = null,
     showTitleLogo: Boolean = false,
+    bottomActions: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current
     var timelineHeight by remember { mutableStateOf(0.dp) }
@@ -233,7 +234,7 @@ internal fun PlayerControlsShell(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = if (glassActive) 0.35f else 0.7f),
+                            if (LocalPlayerControlGlassEnabled.current) Color.Black.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface,
                             Color.Transparent,
                         ),
                     ),
@@ -386,13 +387,18 @@ internal fun PlayerControlsShell(
                             onTogglePlayback()
                         },
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(bottom = centerBottomPadding),
+                            .align(Alignment.Center),
                     )
                 }
             }
 
             if (showPlaybackControls && useLegacyLayout) {
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+                        .padding(horizontal = metrics.horizontalPadding)
+                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
+                ) {
                 ProgressControls(
                     playbackSnapshot = playbackSnapshot,
                     displayedPositionMs = displayedPositionMs,
@@ -419,12 +425,10 @@ internal fun PlayerControlsShell(
                     seekPreview = seekPreview,
                     onTimelineTouchChange = onTimelineTouchChange,
                     onPictureInPictureClick = onPictureInPictureClick,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .windowInsetsPadding(playerTimelineBottomInsets(metrics))
-                        .padding(horizontal = metrics.horizontalPadding),
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                bottomActions()
+                }
             }
             if (showPlaybackControls && !useLegacyLayout) {
                 Column(
@@ -433,7 +437,8 @@ internal fun PlayerControlsShell(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
-                        .padding(horizontal = metrics.horizontalPadding),
+                        .padding(horizontal = metrics.horizontalPadding)
+                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
                 ) {
                     if (!hideDetails) {
                         PlayerTimelineDetails(
@@ -486,6 +491,7 @@ internal fun PlayerControlsShell(
                         },
                         onTouchChange = onTimelineTouchChange,
                     )
+                    bottomActions()
                     PlayerControlActions(
                         playbackSnapshot = playbackSnapshot,
                         displayedPositionMs = displayedPositionMs,
@@ -601,7 +607,7 @@ private fun PlayerHeader(
                             lineHeight = metrics.titleSize * 1.16f,
                             fontWeight = FontWeight.Bold,
                         ),
-                        textColor = Color.White,
+                        textColor = playerControlForeground,
                         maxLines = 2,
                         maxLogoHeight = metrics.titleLogoMaxHeight,
                         maxLogoWidth = metrics.logoMaxWidth,
@@ -619,7 +625,7 @@ private fun PlayerHeader(
                                 fontSize = metrics.episodeInfoSize,
                                 lineHeight = metrics.episodeInfoSize * 1.3f,
                             ),
-                            color = Color.White.copy(alpha = 0.9f),
+                            color = playerControlForeground.copy(alpha = 0.9f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -634,7 +640,7 @@ private fun PlayerHeader(
                                 fontSize = metrics.metadataSize,
                                 lineHeight = metrics.metadataSize * 1.25f,
                             ),
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = playerControlForeground.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -645,7 +651,7 @@ private fun PlayerHeader(
                                 lineHeight = metrics.metadataSize * 1.25f,
                                 fontStyle = FontStyle.Italic,
                             ),
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = playerControlForeground.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -694,7 +700,7 @@ private fun PlayerHeader(
                             buttonSize = metrics.headerIconSize + 16.dp,
                             iconSize = metrics.headerIconSize,
                             selected = randomNextEpisodeMode,
-                            tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else Color.White,
+                            tint = if (randomNextEpisodeMode) MaterialTheme.colorScheme.primary else playerControlForeground,
                             onClick = onRandomNextEpisodeModeToggle,
                         )
                     }
@@ -714,7 +720,7 @@ private fun PlayerHeader(
                             buttonSize = metrics.headerIconSize + 16.dp,
                             iconSize = metrics.headerIconSize,
                             onClick = onPartyClick,
-                            tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
+                            tint = if (partyActive) MaterialTheme.colorScheme.primary else playerControlForeground,
                         )
                     }
                     if (onCastClick != null && !enhancedSettings.hidePlayerCast) {
@@ -791,7 +797,7 @@ private fun PlayerHeader(
                         modifier = Modifier.playerLiquidGlass(CircleShape, refractionHeight = 6.dp, refractionAmount = 8.dp),
                         shape = CircleShape,
                         containerColor = Color.Transparent,
-                        contentColor = Color.White,
+                        contentColor = playerControlForeground,
                         buttonSize = metrics.headerIconSize + 16.dp,
                         iconSize = metrics.headerIconSize,
                         contentDescription = stringResource(Res.string.compose_player_close),
@@ -811,7 +817,7 @@ internal fun PlayerHeaderIconButton(
     iconSize: androidx.compose.ui.unit.Dp,
     selected: Boolean = false,
     onClick: () -> Unit,
-    tint: Color = Color.White,
+    tint: Color = playerControlForeground,
 ) {
     Box(
         modifier = Modifier
@@ -902,14 +908,14 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
         else -> null
     }
     if (numbered != null) {
-        Icon(numbered, contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
+        Icon(numbered, contentDescription = null, tint = playerControlForeground, modifier = Modifier.size(size))
         return
     }
     Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
         Icon(
             imageVector = Icons.Rounded.Replay,
             contentDescription = null,
-            tint = Color.White,
+            tint = playerControlForeground,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { if (forward) scaleX = -1f },
@@ -917,7 +923,7 @@ private fun SkipStepIcon(seconds: Int, forward: Boolean, size: Dp) {
         val density = LocalDensity.current
         Text(
             text = seconds.toString(),
-            color = Color.White,
+            color = playerControlForeground,
             style = MaterialTheme.nuvioTypeScale.labelSm.copy(
                 fontSize = with(density) { (size * 0.26f).toSp() },
                 lineHeight = with(density) { (size * 0.26f).toSp() },
@@ -962,7 +968,7 @@ internal fun PlayPauseControlButton(
                 } else {
                     stringResource(Res.string.detail_btn_play)
                 },
-                tint = Color.White,
+                tint = playerControlForeground,
                 modifier = Modifier.size(metrics.playIconSize),
             )
         }
@@ -1345,9 +1351,9 @@ private fun PlayerProgressTrack(
         disabledInactiveTrackColor = PlayerBaseTrackColor,
     )
     val activeTrackColors = SliderDefaults.colors(
-        activeTrackColor = Color.White,
+        activeTrackColor = playerControlForeground,
         inactiveTrackColor = Color.Transparent,
-        disabledActiveTrackColor = Color.White,
+        disabledActiveTrackColor = playerControlForeground,
         disabledInactiveTrackColor = Color.Transparent,
     )
 
@@ -1394,12 +1400,12 @@ internal fun LockedPlayerOverlay(
 ) {
     val durationMs = playbackSnapshot.durationMs.coerceAtLeast(1L)
     val sliderColors = SliderDefaults.colors(
-        thumbColor = Color.White,
-        activeTrackColor = Color.White,
-        inactiveTrackColor = Color.White.copy(alpha = 0.28f),
-        disabledThumbColor = Color.White,
-        disabledActiveTrackColor = Color.White,
-        disabledInactiveTrackColor = Color.White.copy(alpha = 0.28f),
+        thumbColor = playerControlForeground,
+        activeTrackColor = playerControlForeground,
+        inactiveTrackColor = playerControlForeground.copy(alpha = 0.28f),
+        disabledThumbColor = playerControlForeground,
+        disabledActiveTrackColor = playerControlForeground,
+        disabledInactiveTrackColor = playerControlForeground.copy(alpha = 0.28f),
     )
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -1440,7 +1446,7 @@ internal fun LockedPlayerOverlay(
                 Icon(
                     imageVector = Icons.Rounded.Lock,
                     contentDescription = stringResource(Res.string.compose_player_unlock_controls),
-                    tint = Color.White,
+                    tint = playerControlForeground,
                     modifier = Modifier.size(34.dp),
                 )
             }
@@ -1448,7 +1454,7 @@ internal fun LockedPlayerOverlay(
             Text(
                 text = stringResource(Res.string.compose_player_tap_to_unlock),
                 style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontWeight = FontWeight.SemiBold),
-                color = Color.White.copy(alpha = 0.95f),
+                color = playerControlForeground.copy(alpha = 0.95f),
             )
         }
 
@@ -1496,7 +1502,7 @@ internal fun LockedPlayerOverlay(
                                 sliderState = sliderState,
                                 enabled = false,
                                 colors = SliderDefaults.colors(
-                                    disabledActiveTrackColor = Color.White,
+                                    disabledActiveTrackColor = playerControlForeground,
                                     disabledInactiveTrackColor = Color.Transparent,
                                 ),
                             )
@@ -1525,7 +1531,7 @@ internal fun LockedPlayerOverlay(
                 Text(
                     text = formatPlaybackRuntime(displayedPositionMs, playbackSnapshot.durationMs, showRemainingTime),
                     style = MaterialTheme.nuvioTypeScale.bodyMd.copy(fontSize = (metrics.timeSize.value + 2).sp),
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = playerControlForeground.copy(alpha = 0.9f),
                     modifier = Modifier.align(Alignment.End),
                 )
             }
@@ -1559,7 +1565,7 @@ private fun TimePill(
                 lineHeight = fontSize * 1.25f,
                 fontWeight = FontWeight.Medium,
             ),
-            color = Color.White,
+            color = playerControlForeground,
         )
     }
 }
@@ -1570,7 +1576,7 @@ private fun PlayerActionPillButton(
     onClick: () -> Unit,
     icon: ImageVector? = null,
     painter: Painter? = null,
-    tint: Color = Color.White,
+    tint: Color = playerControlForeground,
 ) {
     Row(
         modifier = Modifier
@@ -1620,7 +1626,7 @@ private fun PlayerDeviceStatusOverlay(
         modifier = modifier,
         shape = RoundedCornerShape(999.dp),
         color = Color.Black.copy(alpha = 0.42f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+        border = BorderStroke(1.dp, playerControlForeground.copy(alpha = 0.14f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
@@ -1651,7 +1657,7 @@ private fun PlayerDeviceStatusOverlay(
                     lineHeight = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 ),
-                color = Color.White.copy(alpha = 0.92f),
+                color = playerControlForeground.copy(alpha = 0.92f),
                 maxLines = 1,
             )
             PlayerBatteryStatusItem(
@@ -1721,7 +1727,7 @@ private fun PlayerDeviceStatusItem(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.88f),
+            tint = playerControlForeground.copy(alpha = 0.88f),
             modifier = Modifier.size(11.dp),
         )
         Text(
@@ -1731,7 +1737,7 @@ private fun PlayerDeviceStatusItem(
                 lineHeight = 12.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
-            color = Color.White.copy(alpha = 0.9f),
+            color = playerControlForeground.copy(alpha = 0.9f),
             maxLines = 1,
         )
     }
@@ -1760,7 +1766,7 @@ private fun PlayerBatteryStatusItem(
                 lineHeight = 12.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
-            color = Color.White.copy(alpha = 0.9f),
+            color = playerControlForeground.copy(alpha = 0.9f),
             maxLines = 1,
         )
     }
@@ -1777,9 +1783,9 @@ private fun PlayerBatteryGlyph(
     val activeColor = if (charging) {
         Color(0xFF8CFFB3)
     } else {
-        Color.White.copy(alpha = 0.9f)
+        playerControlForeground.copy(alpha = 0.9f)
     }
-    val outlineColor = Color.White.copy(alpha = 0.72f)
+    val outlineColor = playerControlForeground.copy(alpha = 0.72f)
     val bodyWidth = 13.dp
     val bodyHeight = 7.dp
     val capWidth = 1.2.dp

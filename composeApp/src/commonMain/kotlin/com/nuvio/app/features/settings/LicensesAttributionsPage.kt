@@ -134,6 +134,16 @@ private fun LicensesAttributionsBody(
                 item = platformLicenseItem(),
                 isTablet = isTablet,
             )
+            if (!isIos) {
+                PlainStackDivider()
+                LicenseRow(
+                    item = LicenseItem(
+                        Res.string.v123_vlc_title, Res.string.v123_vlc_notice,
+                        Res.string.v123_vlc_license, "https://code.videolan.org/videolan/libvlcjni",
+                    ),
+                    isTablet = isTablet,
+                )
+            }
         }
 
         PlainSettingsStack(

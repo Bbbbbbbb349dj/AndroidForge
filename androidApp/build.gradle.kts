@@ -109,6 +109,13 @@ android {
         jniLibs.directories.add("../composeApp/src/full/jniLibs")
     }
 
+    if (providers.gradleProperty("nuvio.playerSmokeTest").orNull == "true") {
+        sourceSets.getByName("androidTest") {
+            java.setSrcDirs(listOf("src/v123AndroidTest/kotlin"))
+            assets.srcDir("../testFixtures")
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

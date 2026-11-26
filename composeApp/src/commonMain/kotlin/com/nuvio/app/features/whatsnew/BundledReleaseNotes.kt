@@ -44,8 +44,22 @@ internal object BundledReleaseNotes {
         ),
     )
 
+    val v123 = WhatsNewRelease(
+        version = "1.23",
+        title = "Nuvio Enhanced 1.23 — Player stability & built-in VLC",
+        publishedAt = null,
+        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.23-apk",
+        notes = listOf(
+            WhatsNewNote(WhatsNewNoteCategory.PERFORMANCE, "Removed decoded-video frame copying and live refraction from player controls. Restored bounded startup caching instead of zero-buffer startup. These changes target responsiveness; they are not a promise that every provider stream will be smooth.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Built-in VideoLAN VLC engine is selectable in Playback settings. The engine switch cycles ExoPlayer, MPV and VLC. Protected-header and split-audio sources use ExoPlayer with an explanation. VLC does not support this app's Night Mode audio effect.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Night Mode and recommendations now live in the bottom controls. Recommendations open a bottom sheet with posters, ratings, genres and provider descriptions instead of a side list. End-of-movie recommendations use a compact bottom prompt.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FIXES, "Glass off now uses opaque theme-colored control surfaces with separating borders and matching text. Center transport no longer shifts with title/control measurements.", null),
+            WhatsNewNote(WhatsNewNoteCategory.OTHER, "Preserved Downloads, unlimited downloads, Library categories, profile insights, search customization, subtitle caching and the repository-first extension browser.", null),
+        ),
+    )
+
     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
-        val releases = listOf(v122, v121) + content?.snapshot?.releases.orEmpty()
+        val releases = listOf(v123, v122, v121) + content?.snapshot?.releases.orEmpty()
         return WhatsNewContent(
             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
             fromCache = content?.fromCache ?: true,

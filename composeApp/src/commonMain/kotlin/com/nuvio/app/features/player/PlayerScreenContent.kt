@@ -211,7 +211,9 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         runtime.BindPlayerRuntimeEffects()
         runtime.BindSourceFallbackStallWatchdog()
         CompositionLocalProvider(
-            LocalLiquidGlassBackdrop provides rememberVideoFrameBackdrop(enabled = !runtime.isMiniPresentation && playerSettingsUiState.playerControlGlassEnabled && isLiquidGlassSupported()),
+            // Never copy decoded video frames into Compose at 30 fps. Player chrome uses
+            // inexpensive tinted translucency; video rendering retains its own surface.
+            LocalLiquidGlassBackdrop provides null,
             LocalPlayerControlGlassEnabled provides playerSettingsUiState.playerControlGlassEnabled,
             LocalPlayerThemeGlassTint provides androidx.compose.material3.MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
         ) {

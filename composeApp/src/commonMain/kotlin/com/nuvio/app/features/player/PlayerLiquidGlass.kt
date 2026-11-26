@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,8 +59,12 @@ internal val PlayerGlassFallback = Color.White.copy(alpha = 0.08f)
 /** Hairline rim that sells the glass edge on top of Kyant's highlight. */
 internal val PlayerGlassRim = Color.White.copy(alpha = 0.22f)
 
-/** False when "Glass Backgrounds on Controls" is off: player buttons and pills draw no backing. */
+/** Glass off means opaque theme surfaces and visible separation, never missing backings. */
 internal val LocalPlayerControlGlassEnabled = staticCompositionLocalOf { true }
+
+internal val playerControlForeground: Color
+    @Composable get() = if (LocalPlayerControlGlassEnabled.current) Color.White else MaterialTheme.colorScheme.onSurface
+
 
 /** Theme accent tint for the glass sheen so player chrome follows the active theme. */
 internal val LocalPlayerThemeGlassTint = staticCompositionLocalOf { Color.White.copy(alpha = 0.05f) }
@@ -82,7 +88,15 @@ internal fun Modifier.playerLiquidGlass(
     // text needs a backing to stay readable over the video.
     isControl: Boolean = true,
 ): Modifier {
-    if (isControl && !LocalPlayerControlGlassEnabled.current) return this
+    if (isControl && !LocalPlayerControlGlassEnabled.current) {
+        return clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+    }
+    // A static tint is deliberate: no blur/refraction or decoded-frame readback in controls.
+    if (isControl) return clip(shape)
+        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
+        .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f), shape)
     val glass = clip(shape).ambientLiquidGlass(
         shape = shape,
         tint = tint,

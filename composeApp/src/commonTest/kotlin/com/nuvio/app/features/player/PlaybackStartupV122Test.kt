@@ -3,8 +3,8 @@ package com.nuvio.app.features.player
 import kotlin.test.*
 
 class PlaybackStartupV122Test {
-    @Test fun defaultStartupDoesNotWaitForAnExtraTimeBuffer() {
-        assertEquals(0, PlaybackStartupPolicy.startBufferMs)
+    @Test fun defaultStartupUsesABoundedNonzeroSafetyBuffer() {
+        assertTrue(PlaybackStartupPolicy.startBufferMs in 500..2_000)
     }
 
     @Test fun recoveryStillHasBufferProtection() {
