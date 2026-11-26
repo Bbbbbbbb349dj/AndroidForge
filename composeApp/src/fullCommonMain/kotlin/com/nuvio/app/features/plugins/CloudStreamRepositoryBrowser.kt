@@ -90,6 +90,9 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
     val listState = rememberLazyListState()
     LaunchedEffect(repositoryUrl, advanced, type, language, status) { listState.scrollToItem(0) }
 
+    // Settings' scrolling content does not establish a Material Surface content color.
+    // Bind text/icons to the same scheme as this browser's dark/light background.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if (repositoryUrl != null || advanced) IconButton(onClick = back) {
@@ -160,9 +163,10 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
                                 verticalAlignment = Alignment.CenterVertically) {
                                 BrowserIcon(repository.manifest.iconUrl, repository.manifest.name)
                                 Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                                    Text(repository.manifest.name, style = MaterialTheme.typography.titleMedium)
+                                    Text(repository.manifest.name, style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface)
                                     Text("Downloaded: ${entries.count { it.isInstalled }}/${entries.size}" + if (!repository.enabled) " · Disabled" else "",
-                                        style = MaterialTheme.typography.labelMedium)
+                                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     repository.manifest.description?.let { Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                                     repository.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -178,7 +182,8 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
                                 verticalAlignment = Alignment.CenterVertically) {
                                 BrowserIcon(plugin.metadata.iconUrl, plugin.metadata.name)
                                 Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                                    Text(plugin.metadata.name, style = MaterialTheme.typography.titleMedium)
+                                    Text(plugin.metadata.name, style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface)
                                     val size = plugin.metadata.fileSize?.let { "  ${it / 1024} kB" }.orEmpty()
                                     Text("${cloudStreamBrowserLanguage(plugin.metadata.language)}  v${plugin.installedVersion ?: plugin.metadata.version}$size",
                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -268,6 +273,7 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
             configuringPluginId = null
             scope.launch { CloudStreamRepository.openPluginSettings(plugin.metadata.id.value).onFailure { NuvioToastController.show(it.message ?: "Settings unavailable") } }
         })
+    }
     }
 }
 

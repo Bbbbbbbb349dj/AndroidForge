@@ -682,12 +682,57 @@ index 2d10f19..2266f88 100644
          return WhatsNewContent(
              snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
              fromCache = content?.fromCache ?: true,
+diff --git a/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamRepositoryBrowser.kt b/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamRepositoryBrowser.kt
+index b469b5c..0a69736 100644
+--- a/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamRepositoryBrowser.kt
++++ b/composeApp/src/fullCommonMain/kotlin/com/nuvio/app/features/plugins/CloudStreamRepositoryBrowser.kt
+@@ -90,6 +90,9 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
+     val listState = rememberLazyListState()
+     LaunchedEffect(repositoryUrl, advanced, type, language, status) { listState.scrollToItem(0) }
+ 
++    // Settings' scrolling content does not establish a Material Surface content color.
++    // Bind text/icons to the same scheme as this browser's dark/light background.
++    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+             if (repositoryUrl != null || advanced) IconButton(onClick = back) {
+@@ -160,9 +163,10 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
+                                 verticalAlignment = Alignment.CenterVertically) {
+                                 BrowserIcon(repository.manifest.iconUrl, repository.manifest.name)
+                                 Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+-                                    Text(repository.manifest.name, style = MaterialTheme.typography.titleMedium)
++                                    Text(repository.manifest.name, style = MaterialTheme.typography.titleMedium,
++                                        color = MaterialTheme.colorScheme.onSurface)
+                                     Text("Downloaded: ${entries.count { it.isInstalled }}/${entries.size}" + if (!repository.enabled) " · Disabled" else "",
+-                                        style = MaterialTheme.typography.labelMedium)
++                                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                     repository.manifest.description?.let { Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium,
+                                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                                     repository.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+@@ -178,7 +182,8 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
+                                 verticalAlignment = Alignment.CenterVertically) {
+                                 BrowserIcon(plugin.metadata.iconUrl, plugin.metadata.name)
+                                 Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+-                                    Text(plugin.metadata.name, style = MaterialTheme.typography.titleMedium)
++                                    Text(plugin.metadata.name, style = MaterialTheme.typography.titleMedium,
++                                        color = MaterialTheme.colorScheme.onSurface)
+                                     val size = plugin.metadata.fileSize?.let { "  ${it / 1024} kB" }.orEmpty()
+                                     Text("${cloudStreamBrowserLanguage(plugin.metadata.language)}  v${plugin.installedVersion ?: plugin.metadata.version}$size",
+                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+@@ -269,6 +274,7 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
+             scope.launch { CloudStreamRepository.openPluginSettings(plugin.metadata.id.value).onFailure { NuvioToastController.show(it.message ?: "Settings unavailable") } }
+         })
+     }
++    }
+ }
+ 
+ @Composable private fun BrowserIcon(url: String?, name: String) {
 diff --git a/docs/releases/1.24.md b/docs/releases/1.24.md
 new file mode 100644
-index 0000000..f86b72b
+index 0000000..b82fa37
 --- /dev/null
 +++ b/docs/releases/1.24.md
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,22 @@
 +# Nuvio Enhanced 1.24 (240)
 +
 +## Player
@@ -701,6 +746,10 @@ index 0000000..f86b72b
 +- Paired viewing-time and seven-day activity summary instead of huge stacked cards.
 +- Collection navigation as a grouped list with counts, icons and working collection sheets; includes Continue, Library, Completed, Upcoming, Watched and Ongoing, plus episode count.
 +- Readable genre bars and movie/series balance, retaining real data, loading/partial-data disclosures, refresh and taste tags.
++
++## CloudStream contrast
++- Bind the entire repository browser's inherited text and icon color to the active Material on-surface color instead of the Settings container's default black. This includes the Extensions heading, menu/back/delete/download icons, repository names and plugin titles.
++- Repository download counts use the theme's secondary foreground. Preserve existing filtering, repository layout, footer totals and configuration actions.
 +
 +## Delivery scope
 +One build-only run authorized by the user. Tests, debug APK and emulator checks omitted. Full signed ARM64 release with code/resource shrinking disabled, so the APK is larger. Package/version/signing continuity and native alignment checks remain. No claim of physical-device UI or performance acceptance.
