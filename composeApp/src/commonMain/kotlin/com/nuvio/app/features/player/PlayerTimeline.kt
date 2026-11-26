@@ -70,7 +70,7 @@ import org.jetbrains.compose.resources.stringResource
 
 internal val PlayerTimelineContentInset = 2.dp
 
-internal val PlayerChapterMarkWidth = 2.dp
+internal val PlayerChapterMarkWidth = 1.dp
 
 internal val PlayerChapterMarkColor = Color.Black.copy(alpha = 0.6f)
 
@@ -214,7 +214,7 @@ internal fun PlayerTimeline(
     val isInteracting = enabled && durationMs > 0L && (isPressed || isDragged)
     ReportTimelineTouch(isInteracting, onTouchChange)
     val trackThickness by animateDpAsState(
-        targetValue = if (isInteracting) 10.dp else 6.dp,
+        targetValue = if (isInteracting) 5.dp else 3.dp,
         animationSpec = tween(durationMillis = if (isInteracting) 140 else 180),
         label = "playerTimelineThickness",
     )

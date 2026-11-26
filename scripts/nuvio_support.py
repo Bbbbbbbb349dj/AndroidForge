@@ -3879,11 +3879,14 @@ def prepare_nuvio_source(
     from nuvio_v121_patch import apply_v121_patch
     from nuvio_v122_patch import apply_v122_patch, v122_is_applied
     from nuvio_v123_patch import apply_v123_patch, v123_is_applied
-    if not v123_is_applied(root):
-        if not v122_is_applied(root):
-            patched_files.extend(apply_v121_patch(root))
-            patched_files.extend(apply_v122_patch(root))
-        patched_files.extend(apply_v123_patch(root))
+    from nuvio_v124_patch import apply_v124_patch, v124_is_applied
+    if not v124_is_applied(root):
+        if not v123_is_applied(root):
+            if not v122_is_applied(root):
+                patched_files.extend(apply_v121_patch(root))
+                patched_files.extend(apply_v122_patch(root))
+            patched_files.extend(apply_v123_patch(root))
+        patched_files.extend(apply_v124_patch(root))
 
     # Guard against `*/bin/*` archive exclusions breaking Cargo manifest checks
     thumbs_cargo = root / "native" / "thumbs" / "Cargo.toml"

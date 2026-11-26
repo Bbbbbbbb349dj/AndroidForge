@@ -168,6 +168,7 @@ internal fun PlayerControlActions(
     randomNextEpisodeMode: Boolean = false,
     onRandomNextEpisodeModeToggle: (() -> Unit)? = null,
     onInteraction: () -> Unit,
+    extraActions: @Composable () -> Unit = {},
 ) {
     val enhancedSettings by remember {
         NuvioEnhancedSettingsRepository.ensureLoaded()
@@ -338,14 +339,10 @@ internal fun PlayerControlActions(
             Box(modifier = Modifier.weight(1f)) {
                 Row(
                     modifier = Modifier
-                        .playerLiquidGlass(
-                            shape = PlayerGlassCapsule,
-                            refractionHeight = 8.dp,
-                            refractionAmount = 12.dp,
-                        )
                         .horizontalScroll(scrollState),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    extraActions()
                     (if (expanded) primaryActions + secondaryActions else visibleActions).forEach { action ->
                         Box {
                             PlayerAction(
@@ -418,7 +415,7 @@ private fun PlayerAction(
     iconSize: Dp = 24.dp,
     tint: Color = playerControlForeground,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+    IconButton(onClick = onClick, modifier = Modifier.padding(horizontal = 3.dp).size(42.dp).playerLiquidGlass(RoundedCornerShape(10.dp))) {
         if (painter != null) {
             Icon(painter, description, tint = tint, modifier = Modifier.size(iconSize))
         } else if (icon != null) {

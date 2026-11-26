@@ -28,8 +28,10 @@ class PlayerDeltaTest(unittest.TestCase):
             self.assertTrue(apply_v123_patch(root))
             self.assertTrue(v123_is_applied(root))
             self.assertEqual([], apply_v123_patch(root))
+            # Compare against the committed v1.23 baseline, not later redesigned files.
             for name in files:
-                self.assertEqual((ROOT / name).read_bytes(), (root / name).read_bytes(), name)
+                expected = subprocess.check_output(["git", "show", f"88c084d:{name}"], cwd=ROOT)
+                self.assertEqual(expected, (root / name).read_bytes(), name)
             target = root / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlaybackStartupPolicy.kt"
             target.write_text(target.read_text().replace("1_500", "0"))
             self.assertFalse(v123_is_applied(root))
@@ -43,7 +45,7 @@ class PlayerDeltaTest(unittest.TestCase):
 
     def test_actions_live_in_both_bottom_layouts_not_side_overlay(self):
         player = ROOT / "composeApp/src/commonMain/kotlin/com/nuvio/app/features/player"
-        self.assertEqual(2, (player / "PlayerControls.kt").read_text().count("bottomActions()"))
+        self.assertEqual(2, (player / "PlayerControls.kt").read_text().count("extraActions = bottomActions"))
         actions = (player / "PlayerFeatureActions.kt").read_text()
         self.assertNotIn("Alignment.CenterEnd", actions)
         for token in ["ModalBottomSheet(", "AsyncImage(", "preview.description", "preview.imdbRating"]:

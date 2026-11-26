@@ -39,29 +39,22 @@ internal fun PlayerFeatureActions(
     recommendationsVisible: Boolean,
     onRecommendations: () -> Unit,
 ) {
-    if (!nightModeVisible && !recommendationsVisible) return
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (nightModeVisible) {
-            FilterChip(
-                selected = nightModeEnabled, enabled = nightModeSupported,
-                colors = FilterChipDefaults.filterChipColors(
-                    labelColor = playerControlForeground, iconColor = playerControlForeground,
-                    disabledLabelColor = playerControlForeground.copy(alpha = 0.38f),
-                    disabledLeadingIconColor = playerControlForeground.copy(alpha = 0.38f),
-                ),
-                onClick = onNightModeToggle,
-                label = { Text(if (nightModeSupported) "Night mode" else "Night mode unavailable") },
-                leadingIcon = { Icon(Icons.Rounded.NightsStay, null, Modifier.size(18.dp)) },
-            )
+            TextButton(
+                onClick = onNightModeToggle, enabled = nightModeSupported,
+                modifier = Modifier.playerLiquidGlass(RoundedCornerShape(10.dp)).height(40.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp),
+            ) {
+                val tint = if (!nightModeSupported) playerControlForeground.copy(alpha = 0.4f)
+                    else if (nightModeEnabled) MaterialTheme.colorScheme.primary else playerControlForeground
+                Icon(Icons.Rounded.NightsStay, if (nightModeSupported) "Night mode" else "Night mode unavailable", Modifier.size(18.dp), tint = tint)
+                Spacer(Modifier.width(6.dp))
+                Text("Night", color = tint, style = MaterialTheme.typography.labelMedium)
+            }
         }
-        if (recommendationsVisible) AssistChip(
-            onClick = onRecommendations,
-            colors = AssistChipDefaults.assistChipColors(labelColor = playerControlForeground, leadingIconContentColor = playerControlForeground),
-            label = { Text(stringResource(Res.string.v121_recommendations)) },
-            leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp)) },
+        if (recommendationsVisible) PlayerActionPillButton(
+            label = "Discover", icon = Icons.Rounded.AutoAwesome, onClick = onRecommendations,
         )
     }
 }

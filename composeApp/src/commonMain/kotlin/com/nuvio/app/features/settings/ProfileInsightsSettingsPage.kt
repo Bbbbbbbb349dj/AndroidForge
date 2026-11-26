@@ -399,7 +399,6 @@ private fun ProfileInsightsBody(
                 isRefreshing = isRefreshing,
                 onRefresh = ProfileInsightsRefresher::refresh,
             )
-            ProfileWatchTimeRow(stats = stats)
             SettingsSection(
                 title = stringResource(Res.string.v121_profile_taste),
                 isTablet = isTablet,
@@ -434,70 +433,62 @@ private fun ProfileActivityDashboard(
     onBack: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.nuvio.colors
-    val accent = profile?.avatarColorHex?.let(::parseHexColor) ?: colors.accent
+    val accent = colors.accent
     val avatarUrl = remember(profile, avatarItem) { profile?.let { profileAvatarImageUrl(it, avatarItem) } }
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (onBack != null) {
-                ProfileHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
-            }
-            Text(stringResource(Res.string.v121_profile_eyebrow), style = MaterialTheme.typography.labelLarge,
-                color = accent, modifier = Modifier.weight(1f))
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (onBack != null) ProfileHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack,
+                stringResource(Res.string.action_back), onBack)
+            Text("Profile", Modifier.weight(1f).padding(horizontal = 8.dp),
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
             if (onEditProfile != null) ProfileHeaderIconButton(Icons.Rounded.Edit,
                 stringResource(Res.string.profile_insights_edit_profile), onEditProfile)
             if (onSwitchProfile != null) ProfileHeaderIconButton(Icons.Rounded.People,
                 stringResource(Res.string.profile_insights_switch_profile), onSwitchProfile)
         }
-        Surface(shape = RoundedCornerShape(28.dp), color = colors.surface) {
-            Column(
-                Modifier.background(Brush.linearGradient(listOf(accent.copy(alpha = 0.14f), Color.Transparent)))
-                    .padding(if (isTablet) 28.dp else 20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                ProfileHeroAvatar(profileName, avatarUrl, accent, avatarItem?.bgColor?.let(::parseHexColor) ?: accent, isTablet)
-                Text(stringResource(Res.string.v121_profile_greeting, profileName),
-                    style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = colors.textPrimary)
-                Text(stringResource(Res.string.v121_profile_subtitle),
-                    style = MaterialTheme.typography.bodyLarge, color = colors.textSecondary)
-                if (stats.libraryCount == 0 && stats.recentActivityCount == 0 && stats.continueCount == 0) {
-                    Text(stringResource(Res.string.v121_profile_empty), style = MaterialTheme.typography.bodyMedium, color = accent)
-                }
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            ProfileHeroAvatar(profileName, avatarUrl, accent, avatarItem?.bgColor?.let(::parseHexColor) ?: accent, false)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(profileName, style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Your films. Your shows. Your story.", style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
             }
         }
-        Text(stringResource(Res.string.v121_profile_activity), style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold, color = colors.textPrimary)
-        val cards = listOf(
-            Triple(ProfileInsightCollectionKind.Continue, stats.continueCount, Res.string.v121_profile_continue_hint),
-            Triple(ProfileInsightCollectionKind.Library, stats.libraryCount, Res.string.v121_profile_library_hint),
-            Triple(ProfileInsightCollectionKind.Completed, stats.completedCount, Res.string.v121_profile_completed_hint),
-            Triple(ProfileInsightCollectionKind.Upcoming, stats.upcomingCount, Res.string.v121_profile_upcoming_hint),
-            Triple(ProfileInsightCollectionKind.Watched, stats.watchedMovieCount, Res.string.profile_insights_stat_watched),
+        ProfileWatchTimeRow(stats)
+        Text("Your collection", style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+        val entries = listOf(
+            Triple(ProfileInsightCollectionKind.Continue, stats.continueCount, Res.string.profile_insights_hero_continue),
+            Triple(ProfileInsightCollectionKind.Library, stats.libraryCount, Res.string.profile_insights_hero_library),
+            Triple(ProfileInsightCollectionKind.Completed, stats.completedCount, Res.string.profile_insights_stat_completed),
+            Triple(ProfileInsightCollectionKind.Upcoming, stats.upcomingCount, Res.string.profile_insights_hero_upcoming),
+            Triple(ProfileInsightCollectionKind.Watched, stats.watchedMovieCount, Res.string.profile_insights_hero_watched),
             Triple(ProfileInsightCollectionKind.Ongoing, stats.ongoingSeriesCount, Res.string.profile_insights_stat_ongoing),
         )
-        cards.chunked(if (isTablet) 3 else 2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { (kind, count, label) ->
-                    Surface(
-                        modifier = Modifier.weight(1f).clickable { onCollectionClick(kind) },
-                        shape = RoundedCornerShape(20.dp), color = colors.surface,
-                        border = BorderStroke(1.dp, accent.copy(alpha = if (isCollectionAvailable(kind)) 0.28f else 0.08f)),
-                    ) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(count.toString(), style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold, color = accent)
-                            Text(stringResource(label), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+        val icons = listOf(Icons.Rounded.PlayArrow, Icons.Rounded.CollectionsBookmark, Icons.Rounded.Favorite,
+            Icons.Rounded.CalendarMonth, Icons.Rounded.Movie, Icons.Rounded.Tv)
+        Surface(color = colors.surface, shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                entries.forEachIndexed { index, (kind, count, label) ->
+                    if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.textSecondary.copy(alpha = 0.08f)))
+                    Row(Modifier.fillMaxWidth().clickable { onCollectionClick(kind) }.padding(vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.09f)),
+                            contentAlignment = Alignment.Center) {
+                            Icon(icons[index], null, Modifier.size(18.dp), tint = accent)
                         }
+                        Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+                        Text(count.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                            color = if (isCollectionAvailable(kind)) colors.textPrimary else colors.textSecondary)
+                        Text("›", color = colors.textSecondary, style = MaterialTheme.typography.titleLarge)
                     }
                 }
             }
         }
-        Surface(shape = RoundedCornerShape(20.dp), color = accent.copy(alpha = 0.09f)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(stats.recentActivityCount.toString(), style = MaterialTheme.typography.headlineMedium, color = accent)
-                Text(stringResource(Res.string.v121_profile_recent), style = MaterialTheme.typography.titleSmall)
-                Text(stringResource(Res.string.v121_profile_activity_hint), style = MaterialTheme.typography.bodySmall,
-                    color = colors.textSecondary)
-            }
+        Text("${stats.episodesWatchedCount} episodes watched", style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
+        if (stats.libraryCount == 0 && stats.recentActivityCount == 0 && stats.continueCount == 0) {
+            Text(stringResource(Res.string.v121_profile_empty), style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
         }
     }
 }
@@ -1048,41 +1039,22 @@ private fun ProfileMetricPill(
 
 @Composable
 private fun ProfileWatchTimeRow(stats: ProfileInsightsStats) {
-    val tokens = MaterialTheme.nuvio
-    Surface(
-        modifier = Modifier.fillMaxWidth().appGlassBackdrop(tokens.shapes.card),
-        color = tokens.colors.surface,
-        shape = tokens.shapes.card,
-        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = stringResource(Res.string.profile_insights_stat_time),
-                style = MaterialTheme.typography.titleMedium,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-            )
-            Text(
-                text = profileInsightDurationLabel(stats.trackedDurationMs),
-                style = MaterialTheme.typography.displayMedium,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-            )
-            Text(
-                text = stringResource(Res.string.profile_insights_stat_time_caption),
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.colors.textMuted,
-                textAlign = TextAlign.Center,
-            )
+    val colors = MaterialTheme.nuvio.colors
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = colors.surface) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(stringResource(Res.string.profile_insights_stat_time), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
+                Text(profileInsightDurationLabel(stats.trackedDurationMs), style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold, color = colors.textPrimary)
+            }
+            Box(Modifier.width(1.dp).height(40.dp).background(colors.textSecondary.copy(alpha = 0.14f)))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("Last 7 days", style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
+                Text(stats.recentActivityCount.toString(), style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold, color = colors.accent)
+                Text("titles active", style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
+            }
         }
     }
 }
@@ -1272,105 +1244,31 @@ private fun ProfileTasteCard(
     stats: ProfileInsightsStats,
     factsProgress: ProfileTitleFactsProgress? = null,
 ) {
-    val tokens = MaterialTheme.nuvio
-    val fallbackType = when (stats.topType) {
-        "movie" -> stringResource(Res.string.profile_insights_type_movie)
-        "series" -> stringResource(Res.string.profile_insights_type_series)
-        null -> null
-        else -> stats.topType.fallbackDisplayLabel()
-    }
-    val topSignal = stats.topGenre ?: fallbackType ?: stringResource(Res.string.profile_insights_taste_empty)
-
-    NuvioSurfaceCard {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .background(
-                            brush = MaterialTheme.themePalette.accentBrush(alpha = tokens.opacity.pressed),
-                            shape = RoundedCornerShape(18.dp),
-                        ),
-                    color = Color.Transparent,
-                    shape = RoundedCornerShape(18.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            modifier = Modifier.gradientMask(MaterialTheme.themePalette.accentBrush()),
-                            tint = tokens.colors.accent,
-                        )
+    val colors = MaterialTheme.nuvio.colors
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = colors.surface) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(stats.topGenre ?: stats.typeBalanceLabel.localizedLabel(), style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+            Text(stringResource(Res.string.profile_insights_taste_subtitle),
+                style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
+            stats.tasteSegments.take(PROFILE_TASTE_DONUT_MAX_GENRES).forEach { segment ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(segment.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+                        Text(segment.share.profilePercentLabel(), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
+                    }
+                    Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(colors.accent.copy(alpha = 0.10f))) {
+                        Box(Modifier.fillMaxWidth(segment.share.coerceIn(0f, 1f)).height(4.dp).background(colors.accent))
                     }
                 }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Text(
-                        text = stringResource(Res.string.profile_insights_taste_dna_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = tokens.colors.textMuted,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = topSignal,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = tokens.colors.textPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = stringResource(Res.string.profile_insights_taste_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.colors.textMuted,
-                    )
-                }
             }
-            if (stats.tasteSegments.isNotEmpty()) {
-                ProfileTasteGenreDonut(segments = stats.tasteSegments)
-                if (factsProgress != null && factsProgress.genresPending) {
-                    Text(
-                        text = stringResource(
-                            Res.string.profile_insights_genre_partial,
-                            factsProgress.genreResolved,
-                            factsProgress.genreTotal,
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.nuvio.colors.textMuted,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                    )
-                }
+            if (factsProgress != null && factsProgress.genresPending) {
+                Text(stringResource(Res.string.profile_insights_genre_partial, factsProgress.genreResolved, factsProgress.genreTotal),
+                    style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
             }
-            ProfileTasteBalanceBar(stats = stats)
-            if (stats.dnaChips.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    stats.dnaChips.chunked(2).forEach { rowChips ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            rowChips.forEach { chip ->
-                                ProfileTasteDnaChip(
-                                    text = chip.localizedLabel(),
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            repeat(2 - rowChips.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
+            ProfileTasteBalanceBar(stats)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                stats.dnaChips.forEach { ProfileTasteDnaChip(it.localizedLabel()) }
             }
         }
     }

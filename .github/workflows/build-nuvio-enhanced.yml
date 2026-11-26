@@ -1,6 +1,6 @@
 name: Build Nuvio Enhanced APK
 
-# Dedicated, reproducible APK build, unit-test, & release-signing pipeline for Nuvio Enhanced (v1.23)
+# Dedicated, reproducible APK build, unit-test, & release-signing pipeline for Nuvio Enhanced (v1.24)
 # pinned solely to the verified `nuvio-source-v1.1.2` GitHub Release archive.
 
 on:
@@ -15,7 +15,7 @@ on:
       - "androidApp/**"
       - "gradle.properties"
       - "iosApp/Configuration/Version.xcconfig"
-      - "docs/releases/1.23.md"
+      - "docs/releases/1.24.md"
       - ".github/workflows/build-nuvio-enhanced.yml"
   workflow_dispatch:
     inputs:
@@ -28,14 +28,14 @@ on:
         description: "GitHub Release tag where the compiled APK will be published"
         required: true
         type: string
-        default: "nuvio-enhanced-v1.23-apk"
+        default: "nuvio-enhanced-v1.24-apk"
       fresh_install_apk:
         description: "Publish a separately labelled fresh-install APK even when its signer differs from v1.21 (not an in-place upgrade)"
         required: false
         type: boolean
         default: false
       export_source_only:
-        description: "Export sanitized Nuvio Enhanced v1.23 source archive without compiling APK"
+        description: "Export sanitized Nuvio Enhanced v1.24 source archive without compiling APK"
         required: false
         type: boolean
         default: false
@@ -51,7 +51,7 @@ permissions:
 
 jobs:
   export-nuvio-source:
-    name: Export Sanitized Nuvio Enhanced v1.23 Source
+    name: Export Sanitized Nuvio Enhanced v1.24 Source
     needs: [build-nuvio-apk]
     if: ${{ always() && (inputs.export_source_only == true || contains(github.event.head_commit.message, '[source-export]') || needs.build-nuvio-apk.result == 'success') }}
     runs-on: ubuntu-latest
@@ -62,7 +62,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build & sanitize Nuvio Enhanced v1.23 standalone source ZIP
+      - name: Build & sanitize Nuvio Enhanced v1.24 standalone source ZIP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -92,11 +92,11 @@ jobs:
             --root "$PROJECT_ROOT" \
             --no-global-gradle
 
-          CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.23"
+          CLEAN_ROOT="$WORK_DIR/stage/Nuvio-Enhanced-v1.24"
           mv "$PROJECT_ROOT" "$CLEAN_ROOT"
-          if [ -f "$GITHUB_WORKSPACE/docs/releases/1.23-validation.md" ]; then
+          if [ -f "$GITHUB_WORKSPACE/docs/releases/1.24-validation.md" ]; then
             mkdir -p "$CLEAN_ROOT/docs/releases"
-            cp "$GITHUB_WORKSPACE/docs/releases/1.23-validation.md" "$CLEAN_ROOT/docs/releases/"
+            cp "$GITHUB_WORKSPACE/docs/releases/1.24-validation.md" "$CLEAN_ROOT/docs/releases/"
           fi
 
           # Scrub GitHub workflows, git metadata, signing keystores, local paths, and internal audit files
@@ -110,7 +110,7 @@ jobs:
             "$CLEAN_ROOT/.nuvio_enhanced_v117_applied" \
             "$CLEAN_ROOT/.nuvio_enhanced_v118_applied" \
             "$CLEAN_ROOT/.nuvio_enhanced_v119_applied" \
-            "$CLEAN_ROOT/.nuvio_enhanced_v123_applied" \
+            "$CLEAN_ROOT/.nuvio_enhanced_v124_applied" \
             "$CLEAN_ROOT/local.properties" \
             "$CLEAN_ROOT/PATCH_NOTES_AUDIT.md" \
             "$CLEAN_ROOT/AAR_CLASSES_LIST.txt" \
@@ -127,8 +127,8 @@ jobs:
             exit 1
           fi
 
-          OUT_ZIP="$WORK_DIR/Nuvio-Enhanced-v1.23-source.zip"
-          (cd "$WORK_DIR/stage" && zip -qr -9 "$OUT_ZIP" "Nuvio-Enhanced-v1.23")
+          OUT_ZIP="$WORK_DIR/Nuvio-Enhanced-v1.24-source.zip"
+          (cd "$WORK_DIR/stage" && zip -qr -9 "$OUT_ZIP" "Nuvio-Enhanced-v1.24")
           ls -lh "$OUT_ZIP"
 
           python3 - <<'PY' "$OUT_ZIP"
@@ -141,7 +141,7 @@ jobs:
           repo = os.environ["REPO"]
           token = os.environ["GH_TOKEN"]
           head_sha = os.environ["HEAD_SHA"]
-          out_tag = "nuvio-enhanced-v1.23-apk"
+          out_tag = "nuvio-enhanced-v1.24-apk"
 
           def api_req(url: str, method: str = "GET", body: bytes | None = None, content_type: str = "application/json") -> dict:
               req = urllib.request.Request(
@@ -171,8 +171,8 @@ jobs:
                   body=json.dumps({
                       "tag_name": out_tag,
                       "target_commitish": "main",
-                      "name": "Nuvio Enhanced v1.23 Source",
-                      "body": "Nuvio Enhanced v1.23 source archive. APK assets are published separately only after regression tests, release assembly and signing-continuity checks pass. See docs/releases/1.23-validation.md in the source archive for validation status.",
+                      "name": "Nuvio Enhanced v1.24 Source",
+                      "body": "Nuvio Enhanced v1.24 source archive. APK assets are published separately only after regression tests, release assembly and signing-continuity checks pass. See docs/releases/1.24-validation.md in the source archive for validation status.",
                       "draft": False,
                       "prerelease": False,
                   }).encode("utf-8"),
@@ -197,7 +197,7 @@ jobs:
               f"https://api.github.com/repos/{repo}/check-runs",
               method="POST",
               body=json.dumps({
-                  "name": "nuvio-source-v123-manifest",
+                  "name": "nuvio-source-v124-manifest",
                   "head_sha": head_sha,
                   "status": "completed",
                   "conclusion": "success",
@@ -211,7 +211,7 @@ jobs:
           PY
 
   build-nuvio-apk:
-    name: Build Nuvio Enhanced v1.23 Signed APK
+    name: Build Nuvio Enhanced v1.24 Signed APK
     if: ${{ inputs.export_source_only != true && !contains(github.event.head_commit.message, '[source-export]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -329,7 +329,7 @@ jobs:
           echo "Detected Nuvio project root: $PROJECT_ROOT"
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare Nuvio Enhanced v1.23 KMP source & verify branding hygiene
+      - name: Prepare Nuvio Enhanced v1.24 KMP source & verify branding hygiene
         run: |
           set -euo pipefail
           PROJECT_ROOT="${{ steps.source.outputs.project_root }}"
@@ -338,7 +338,7 @@ jobs:
             --android-sdk "$ANDROID_HOME"
 
           if grep -rnIiE "raja_ji|RAJA JI|Support Nuvio Enhanced 2\.0|Nuvio Enhanced 2\.0" "$PROJECT_ROOT/composeApp" "$PROJECT_ROOT/androidApp"; then
-            echo "::error::Forbidden legacy branding detected after v1.23 patches!"
+            echo "::error::Forbidden legacy branding detected after v1.24 patches!"
             exit 1
           fi
           echo "✓ Verified zero legacy RAJA JI / Nuvio Enhanced 2.0 references"
@@ -388,7 +388,7 @@ jobs:
           cargo --version
           cargo ndk --version
 
-      - name: Assemble Signed Nuvio Enhanced v1.23 Full Release APK
+      - name: Assemble Signed Nuvio Enhanced v1.24 Full Release APK
         working-directory: ${{ steps.source.outputs.project_root }}
         run: |
           set -euo pipefail
@@ -444,7 +444,7 @@ jobs:
           urllib.request.urlopen(req, timeout=60).close()
           PY
 
-      - name: Collect & verify signed v1.23 APK (V1+V2+V3 + Package Identity)
+      - name: Collect & verify signed v1.24 APK (V1+V2+V3 + Package Identity)
         id: collect
         env:
           FRESH_INSTALL_APK: ${{ inputs.fresh_install_apk || false }}
@@ -470,9 +470,9 @@ jobs:
 
           package_id = "com.nuvio.enhanced"
           final_name = (
-              "Nuvio-Enhanced-v1.23-full-arm64-v8a-fresh-install.apk"
+              "Nuvio-Enhanced-v1.24-full-arm64-v8a-fresh-install.apk"
               if os.environ.get("FRESH_INSTALL_APK") == "true"
-              else "Nuvio-Enhanced-v1.23-full-arm64-v8a-release.apk"
+              else "Nuvio-Enhanced-v1.24-full-arm64-v8a-release.apk"
           )
           final_apk = out_dir / final_name
           shutil.copy2(apks[0], final_apk)
@@ -513,7 +513,7 @@ jobs:
           ).stdout
           print("\n".join(badging.splitlines()[:25]))
 
-          for required in (f"name='{package_id}'", "versionName='1.23'", "versionCode='230'"):
+          for required in (f"name='{package_id}'", "versionName='1.24'", "versionCode='240'"):
               if required not in badging:
                   raise SystemExit(f"::error::Expected {required} in APK badging!")
 
@@ -527,7 +527,7 @@ jobs:
               raise SystemExit("::error::Missing LocalVideoPlayerActivity in merged AndroidManifest.xml")
 
           subprocess.run([str(bt_dir / "zipalign"), "-c", "-P", "16", "4", str(final_apk)], check=True)
-          print(f"✓ Verified release APK: {package_id} v1.23 (230) | {cert_dn} | SHA-256 {cert_sha256}")
+          print(f"✓ Verified release APK: {package_id} v1.24 (240) | {cert_dn} | SHA-256 {cert_sha256}")
 
           with gh_output.open("a", encoding="utf-8") as fh:
               fh.write(f"package_id={package_id}\n")
@@ -555,7 +555,7 @@ jobs:
       - name: Upload APK as GitHub Actions Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Nuvio-Enhanced-v1.23-APK
+          name: Nuvio-Enhanced-v1.24-APK
           path: ${{ steps.collect.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
@@ -571,7 +571,7 @@ jobs:
           CERT_DN: ${{ steps.collect.outputs.cert_dn }}
           PACKAGE_ID: ${{ steps.collect.outputs.package_id }}
           FRESH_INSTALL_APK: ${{ inputs.fresh_install_apk || false }}
-          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.23-apk' }}
+          OUT_TAG: ${{ inputs.output_release_tag || 'nuvio-enhanced-v1.24-apk' }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -597,8 +597,8 @@ jobs:
           package_id = os.environ["PACKAGE_ID"]
           if fresh_install:
               # Never replace the normal upgrade release or make this the updater's latest release.
-              out_tag = "nuvio-enhanced-v1.23-fresh-install"
-          release_name = "Nuvio Enhanced v1.23 — Fresh-install APK (not a v1.21 upgrade)" if fresh_install else "Nuvio Enhanced v1.23 APK"
+              out_tag = "nuvio-enhanced-v1.24-fresh-install"
+          release_name = "Nuvio Enhanced v1.24 — Fresh-install APK (not a v1.21 upgrade)" if fresh_install else "Nuvio Enhanced v1.24 APK"
           run_id = os.environ["RUN_ID"]
 
           apk_bytes = apk_path.read_bytes()
@@ -623,9 +623,9 @@ jobs:
                   return json.loads(body) if body else {}
 
           release_body = (
-              f"## Nuvio Enhanced v1.23 — Full Android Release APK\n\n"
+              f"## Nuvio Enhanced v1.24 — Full Android Release APK\n\n"
               f"- **Package ID**: `{package_id}`\n"
-              f"- **Version**: `1.23` (`versionCode` `230`)\n"
+              f"- **Version**: `1.24` (`versionCode` `240`)\n"
               f"- **Distribution Flavor**: `full` (`arm64-v8a`)\n"
               f"- **APK File**: `{apk_name}` ({apk_size:,} bytes / {apk_size / (1024 * 1024):.2f} MiB)\n"
               f"- **APK SHA-256**: `{apk_sha256}`\n"
@@ -645,7 +645,7 @@ jobs:
                   "do not uninstall it to bypass the mismatch. Use a separate device/user profile without "
                   "the existing app if you want to test this APK.\n\n"
               ) + release_body
-          release_body += "\n" + Path("docs/releases/1.23.md").read_text(encoding="utf-8")
+          release_body += "\n" + Path("docs/releases/1.24.md").read_text(encoding="utf-8")
 
           try:
               rel = api_req(f"https://api.github.com/repos/{repo}/releases/tags/{out_tag}")
@@ -727,7 +727,8 @@ jobs:
           manifest_payload = {
               "apk_name": apk_name,
               "package_id": package_id,
-              "android16_install_test": "passed",
+              "android16_install_test": "not_run_user_requested_build_only",
+              "vlc_playback_smoke_test": "not_run_user_requested_build_only",
               "apk_size": apk_size,
               "apk_sha256": apk_sha256,
               "cert_dn": cert_dn,

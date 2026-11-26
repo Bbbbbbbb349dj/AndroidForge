@@ -2,6 +2,8 @@ package com.nuvio.app.features.player
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -293,7 +295,7 @@ internal fun PlayerControlsShell(
                     ) {
                         Column(Modifier.weight(1f)) {
                             if (!hideDetails) {
-                                Box(Modifier.playerLiquidGlass(RoundedCornerShape(16.dp)).padding(8.dp)) {
+                                Box(Modifier.padding(8.dp)) {
                                     PlayerTimelineDetails(
                                         title = title, titleLogo = titleLogo, showTitleLogo = showTitleLogo,
                                         seasonNumber = seasonNumber, episodeNumber = episodeNumber,
@@ -389,7 +391,7 @@ internal fun PlayerControlsShell(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
                         .padding(horizontal = metrics.horizontalPadding)
-                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
+                        .padding(horizontal = 4.dp),
                 ) {
                 ProgressControls(
                     playbackSnapshot = playbackSnapshot,
@@ -418,8 +420,8 @@ internal fun PlayerControlsShell(
                     onTimelineTouchChange = onTimelineTouchChange,
                     onPictureInPictureClick = onPictureInPictureClick,
                     modifier = Modifier.fillMaxWidth(),
+                    extraActions = bottomActions,
                 )
-                bottomActions()
                 }
             }
             if (showPlaybackControls && !useLegacyLayout) {
@@ -429,7 +431,7 @@ internal fun PlayerControlsShell(
                         .fillMaxWidth()
                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
                         .padding(horizontal = metrics.horizontalPadding)
-                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
+                        .padding(horizontal = 4.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -467,8 +469,8 @@ internal fun PlayerControlsShell(
                         },
                         onTouchChange = onTimelineTouchChange,
                     )
-                    bottomActions()
                     PlayerControlActions(
+                        extraActions = bottomActions,
                         playbackSnapshot = playbackSnapshot,
                         displayedPositionMs = displayedPositionMs,
                         showRemainingTime = showRemainingTime,
@@ -979,6 +981,7 @@ private fun ProgressControls(
     onTimelineTouchChange: (Boolean) -> Unit = {},
     onPictureInPictureClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    extraActions: @Composable () -> Unit = {},
 ) {
     val aspectRatioPainter = appIconPainter(AppIconResource.PlayerAspectRatio)
     val subtitlesPainter = appIconPainter(AppIconResource.PlayerSubtitles)
@@ -989,89 +992,22 @@ private fun ProgressControls(
         NuvioEnhancedSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
 
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().offset(y = (-19).dp).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                PlayerChapterLabel(
-                    chapters = playbackSnapshot.chapters,
-                    positionMs = displayedPositionMs,
-                    metrics = metrics,
-                    onClick = onChaptersClick,
-                )
-            }
-            PlayerEndTimeLabel(
-                positionMs = displayedPositionMs,
-                durationMs = playbackSnapshot.durationMs,
-                playbackSpeed = playbackSnapshot.playbackSpeed,
-                isPlaying = playbackSnapshot.isPlaying,
-                metrics = metrics,
-            )
-        }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         PlayerSeekBar(
-            durationMs = playbackSnapshot.durationMs,
-            displayedPositionMs = displayedPositionMs,
+            durationMs = playbackSnapshot.durationMs, displayedPositionMs = displayedPositionMs,
             bufferedPositionMs = playbackSnapshot.bufferedPositionMs,
-            chapters = playbackSnapshot.chapters,
-            metrics = metrics,
-            onScrubChange = onScrubChange,
-            onScrubFinished = onScrubFinished,
-            seekPreview = seekPreview,
-            onTouchChange = onTimelineTouchChange,
-            showTimeRow = false,
-            modifier = Modifier.offset(y = (-13).dp).padding(bottom = 8.dp),
+            chapters = playbackSnapshot.chapters, metrics = metrics,
+            onScrubChange = onScrubChange, onScrubFinished = onScrubFinished,
+            seekPreview = seekPreview, onTouchChange = onTimelineTouchChange, showTimeRow = true,
         )
-        // Legacy bottom bar: time pills on the bar's outer edges (lined up with the seek bar's
-        // ends and the pill's top edge), actions in the middle.
-        Box(modifier = Modifier.fillMaxWidth()) {
-            TimePill(
-                text = formatPlaybackTime(displayedPositionMs),
-                fontSize = metrics.timeSize,
-                modifier = Modifier.align(Alignment.TopStart).offset(y = (-17).dp),
-            )
-            TimePill(
-                text = if (showRemainingTime) {
-                    formatPlaybackRemaining(displayedPositionMs, playbackSnapshot.durationMs)
-                } else {
-                    formatPlaybackTime(playbackSnapshot.durationMs)
-                },
-                fontSize = metrics.timeSize,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(y = (-17).dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(
-                        role = Role.Button,
-                        onClickLabel = stringResource(
-                            if (showRemainingTime) {
-                                Res.string.compose_player_show_elapsed_time
-                            } else {
-                                Res.string.compose_player_show_remaining_time
-                            },
-                        ),
-                        onClick = onRuntimeClick,
-                    ),
-            )
-            // Legacy bottom bar: same compact pill as before, now liquid glass.
-            Surface(
-                color = Color.Transparent,
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.align(Alignment.TopCenter).playerLiquidGlass(
-                    shape = RoundedCornerShape(24.dp),
-                    refractionHeight = 10.dp,
-                    refractionAmount = 14.dp,
-                ),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
                     if (onPictureInPictureClick != null) {
                         PlayerActionPillButton(
-                            label = stringResource(Res.string.compose_player_picture_in_picture),
+                            label = "PiP",
                             icon = Icons.Rounded.PictureInPictureAlt,
                             onClick = onPictureInPictureClick,
                         )
@@ -1126,6 +1062,7 @@ private fun ProgressControls(
                             onClick = onSourcesClick,
                         )
                     }
+                    extraActions()
                     if (onChaptersClick != null) {
                         PlayerActionPillButton(
                             label = stringResource(Res.string.player_chapters),
@@ -1154,8 +1091,6 @@ private fun ProgressControls(
                             onClick = onLiveChannelsClick,
                         )
                     }
-                }
-            }
         }
     }
 }
@@ -1252,6 +1187,7 @@ internal fun PlayerSeekBar(
                         .fillMaxSize()
                         .semantics { contentDescription = seekDescription },
                     state = seekState,
+                    thumb = { Box(Modifier.size(width = 4.dp, height = 16.dp).clip(RoundedCornerShape(2.dp)).background(playerControlForeground)) },
                     onValueChange = { value -> onScrubChange(value.toLong()) },
                     onValueChangeFinished = { onScrubFinished(displayedPositionMs.coerceIn(0L, seekDurationMs)) },
                     enabled = durationMs > 0L,
@@ -1302,6 +1238,7 @@ private fun PlayerBufferedTrack(bufferedFraction: Float, enabled: Boolean = true
     val bufferedState = remember { SliderState(trackRange = 0f..1f) }
     bufferedState.value = bufferedFraction
     SliderDefaults.Track(
+        modifier = Modifier.height(4.dp),
         sliderState = bufferedState,
         enabled = enabled,
         colors = SliderDefaults.colors(
@@ -1338,12 +1275,17 @@ private fun PlayerProgressTrack(
     Box {
         SliderDefaults.Track(
             sliderState = sliderState,
+            modifier = Modifier.height(4.dp),
+            drawStopIndicator = null,
+            thumbTrackGapSize = 0.dp,
             colors = inactiveTrackColors,
         )
         PlayerBufferedTrack(bufferedFraction = bufferedFraction)
         SliderDefaults.Track(
             sliderState = sliderState,
-            modifier = Modifier.gradientMask(palette.accentBrush()),
+            modifier = Modifier.height(4.dp).gradientMask(palette.accentBrush()),
+            drawStopIndicator = null,
+            thumbTrackGapSize = 0.dp,
             colors = activeTrackColors,
         )
         if (chapterMarks.isNotEmpty()) {
@@ -1549,7 +1491,7 @@ private fun TimePill(
 }
 
 @Composable
-private fun PlayerActionPillButton(
+internal fun PlayerActionPillButton(
     label: String,
     onClick: () -> Unit,
     icon: ImageVector? = null,
@@ -1558,9 +1500,9 @@ private fun PlayerActionPillButton(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(22.dp))
+            .playerLiquidGlass(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .padding(horizontal = 10.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

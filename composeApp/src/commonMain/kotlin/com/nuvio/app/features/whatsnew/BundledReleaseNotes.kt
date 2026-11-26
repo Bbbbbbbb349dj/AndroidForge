@@ -58,8 +58,20 @@ internal object BundledReleaseNotes {
         ),
     )
 
+    val v124 = WhatsNewRelease(
+        version = "1.24",
+        title = "Nuvio Enhanced 1.24 — Cleaner player & profile",
+        publishedAt = null,
+        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.24-apk",
+        notes = listOf(
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Removed the oversized player deck and nested action capsules. Legacy and modern controls share a compact bottom action row, with Night and Discover integrated rather than stacked underneath. The legacy seekbar is now a thin line with subtle chapter ticks.", null),
+            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Profile now uses a compact identity header, paired viewing/activity summary, a navigable collection list and readable genre bars instead of giant greeting/stat cards and a dominant donut chart. Existing real-data calculations, collection sheets, profile actions and refresh remain.", null),
+            WhatsNewNote(WhatsNewNoteCategory.OTHER, "Preserved built-in VLC, opaque themed control backings when glass is off, recommendations with posters/descriptions, and earlier customizations. Build-only delivery: no runtime or device-performance acceptance is claimed.", null),
+        ),
+    )
+
     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
-        val releases = listOf(v123, v122, v121) + content?.snapshot?.releases.orEmpty()
+        val releases = listOf(v124, v123, v122, v121) + content?.snapshot?.releases.orEmpty()
         return WhatsNewContent(
             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
             fromCache = content?.fromCache ?: true,

@@ -1,0 +1,727 @@
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
+index 9edde54..1ec8436 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControlActions.kt
+@@ -168,6 +168,7 @@ internal fun PlayerControlActions(
+     randomNextEpisodeMode: Boolean = false,
+     onRandomNextEpisodeModeToggle: (() -> Unit)? = null,
+     onInteraction: () -> Unit,
++    extraActions: @Composable () -> Unit = {},
+ ) {
+     val enhancedSettings by remember {
+         NuvioEnhancedSettingsRepository.ensureLoaded()
+@@ -338,14 +339,10 @@ internal fun PlayerControlActions(
+             Box(modifier = Modifier.weight(1f)) {
+                 Row(
+                     modifier = Modifier
+-                        .playerLiquidGlass(
+-                            shape = PlayerGlassCapsule,
+-                            refractionHeight = 8.dp,
+-                            refractionAmount = 12.dp,
+-                        )
+                         .horizontalScroll(scrollState),
+                     verticalAlignment = Alignment.CenterVertically,
+                 ) {
++                    extraActions()
+                     (if (expanded) primaryActions + secondaryActions else visibleActions).forEach { action ->
+                         Box {
+                             PlayerAction(
+@@ -418,7 +415,7 @@ private fun PlayerAction(
+     iconSize: Dp = 24.dp,
+     tint: Color = playerControlForeground,
+ ) {
+-    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
++    IconButton(onClick = onClick, modifier = Modifier.padding(horizontal = 3.dp).size(42.dp).playerLiquidGlass(RoundedCornerShape(10.dp))) {
+         if (painter != null) {
+             Icon(painter, description, tint = tint, modifier = Modifier.size(iconSize))
+         } else if (icon != null) {
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
+index 070de93..6fc6ee0 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerControls.kt
+@@ -2,6 +2,8 @@ package com.nuvio.app.features.player
+ 
+ import androidx.compose.animation.core.animateFloatAsState
+ import androidx.compose.animation.core.tween
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.clickable
+ import androidx.compose.foundation.gestures.awaitEachGesture
+@@ -293,7 +295,7 @@ internal fun PlayerControlsShell(
+                     ) {
+                         Column(Modifier.weight(1f)) {
+                             if (!hideDetails) {
+-                                Box(Modifier.playerLiquidGlass(RoundedCornerShape(16.dp)).padding(8.dp)) {
++                                Box(Modifier.padding(8.dp)) {
+                                     PlayerTimelineDetails(
+                                         title = title, titleLogo = titleLogo, showTitleLogo = showTitleLogo,
+                                         seasonNumber = seasonNumber, episodeNumber = episodeNumber,
+@@ -389,7 +391,7 @@ internal fun PlayerControlsShell(
+                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+                         .padding(horizontal = metrics.horizontalPadding)
+-                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
++                        .padding(horizontal = 4.dp),
+                 ) {
+                 ProgressControls(
+                     playbackSnapshot = playbackSnapshot,
+@@ -418,8 +420,8 @@ internal fun PlayerControlsShell(
+                     onTimelineTouchChange = onTimelineTouchChange,
+                     onPictureInPictureClick = onPictureInPictureClick,
+                     modifier = Modifier.fillMaxWidth(),
++                    extraActions = bottomActions,
+                 )
+-                bottomActions()
+                 }
+             }
+             if (showPlaybackControls && !useLegacyLayout) {
+@@ -429,7 +431,7 @@ internal fun PlayerControlsShell(
+                         .fillMaxWidth()
+                         .windowInsetsPadding(playerTimelineBottomInsets(metrics))
+                         .padding(horizontal = metrics.horizontalPadding)
+-                        .playerLiquidGlass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp),
++                        .padding(horizontal = 4.dp),
+                 ) {
+                     Row(
+                         modifier = Modifier.fillMaxWidth(),
+@@ -467,8 +469,8 @@ internal fun PlayerControlsShell(
+                         },
+                         onTouchChange = onTimelineTouchChange,
+                     )
+-                    bottomActions()
+                     PlayerControlActions(
++                        extraActions = bottomActions,
+                         playbackSnapshot = playbackSnapshot,
+                         displayedPositionMs = displayedPositionMs,
+                         showRemainingTime = showRemainingTime,
+@@ -979,6 +981,7 @@ private fun ProgressControls(
+     onTimelineTouchChange: (Boolean) -> Unit = {},
+     onPictureInPictureClick: (() -> Unit)? = null,
+     modifier: Modifier = Modifier,
++    extraActions: @Composable () -> Unit = {},
+ ) {
+     val aspectRatioPainter = appIconPainter(AppIconResource.PlayerAspectRatio)
+     val subtitlesPainter = appIconPainter(AppIconResource.PlayerSubtitles)
+@@ -989,89 +992,22 @@ private fun ProgressControls(
+         NuvioEnhancedSettingsRepository.uiState
+     }.collectAsStateWithLifecycle()
+ 
+-    Column(modifier = modifier) {
+-        Row(
+-            modifier = Modifier.fillMaxWidth().offset(y = (-19).dp).padding(horizontal = 12.dp),
+-            verticalAlignment = Alignment.Bottom,
+-        ) {
+-            Box(modifier = Modifier.weight(1f)) {
+-                PlayerChapterLabel(
+-                    chapters = playbackSnapshot.chapters,
+-                    positionMs = displayedPositionMs,
+-                    metrics = metrics,
+-                    onClick = onChaptersClick,
+-                )
+-            }
+-            PlayerEndTimeLabel(
+-                positionMs = displayedPositionMs,
+-                durationMs = playbackSnapshot.durationMs,
+-                playbackSpeed = playbackSnapshot.playbackSpeed,
+-                isPlaying = playbackSnapshot.isPlaying,
+-                metrics = metrics,
+-            )
+-        }
++    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+         PlayerSeekBar(
+-            durationMs = playbackSnapshot.durationMs,
+-            displayedPositionMs = displayedPositionMs,
++            durationMs = playbackSnapshot.durationMs, displayedPositionMs = displayedPositionMs,
+             bufferedPositionMs = playbackSnapshot.bufferedPositionMs,
+-            chapters = playbackSnapshot.chapters,
+-            metrics = metrics,
+-            onScrubChange = onScrubChange,
+-            onScrubFinished = onScrubFinished,
+-            seekPreview = seekPreview,
+-            onTouchChange = onTimelineTouchChange,
+-            showTimeRow = false,
+-            modifier = Modifier.offset(y = (-13).dp).padding(bottom = 8.dp),
++            chapters = playbackSnapshot.chapters, metrics = metrics,
++            onScrubChange = onScrubChange, onScrubFinished = onScrubFinished,
++            seekPreview = seekPreview, onTouchChange = onTimelineTouchChange, showTimeRow = true,
+         )
+-        // Legacy bottom bar: time pills on the bar's outer edges (lined up with the seek bar's
+-        // ends and the pill's top edge), actions in the middle.
+-        Box(modifier = Modifier.fillMaxWidth()) {
+-            TimePill(
+-                text = formatPlaybackTime(displayedPositionMs),
+-                fontSize = metrics.timeSize,
+-                modifier = Modifier.align(Alignment.TopStart).offset(y = (-17).dp),
+-            )
+-            TimePill(
+-                text = if (showRemainingTime) {
+-                    formatPlaybackRemaining(displayedPositionMs, playbackSnapshot.durationMs)
+-                } else {
+-                    formatPlaybackTime(playbackSnapshot.durationMs)
+-                },
+-                fontSize = metrics.timeSize,
+-                modifier = Modifier
+-                    .align(Alignment.TopEnd)
+-                    .offset(y = (-17).dp)
+-                    .clip(RoundedCornerShape(12.dp))
+-                    .clickable(
+-                        role = Role.Button,
+-                        onClickLabel = stringResource(
+-                            if (showRemainingTime) {
+-                                Res.string.compose_player_show_elapsed_time
+-                            } else {
+-                                Res.string.compose_player_show_remaining_time
+-                            },
+-                        ),
+-                        onClick = onRuntimeClick,
+-                    ),
+-            )
+-            // Legacy bottom bar: same compact pill as before, now liquid glass.
+-            Surface(
+-                color = Color.Transparent,
+-                shape = RoundedCornerShape(24.dp),
+-                modifier = Modifier.align(Alignment.TopCenter).playerLiquidGlass(
+-                    shape = RoundedCornerShape(24.dp),
+-                    refractionHeight = 10.dp,
+-                    refractionAmount = 14.dp,
+-                ),
+-            ) {
+-                Row(
+-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+-                    horizontalArrangement = Arrangement.Center,
+-                    verticalAlignment = Alignment.CenterVertically,
+-                ) {
++        Row(
++            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
++            horizontalArrangement = Arrangement.spacedBy(8.dp),
++            verticalAlignment = Alignment.CenterVertically,
++        ) {
+                     if (onPictureInPictureClick != null) {
+                         PlayerActionPillButton(
+-                            label = stringResource(Res.string.compose_player_picture_in_picture),
++                            label = "PiP",
+                             icon = Icons.Rounded.PictureInPictureAlt,
+                             onClick = onPictureInPictureClick,
+                         )
+@@ -1126,6 +1062,7 @@ private fun ProgressControls(
+                             onClick = onSourcesClick,
+                         )
+                     }
++                    extraActions()
+                     if (onChaptersClick != null) {
+                         PlayerActionPillButton(
+                             label = stringResource(Res.string.player_chapters),
+@@ -1154,8 +1091,6 @@ private fun ProgressControls(
+                             onClick = onLiveChannelsClick,
+                         )
+                     }
+-                }
+-            }
+         }
+     }
+ }
+@@ -1252,6 +1187,7 @@ internal fun PlayerSeekBar(
+                         .fillMaxSize()
+                         .semantics { contentDescription = seekDescription },
+                     state = seekState,
++                    thumb = { Box(Modifier.size(width = 4.dp, height = 16.dp).clip(RoundedCornerShape(2.dp)).background(playerControlForeground)) },
+                     onValueChange = { value -> onScrubChange(value.toLong()) },
+                     onValueChangeFinished = { onScrubFinished(displayedPositionMs.coerceIn(0L, seekDurationMs)) },
+                     enabled = durationMs > 0L,
+@@ -1302,6 +1238,7 @@ private fun PlayerBufferedTrack(bufferedFraction: Float, enabled: Boolean = true
+     val bufferedState = remember { SliderState(trackRange = 0f..1f) }
+     bufferedState.value = bufferedFraction
+     SliderDefaults.Track(
++        modifier = Modifier.height(4.dp),
+         sliderState = bufferedState,
+         enabled = enabled,
+         colors = SliderDefaults.colors(
+@@ -1338,12 +1275,17 @@ private fun PlayerProgressTrack(
+     Box {
+         SliderDefaults.Track(
+             sliderState = sliderState,
++            modifier = Modifier.height(4.dp),
++            drawStopIndicator = null,
++            thumbTrackGapSize = 0.dp,
+             colors = inactiveTrackColors,
+         )
+         PlayerBufferedTrack(bufferedFraction = bufferedFraction)
+         SliderDefaults.Track(
+             sliderState = sliderState,
+-            modifier = Modifier.gradientMask(palette.accentBrush()),
++            modifier = Modifier.height(4.dp).gradientMask(palette.accentBrush()),
++            drawStopIndicator = null,
++            thumbTrackGapSize = 0.dp,
+             colors = activeTrackColors,
+         )
+         if (chapterMarks.isNotEmpty()) {
+@@ -1549,7 +1491,7 @@ private fun TimePill(
+ }
+ 
+ @Composable
+-private fun PlayerActionPillButton(
++internal fun PlayerActionPillButton(
+     label: String,
+     onClick: () -> Unit,
+     icon: ImageVector? = null,
+@@ -1558,9 +1500,9 @@ private fun PlayerActionPillButton(
+ ) {
+     Row(
+         modifier = Modifier
+-            .clip(RoundedCornerShape(22.dp))
++            .playerLiquidGlass(RoundedCornerShape(10.dp))
+             .clickable(onClick = onClick)
+-            .padding(horizontal = 12.dp, vertical = 12.dp),
++            .padding(horizontal = 10.dp, vertical = 11.dp),
+         horizontalArrangement = Arrangement.spacedBy(8.dp),
+         verticalAlignment = Alignment.CenterVertically,
+     ) {
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
+index f11d40a..5b07b5b 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerFeatureActions.kt
+@@ -39,29 +39,22 @@ internal fun PlayerFeatureActions(
+     recommendationsVisible: Boolean,
+     onRecommendations: () -> Unit,
+ ) {
+-    if (!nightModeVisible && !recommendationsVisible) return
+-    Row(
+-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
+-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+-    ) {
++    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+         if (nightModeVisible) {
+-            FilterChip(
+-                selected = nightModeEnabled, enabled = nightModeSupported,
+-                colors = FilterChipDefaults.filterChipColors(
+-                    labelColor = playerControlForeground, iconColor = playerControlForeground,
+-                    disabledLabelColor = playerControlForeground.copy(alpha = 0.38f),
+-                    disabledLeadingIconColor = playerControlForeground.copy(alpha = 0.38f),
+-                ),
+-                onClick = onNightModeToggle,
+-                label = { Text(if (nightModeSupported) "Night mode" else "Night mode unavailable") },
+-                leadingIcon = { Icon(Icons.Rounded.NightsStay, null, Modifier.size(18.dp)) },
+-            )
++            TextButton(
++                onClick = onNightModeToggle, enabled = nightModeSupported,
++                modifier = Modifier.playerLiquidGlass(RoundedCornerShape(10.dp)).height(40.dp),
++                contentPadding = PaddingValues(horizontal = 10.dp),
++            ) {
++                val tint = if (!nightModeSupported) playerControlForeground.copy(alpha = 0.4f)
++                    else if (nightModeEnabled) MaterialTheme.colorScheme.primary else playerControlForeground
++                Icon(Icons.Rounded.NightsStay, if (nightModeSupported) "Night mode" else "Night mode unavailable", Modifier.size(18.dp), tint = tint)
++                Spacer(Modifier.width(6.dp))
++                Text("Night", color = tint, style = MaterialTheme.typography.labelMedium)
++            }
+         }
+-        if (recommendationsVisible) AssistChip(
+-            onClick = onRecommendations,
+-            colors = AssistChipDefaults.assistChipColors(labelColor = playerControlForeground, leadingIconContentColor = playerControlForeground),
+-            label = { Text(stringResource(Res.string.v121_recommendations)) },
+-            leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp)) },
++        if (recommendationsVisible) PlayerActionPillButton(
++            label = "Discover", icon = Icons.Rounded.AutoAwesome, onClick = onRecommendations,
+         )
+     }
+ }
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
+index 2eb0a15..b9eee87 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/player/PlayerTimeline.kt
+@@ -70,7 +70,7 @@ import org.jetbrains.compose.resources.stringResource
+ 
+ internal val PlayerTimelineContentInset = 2.dp
+ 
+-internal val PlayerChapterMarkWidth = 2.dp
++internal val PlayerChapterMarkWidth = 1.dp
+ 
+ internal val PlayerChapterMarkColor = Color.Black.copy(alpha = 0.6f)
+ 
+@@ -214,7 +214,7 @@ internal fun PlayerTimeline(
+     val isInteracting = enabled && durationMs > 0L && (isPressed || isDragged)
+     ReportTimelineTouch(isInteracting, onTouchChange)
+     val trackThickness by animateDpAsState(
+-        targetValue = if (isInteracting) 10.dp else 6.dp,
++        targetValue = if (isInteracting) 5.dp else 3.dp,
+         animationSpec = tween(durationMillis = if (isInteracting) 140 else 180),
+         label = "playerTimelineThickness",
+     )
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/ProfileInsightsSettingsPage.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/ProfileInsightsSettingsPage.kt
+index c33f77c..ddd4e05 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/ProfileInsightsSettingsPage.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/ProfileInsightsSettingsPage.kt
+@@ -399,7 +399,6 @@ private fun ProfileInsightsBody(
+                 isRefreshing = isRefreshing,
+                 onRefresh = ProfileInsightsRefresher::refresh,
+             )
+-            ProfileWatchTimeRow(stats = stats)
+             SettingsSection(
+                 title = stringResource(Res.string.v121_profile_taste),
+                 isTablet = isTablet,
+@@ -434,70 +433,62 @@ private fun ProfileActivityDashboard(
+     onBack: (() -> Unit)?,
+ ) {
+     val colors = MaterialTheme.nuvio.colors
+-    val accent = profile?.avatarColorHex?.let(::parseHexColor) ?: colors.accent
++    val accent = colors.accent
+     val avatarUrl = remember(profile, avatarItem) { profile?.let { profileAvatarImageUrl(it, avatarItem) } }
+-    Column(verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+-            if (onBack != null) {
+-                ProfileHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(Res.string.action_back), onBack)
+-            }
+-            Text(stringResource(Res.string.v121_profile_eyebrow), style = MaterialTheme.typography.labelLarge,
+-                color = accent, modifier = Modifier.weight(1f))
++    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
++        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
++            if (onBack != null) ProfileHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack,
++                stringResource(Res.string.action_back), onBack)
++            Text("Profile", Modifier.weight(1f).padding(horizontal = 8.dp),
++                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+             if (onEditProfile != null) ProfileHeaderIconButton(Icons.Rounded.Edit,
+                 stringResource(Res.string.profile_insights_edit_profile), onEditProfile)
+             if (onSwitchProfile != null) ProfileHeaderIconButton(Icons.Rounded.People,
+                 stringResource(Res.string.profile_insights_switch_profile), onSwitchProfile)
+         }
+-        Surface(shape = RoundedCornerShape(28.dp), color = colors.surface) {
+-            Column(
+-                Modifier.background(Brush.linearGradient(listOf(accent.copy(alpha = 0.14f), Color.Transparent)))
+-                    .padding(if (isTablet) 28.dp else 20.dp),
+-                verticalArrangement = Arrangement.spacedBy(16.dp),
+-            ) {
+-                ProfileHeroAvatar(profileName, avatarUrl, accent, avatarItem?.bgColor?.let(::parseHexColor) ?: accent, isTablet)
+-                Text(stringResource(Res.string.v121_profile_greeting, profileName),
+-                    style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+-                Text(stringResource(Res.string.v121_profile_subtitle),
+-                    style = MaterialTheme.typography.bodyLarge, color = colors.textSecondary)
+-                if (stats.libraryCount == 0 && stats.recentActivityCount == 0 && stats.continueCount == 0) {
+-                    Text(stringResource(Res.string.v121_profile_empty), style = MaterialTheme.typography.bodyMedium, color = accent)
+-                }
++        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
++            horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
++            ProfileHeroAvatar(profileName, avatarUrl, accent, avatarItem?.bgColor?.let(::parseHexColor) ?: accent, false)
++            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
++                Text(profileName, style = MaterialTheme.typography.headlineMedium,
++                    fontWeight = FontWeight.Bold, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
++                Text("Your films. Your shows. Your story.", style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+             }
+         }
+-        Text(stringResource(Res.string.v121_profile_activity), style = MaterialTheme.typography.titleLarge,
+-            fontWeight = FontWeight.Bold, color = colors.textPrimary)
+-        val cards = listOf(
+-            Triple(ProfileInsightCollectionKind.Continue, stats.continueCount, Res.string.v121_profile_continue_hint),
+-            Triple(ProfileInsightCollectionKind.Library, stats.libraryCount, Res.string.v121_profile_library_hint),
+-            Triple(ProfileInsightCollectionKind.Completed, stats.completedCount, Res.string.v121_profile_completed_hint),
+-            Triple(ProfileInsightCollectionKind.Upcoming, stats.upcomingCount, Res.string.v121_profile_upcoming_hint),
+-            Triple(ProfileInsightCollectionKind.Watched, stats.watchedMovieCount, Res.string.profile_insights_stat_watched),
++        ProfileWatchTimeRow(stats)
++        Text("Your collection", style = MaterialTheme.typography.titleMedium,
++            fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
++        val entries = listOf(
++            Triple(ProfileInsightCollectionKind.Continue, stats.continueCount, Res.string.profile_insights_hero_continue),
++            Triple(ProfileInsightCollectionKind.Library, stats.libraryCount, Res.string.profile_insights_hero_library),
++            Triple(ProfileInsightCollectionKind.Completed, stats.completedCount, Res.string.profile_insights_stat_completed),
++            Triple(ProfileInsightCollectionKind.Upcoming, stats.upcomingCount, Res.string.profile_insights_hero_upcoming),
++            Triple(ProfileInsightCollectionKind.Watched, stats.watchedMovieCount, Res.string.profile_insights_hero_watched),
+             Triple(ProfileInsightCollectionKind.Ongoing, stats.ongoingSeriesCount, Res.string.profile_insights_stat_ongoing),
+         )
+-        cards.chunked(if (isTablet) 3 else 2).forEach { row ->
+-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+-                row.forEach { (kind, count, label) ->
+-                    Surface(
+-                        modifier = Modifier.weight(1f).clickable { onCollectionClick(kind) },
+-                        shape = RoundedCornerShape(20.dp), color = colors.surface,
+-                        border = BorderStroke(1.dp, accent.copy(alpha = if (isCollectionAvailable(kind)) 0.28f else 0.08f)),
+-                    ) {
+-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+-                            Text(count.toString(), style = MaterialTheme.typography.headlineMedium,
+-                                fontWeight = FontWeight.Bold, color = accent)
+-                            Text(stringResource(label), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
++        val icons = listOf(Icons.Rounded.PlayArrow, Icons.Rounded.CollectionsBookmark, Icons.Rounded.Favorite,
++            Icons.Rounded.CalendarMonth, Icons.Rounded.Movie, Icons.Rounded.Tv)
++        Surface(color = colors.surface, shape = RoundedCornerShape(20.dp)) {
++            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
++                entries.forEachIndexed { index, (kind, count, label) ->
++                    if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.textSecondary.copy(alpha = 0.08f)))
++                    Row(Modifier.fillMaxWidth().clickable { onCollectionClick(kind) }.padding(vertical = 13.dp),
++                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
++                        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(accent.copy(alpha = 0.09f)),
++                            contentAlignment = Alignment.Center) {
++                            Icon(icons[index], null, Modifier.size(18.dp), tint = accent)
+                         }
++                        Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
++                        Text(count.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
++                            color = if (isCollectionAvailable(kind)) colors.textPrimary else colors.textSecondary)
++                        Text("›", color = colors.textSecondary, style = MaterialTheme.typography.titleLarge)
+                     }
+                 }
+             }
+         }
+-        Surface(shape = RoundedCornerShape(20.dp), color = accent.copy(alpha = 0.09f)) {
+-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+-                Text(stats.recentActivityCount.toString(), style = MaterialTheme.typography.headlineMedium, color = accent)
+-                Text(stringResource(Res.string.v121_profile_recent), style = MaterialTheme.typography.titleSmall)
+-                Text(stringResource(Res.string.v121_profile_activity_hint), style = MaterialTheme.typography.bodySmall,
+-                    color = colors.textSecondary)
+-            }
++        Text("${stats.episodesWatchedCount} episodes watched", style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
++        if (stats.libraryCount == 0 && stats.recentActivityCount == 0 && stats.continueCount == 0) {
++            Text(stringResource(Res.string.v121_profile_empty), style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+         }
+     }
+ }
+@@ -1048,41 +1039,22 @@ private fun ProfileMetricPill(
+ 
+ @Composable
+ private fun ProfileWatchTimeRow(stats: ProfileInsightsStats) {
+-    val tokens = MaterialTheme.nuvio
+-    Surface(
+-        modifier = Modifier.fillMaxWidth().appGlassBackdrop(tokens.shapes.card),
+-        color = tokens.colors.surface,
+-        shape = tokens.shapes.card,
+-        border = BorderStroke(1.dp, tokens.colors.borderSubtle),
+-    ) {
+-        Column(
+-            modifier = Modifier
+-                .fillMaxWidth()
+-                .padding(horizontal = 20.dp, vertical = 18.dp),
+-            horizontalAlignment = Alignment.CenterHorizontally,
+-            verticalArrangement = Arrangement.spacedBy(6.dp),
+-        ) {
+-            Text(
+-                text = stringResource(Res.string.profile_insights_stat_time),
+-                style = MaterialTheme.typography.titleMedium,
+-                color = tokens.colors.textPrimary,
+-                fontWeight = FontWeight.Medium,
+-                textAlign = TextAlign.Center,
+-            )
+-            Text(
+-                text = profileInsightDurationLabel(stats.trackedDurationMs),
+-                style = MaterialTheme.typography.displayMedium,
+-                color = tokens.colors.textPrimary,
+-                fontWeight = FontWeight.SemiBold,
+-                textAlign = TextAlign.Center,
+-                maxLines = 1,
+-            )
+-            Text(
+-                text = stringResource(Res.string.profile_insights_stat_time_caption),
+-                style = MaterialTheme.typography.bodySmall,
+-                color = tokens.colors.textMuted,
+-                textAlign = TextAlign.Center,
+-            )
++    val colors = MaterialTheme.nuvio.colors
++    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = colors.surface) {
++        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically,
++            horizontalArrangement = Arrangement.spacedBy(20.dp)) {
++            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
++                Text(stringResource(Res.string.profile_insights_stat_time), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
++                Text(profileInsightDurationLabel(stats.trackedDurationMs), style = MaterialTheme.typography.headlineSmall,
++                    fontWeight = FontWeight.Bold, color = colors.textPrimary)
++            }
++            Box(Modifier.width(1.dp).height(40.dp).background(colors.textSecondary.copy(alpha = 0.14f)))
++            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
++                Text("Last 7 days", style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
++                Text(stats.recentActivityCount.toString(), style = MaterialTheme.typography.headlineSmall,
++                    fontWeight = FontWeight.Bold, color = colors.accent)
++                Text("titles active", style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
++            }
+         }
+     }
+ }
+@@ -1272,105 +1244,31 @@ private fun ProfileTasteCard(
+     stats: ProfileInsightsStats,
+     factsProgress: ProfileTitleFactsProgress? = null,
+ ) {
+-    val tokens = MaterialTheme.nuvio
+-    val fallbackType = when (stats.topType) {
+-        "movie" -> stringResource(Res.string.profile_insights_type_movie)
+-        "series" -> stringResource(Res.string.profile_insights_type_series)
+-        null -> null
+-        else -> stats.topType.fallbackDisplayLabel()
+-    }
+-    val topSignal = stats.topGenre ?: fallbackType ?: stringResource(Res.string.profile_insights_taste_empty)
+-
+-    NuvioSurfaceCard {
+-        Column(
+-            modifier = Modifier.fillMaxWidth(),
+-            verticalArrangement = Arrangement.spacedBy(16.dp),
+-        ) {
+-            Row(
+-                modifier = Modifier.fillMaxWidth(),
+-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+-                verticalAlignment = Alignment.CenterVertically,
+-            ) {
+-                Surface(
+-                    modifier = Modifier
+-                        .size(52.dp)
+-                        .background(
+-                            brush = MaterialTheme.themePalette.accentBrush(alpha = tokens.opacity.pressed),
+-                            shape = RoundedCornerShape(18.dp),
+-                        ),
+-                    color = Color.Transparent,
+-                    shape = RoundedCornerShape(18.dp),
+-                ) {
+-                    Box(contentAlignment = Alignment.Center) {
+-                        Icon(
+-                            imageVector = Icons.Rounded.AutoAwesome,
+-                            contentDescription = null,
+-                            modifier = Modifier.gradientMask(MaterialTheme.themePalette.accentBrush()),
+-                            tint = tokens.colors.accent,
+-                        )
++    val colors = MaterialTheme.nuvio.colors
++    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = colors.surface) {
++        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
++            Text(stats.topGenre ?: stats.typeBalanceLabel.localizedLabel(), style = MaterialTheme.typography.titleLarge,
++                fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
++            Text(stringResource(Res.string.profile_insights_taste_subtitle),
++                style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
++            stats.tasteSegments.take(PROFILE_TASTE_DONUT_MAX_GENRES).forEach { segment ->
++                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
++                    Row(Modifier.fillMaxWidth()) {
++                        Text(segment.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
++                        Text(segment.share.profilePercentLabel(), style = MaterialTheme.typography.labelMedium, color = colors.textSecondary)
++                    }
++                    Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(colors.accent.copy(alpha = 0.10f))) {
++                        Box(Modifier.fillMaxWidth(segment.share.coerceIn(0f, 1f)).height(4.dp).background(colors.accent))
+                     }
+-                }
+-                Column(
+-                    modifier = Modifier.weight(1f),
+-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+-                ) {
+-                    Text(
+-                        text = stringResource(Res.string.profile_insights_taste_dna_title),
+-                        style = MaterialTheme.typography.labelMedium,
+-                        color = tokens.colors.textMuted,
+-                        fontWeight = FontWeight.SemiBold,
+-                    )
+-                    Text(
+-                        text = topSignal,
+-                        style = MaterialTheme.typography.titleLarge,
+-                        color = tokens.colors.textPrimary,
+-                        fontWeight = FontWeight.SemiBold,
+-                        maxLines = 1,
+-                        overflow = TextOverflow.Ellipsis,
+-                    )
+-                    Text(
+-                        text = stringResource(Res.string.profile_insights_taste_subtitle),
+-                        style = MaterialTheme.typography.bodyMedium,
+-                        color = tokens.colors.textMuted,
+-                    )
+                 }
+             }
+-            if (stats.tasteSegments.isNotEmpty()) {
+-                ProfileTasteGenreDonut(segments = stats.tasteSegments)
+-                if (factsProgress != null && factsProgress.genresPending) {
+-                    Text(
+-                        text = stringResource(
+-                            Res.string.profile_insights_genre_partial,
+-                            factsProgress.genreResolved,
+-                            factsProgress.genreTotal,
+-                        ),
+-                        style = MaterialTheme.typography.labelSmall,
+-                        color = MaterialTheme.nuvio.colors.textMuted,
+-                        modifier = Modifier.fillMaxWidth(),
+-                        textAlign = TextAlign.Center,
+-                    )
+-                }
++            if (factsProgress != null && factsProgress.genresPending) {
++                Text(stringResource(Res.string.profile_insights_genre_partial, factsProgress.genreResolved, factsProgress.genreTotal),
++                    style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
+             }
+-            ProfileTasteBalanceBar(stats = stats)
+-            if (stats.dnaChips.isNotEmpty()) {
+-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+-                    stats.dnaChips.chunked(2).forEach { rowChips ->
+-                        Row(
+-                            modifier = Modifier.fillMaxWidth(),
+-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+-                        ) {
+-                            rowChips.forEach { chip ->
+-                                ProfileTasteDnaChip(
+-                                    text = chip.localizedLabel(),
+-                                    modifier = Modifier.weight(1f),
+-                                )
+-                            }
+-                            repeat(2 - rowChips.size) {
+-                                Spacer(modifier = Modifier.weight(1f))
+-                            }
+-                        }
+-                    }
+-                }
++            ProfileTasteBalanceBar(stats)
++            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                stats.dnaChips.forEach { ProfileTasteDnaChip(it.localizedLabel()) }
+             }
+         }
+     }
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
+index 2d10f19..2266f88 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/whatsnew/BundledReleaseNotes.kt
+@@ -58,8 +58,20 @@ internal object BundledReleaseNotes {
+         ),
+     )
+ 
++    val v124 = WhatsNewRelease(
++        version = "1.24",
++        title = "Nuvio Enhanced 1.24 — Cleaner player & profile",
++        publishedAt = null,
++        releaseUrl = "https://github.com/Bbbbbbbb349dj/AndroidForge/releases/tag/nuvio-enhanced-v1.24-apk",
++        notes = listOf(
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Removed the oversized player deck and nested action capsules. Legacy and modern controls share a compact bottom action row, with Night and Discover integrated rather than stacked underneath. The legacy seekbar is now a thin line with subtle chapter ticks.", null),
++            WhatsNewNote(WhatsNewNoteCategory.FEATURES, "Profile now uses a compact identity header, paired viewing/activity summary, a navigable collection list and readable genre bars instead of giant greeting/stat cards and a dominant donut chart. Existing real-data calculations, collection sheets, profile actions and refresh remain.", null),
++            WhatsNewNote(WhatsNewNoteCategory.OTHER, "Preserved built-in VLC, opaque themed control backings when glass is off, recommendations with posters/descriptions, and earlier customizations. Build-only delivery: no runtime or device-performance acceptance is claimed.", null),
++        ),
++    )
++
+     fun merge(content: WhatsNewContent?, currentVersion: String): WhatsNewContent {
+-        val releases = listOf(v123, v122, v121) + content?.snapshot?.releases.orEmpty()
++        val releases = listOf(v124, v123, v122, v121) + content?.snapshot?.releases.orEmpty()
+         return WhatsNewContent(
+             snapshot = WhatsNewSnapshotBuilder.build(releases, currentVersion),
+             fromCache = content?.fromCache ?: true,
+diff --git a/docs/releases/1.24.md b/docs/releases/1.24.md
+new file mode 100644
+index 0000000..f86b72b
+--- /dev/null
++++ b/docs/releases/1.24.md
+@@ -0,0 +1,18 @@
++# Nuvio Enhanced 1.24 (240)
++
++## Player
++- Remove the full-width boxed bottom slab in both legacy and modern layouts.
++- Use a single horizontally scrollable action row, with Night and Discover integrated into it. No secondary feature-button row or capsule around a capsule.
++- Keep individual theme-colored control backings and border separation when glass is disabled. No video-frame readback is reintroduced.
++- Thin legacy seekbar, slimmer thumb and subtle chapter ticks; retain seeking, chapter jumps, speed, tracks, sources, quality, PiP and existing preferences.
++
++## Profile
++- Compact avatar/name header with edit and profile switching actions.
++- Paired viewing-time and seven-day activity summary instead of huge stacked cards.
++- Collection navigation as a grouped list with counts, icons and working collection sheets; includes Continue, Library, Completed, Upcoming, Watched and Ongoing, plus episode count.
++- Readable genre bars and movie/series balance, retaining real data, loading/partial-data disclosures, refresh and taste tags.
++
++## Delivery scope
++One build-only run authorized by the user. Tests, debug APK and emulator checks omitted. Full signed ARM64 release with code/resource shrinking disabled, so the APK is larger. Package/version/signing continuity and native alignment checks remain. No claim of physical-device UI or performance acceptance.
++
++Built-in VLC, rich recommendation sheet, Downloads/unlimited downloads, Library categories, all-catalog search, subtitle caching, rating positioning and the CloudStream repository browser remain.
+diff --git a/gradle.properties b/gradle.properties
+index b45f58b..eb21271 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -13,4 +13,4 @@ org.gradle.caching=true
+ #Android
+ android.nonTransitiveRClass=true
+ android.useAndroidX=true
+-nuvio.app.versionName=1.23
++nuvio.app.versionName=1.24
+diff --git a/iosApp/Configuration/Version.xcconfig b/iosApp/Configuration/Version.xcconfig
+index c54b94d..7f79806 100644
+--- a/iosApp/Configuration/Version.xcconfig
++++ b/iosApp/Configuration/Version.xcconfig
+@@ -1,2 +1,2 @@
+-CURRENT_PROJECT_VERSION=230
+-MARKETING_VERSION=1.23
++CURRENT_PROJECT_VERSION=240
++MARKETING_VERSION=1.24
