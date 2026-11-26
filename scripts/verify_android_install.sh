@@ -16,12 +16,12 @@ if [ "$install_status" -ne 0 ]; then
 fi
 adb shell dumpsys package "$PACKAGE_ID" > install-diagnostics/installed-package.txt
 if ! grep -q "versionCode=${EXPECTED_VERSION_CODE:-220}" install-diagnostics/installed-package.txt; then
-  echo '::error::Installed package is not the expected v1.22 build.'
+  echo '::error::Installed package has an unexpected version code.'
   exit 1
 fi
 {
   echo '## Android 16 installation check'
   echo ''
-  echo 'Exact signed v1.22 ARM64 APK installed successfully on an API 36 Google APIs emulator.'
+  echo 'Exact signed candidate ARM64 APK installed successfully on an API 36 Google APIs emulator.'
   echo 'This validates installation on that emulator, not on a physical Motorola device.'
 } >> "$GITHUB_STEP_SUMMARY"
