@@ -85,7 +85,7 @@ import com.nuvio.app.navigation.LocalNativeNavigationBarHidden
 import com.nuvio.app.navigation.LocalUseNativeNavigation
 
 @Stable
-internal class NuvioScreenMetrics(val horizontalPadding: Dp) {
+internal class NuvioScreenMetrics(val horizontalPadding: Dp, val listState: LazyListState) {
     var hasPinnedHeader by mutableStateOf(false)
 }
 
@@ -126,7 +126,7 @@ fun NuvioScreen(
     } else {
         tokens.colors.background
     }
-    val metrics = remember(horizontalPadding) { NuvioScreenMetrics(horizontalPadding) }
+    val metrics = remember(horizontalPadding, listState) { NuvioScreenMetrics(horizontalPadding, listState) }
     val resolvedTopPadding = topPadding ?: if (metrics.hasPinnedHeader) {
         NuvioTokens.Space.none
     } else {

@@ -2,6 +2,7 @@ package com.nuvio.app.features.plugins
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -254,8 +255,8 @@ internal fun CloudStreamSettingsSection(modifier: Modifier = Modifier) {
     val selectedPlugin = state.plugins.firstOrNull { it.metadata.id.value == selectedPluginId }
     if (selectedPlugin != null) {
         val sourcePreferences by remember { StreamSourcePreferencesRepository.ensureLoaded(); StreamSourcePreferencesRepository.uiState }.collectAsStateWithLifecycle()
-        ModalBottomSheet(onDismissRequest = { selectedPluginId = null }) {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        ModalBottomSheet(onDismissRequest = { selectedPluginId = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
                 CloudStreamPluginCard(selectedPlugin, state.securityWarningAccepted, sourcePreferences.pinnedSources.map { it.id }.toSet(),
                     CloudStreamSettingsCopy.forLanguage(AppLanguage.ENGLISH), CloudStreamExtensionConfigBridge.preferNuvioSettingsUi(),
                     onMessage = { NuvioToastController.show(it) }, onOpenConfig = { configuringPluginId = selectedPluginId; selectedPluginId = null })

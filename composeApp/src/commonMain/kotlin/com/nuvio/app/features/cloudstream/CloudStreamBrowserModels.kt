@@ -49,3 +49,12 @@ internal fun cloudStreamBrowserLanguage(code: String?): String = when (code?.low
     null, "" -> "Unspecified language"
     else -> code.uppercase()
 }
+
+/** Remaining Settings viewport after its measured pinned header, spacing and safe insets. */
+internal fun cloudStreamBrowserViewportHeight(
+    viewport: Int,
+    beforePadding: Int,
+    afterPadding: Int,
+    chromeHeight: Int,
+    gaps: Int,
+): Int = (viewport - beforePadding - afterPadding - chromeHeight - gaps).coerceAtLeast(1)

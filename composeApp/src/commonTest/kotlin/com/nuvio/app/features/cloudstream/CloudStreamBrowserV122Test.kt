@@ -28,6 +28,11 @@ class CloudStreamBrowserV122Test {
         assertEquals(0, cloudStreamExtensionSummary(emptyList()).total)
     }
 
+    @Test fun fixedFooterFitsBelowMeasuredHeaderAndSafeInsets() {
+        assertEquals(624, cloudStreamBrowserViewportHeight(800, 24, 64, 76, 12))
+        assertEquals(1, cloudStreamBrowserViewportHeight(200, 24, 64, 176, 12))
+    }
+
     @Test fun languageLabelsKeepUnrecognizedLanguagesVisible() {
         assertTrue(cloudStreamBrowserLanguage("hi").contains("Hindi"))
         assertEquals("XX", cloudStreamBrowserLanguage("xx"))
